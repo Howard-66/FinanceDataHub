@@ -1,0 +1,46 @@
+services:
+  timescaledb:
+    # 1. 改回极其稳定的 pg16 版本，避免 pg17 潜在的兼容问题
+    image: timescale/timescaledb:latest-pg17
+    container_name: trading_nexus_container
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=trading.nexus.data
+      - POSTGRES_USER=trading_nexus
+      - POSTGRES_DB=trading_nexus_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pg_data:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d
+    # 2. 【关键操作】删除了 command 这一行
+    # 让容器使用默认的启动命令，这能解决 "exec: trading_nexus: not found" 错误
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading_nexus -d trading_nexus_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: trading_nexus_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+# Docker Compose 网络配置
+networks:
+  default:
+    name: trading_nexus_network
+
+# docker-compose up -d
+# docker exec -it trading_nexus_container psql -U trading_nexus -d trading_nexus_db
+# redis-cli -h localhost -p 6379

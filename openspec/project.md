@@ -207,7 +207,7 @@ Closes #123
    - 实时性: 毫秒级行情数据
 
 ### 基础设施服务
-1. **PostgreSQL 16 + TimescaleDB**
+1. **PostgreSQL 17 + TimescaleDB**
    - 用途: 主存储数据库
    - 连接: 使用 asyncpg 异步驱动
    - 配置: 需要启用 TimescaleDB 扩展
