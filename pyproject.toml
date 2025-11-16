@@ -31,6 +31,9 @@ dependencies = [
     "duckdb>=0.10.0",
     "pyyaml>=6.0",
     "python-dotenv>=1.0.0",
+    "tushare>=1.4.0",
+    "httpx>=0.27.0",
+    "greenlet>=3.2.4",
 ]
 
 [project.optional-dependencies]

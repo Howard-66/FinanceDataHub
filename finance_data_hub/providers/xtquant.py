@@ -1,0 +1,465 @@
+"""
+XTQuant数据提供者
+
+通过HTTP API客户端连接xtquant_helper微服务获取金融数据。
+"""
+
+from typing import Optional, Dict, Any, List
+import pandas as pd
+import httpx
+from loguru import logger
+
+from finance_data_hub.providers.base import (
+    BaseDataProvider,
+    ProviderError,
+    ProviderAuthError,
+    ProviderConnectionError,
+    ProviderRateLimitError,
+    ProviderDataError,
+)
+from finance_data_hub.providers.registry import register_provider
+from finance_data_hub.providers.schema import (
+    StockBasicSchema,
+    DailyDataSchema,
+    MinuteDataSchema,
+    DailyBasicSchema,
+    validate_dataframe,
+    convert_to_standard_columns,
+    standardize_symbol,
+)
+
+
+@register_provider("xtquant")
+class XTQuantProvider(BaseDataProvider):
+    """
+    XTQuant数据提供者（HTTP API客户端模式）
+
+    通过HTTP API连接xtquant_helper微服务获取中国A股市场数据。
+
+    配置参数:
+        api_url (str): xtquant_helper微服务地址，默认 http://localhost:8100
+        timeout (int): 请求超时时间（秒），默认60
+        max_retry (int): 最大重试次数，默认3
+    """
+
+    def __init__(
+        self, name: str = "xtquant", config: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(name, config)
+        self.api_url: str = (
+            config.get("api_url", "http://localhost:8100") if config else "http://localhost:8100"
+        )
+        self.timeout: int = config.get("timeout", 60) if config else 60
+        self.max_retry: int = config.get("max_retry", 3) if config else 3
+
+        # HTTP client
+        self.client: Optional[httpx.Client] = None
+
+    def initialize(self) -> None:
+        """
+        初始化XTQuant Provider
+
+        创建HTTP客户端并验证微服务连接。
+
+        Raises:
+            ProviderConnectionError: 无法连接到微服务
+            ProviderError: 初始化失败
+        """
+        if self._is_initialized:
+            logger.debug("XTQuantProvider already initialized")
+            return
+
+        try:
+            # 创建HTTP客户端
+            self.client = httpx.Client(
+                base_url=self.api_url,
+                timeout=self.timeout,
+                follow_redirects=True,
+            )
+
+            # 健康检查
+            response = self.client.get("/")
+            if response.status_code != 200:
+                raise ProviderConnectionError(
+                    f"xtquant_helper health check failed: {response.status_code}",
+                    provider_name=self.name,
+                )
+
+            data = response.json()
+            if data.get("status") != "ok":
+                raise ProviderConnectionError(
+                    "xtquant_helper is not running properly",
+                    provider_name=self.name,
+                )
+
+            logger.info(
+                f"XTQuantProvider initialized successfully (api_url={self.api_url})"
+            )
+            self._is_initialized = True
+
+        except httpx.ConnectError as e:
+            raise ProviderConnectionError(
+                f"Failed to connect to xtquant_helper at {self.api_url}: {str(e)}",
+                provider_name=self.name,
+            ) from e
+        except Exception as e:
+            raise ProviderError(
+                f"Failed to initialize XTQuantProvider: {str(e)}",
+                provider_name=self.name,
+            ) from e
+
+    def health_check(self) -> bool:
+        """
+        健康检查
+
+        验证xtquant_helper微服务是否可用。
+
+        Returns:
+            bool: 微服务是否可用
+        """
+        if not self._is_initialized or not self.client:
+            return False
+
+        try:
+            response = self.client.get("/", timeout=5)
+            return response.status_code == 200
+        except Exception as e:
+            logger.warning(f"XTQuant health check failed: {str(e)}")
+            return False
+
+    def _call_api(
+        self, endpoint: str, payload: Optional[Dict[str, Any]] = None
+    ) -> Any:
+        """
+        调用xtquant_helper API的通用方法
+
+        Args:
+            endpoint: API端点（例如 "/get_market_data"）
+            payload: 请求参数
+
+        Returns:
+            API返回的数据
+
+        Raises:
+            ProviderError: API调用失败
+        """
+        if not self._is_initialized or not self.client:
+            raise ProviderError(
+                "XTQuantProvider not initialized", provider_name=self.name
+            )
+
+        def _call():
+            try:
+                response = self.client.post(endpoint, json=payload or {})
+
+                # 检查HTTP状态码
+                if response.status_code >= 500:
+                    raise ProviderConnectionError(
+                        f"xtquant_helper server error: {response.status_code}",
+                        provider_name=self.name,
+                    )
+                elif response.status_code >= 400:
+                    raise ProviderDataError(
+                        f"xtquant_helper request error: {response.status_code}",
+                        provider_name=self.name,
+                    )
+
+                # 解析响应
+                data = response.json()
+
+                # 检查是否有错误
+                if isinstance(data, dict) and "error" in data:
+                    error_msg = data["error"]
+                    if "xtquant.xtdata not available" in error_msg:
+                        raise ProviderConnectionError(
+                            "xtquant is not available or not connected",
+                            provider_name=self.name,
+                        )
+                    else:
+                        raise ProviderDataError(
+                            f"xtquant API error: {error_msg}",
+                            provider_name=self.name,
+                        )
+
+                return data
+
+            except httpx.ConnectError as e:
+                raise ProviderConnectionError(
+                    f"Failed to connect to xtquant_helper: {str(e)}",
+                    provider_name=self.name,
+                )
+            except httpx.TimeoutException:
+                raise ProviderConnectionError(
+                    f"Request to xtquant_helper timed out (timeout={self.timeout}s)",
+                    provider_name=self.name,
+                )
+            except (ProviderConnectionError, ProviderDataError):
+                raise
+            except Exception as e:
+                raise ProviderError(
+                    f"Unexpected error calling xtquant API: {str(e)}",
+                    provider_name=self.name,
+                ) from e
+
+        # 使用重试机制
+        return self.retry_on_failure(_call, max_retries=self.max_retry)
+
+    def _convert_dict_to_dataframe(
+        self, data_dict: Dict[str, Any], symbol: str
+    ) -> pd.DataFrame:
+        """
+        将XTQuant API返回的字典转换为DataFrame
+
+        XTQuant返回的数据格式: {'field_name': {'timestamp': value}}
+
+        Args:
+            data_dict: API返回的数据字典
+            symbol: 股票代码
+
+        Returns:
+            pd.DataFrame: 转换后的DataFrame
+        """
+        if not data_dict:
+            return pd.DataFrame()
+
+        # 提取时间索引（从任意一个字段）
+        first_field = next(iter(data_dict.values()))
+        if isinstance(first_field, dict):
+            timestamps = list(first_field.keys())
+        else:
+            return pd.DataFrame()
+
+        # 构建DataFrame
+        df_data = {"time": pd.to_datetime(timestamps, unit="ms")}
+
+        for field_name, values in data_dict.items():
+            if isinstance(values, dict):
+                df_data[field_name.lower()] = [values.get(ts) for ts in timestamps]
+
+        df = pd.DataFrame(df_data)
+        df["symbol"] = symbol
+
+        return df
+
+    def get_stock_basic(
+        self,
+        market: Optional[str] = None,
+        list_status: Optional[str] = "L",
+    ) -> pd.DataFrame:
+        """
+        获取股票基本信息
+
+        注意：XTQuant没有直接获取股票列表的接口，需要通过板块接口间接获取。
+
+        Args:
+            market: 市场代码（SH/SZ），None表示全部
+            list_status: 上市状态（暂不支持）
+
+        Returns:
+            pd.DataFrame: 标准格式的股票基本信息
+        """
+        logger.info(f"Fetching stock basic info from XTQuant (market={market})")
+
+        # XTQuant没有直接的股票列表接口，暂返回空
+        # 实际使用中可能需要维护一个股票列表文件或者从其他接口获取
+        logger.warning(
+            "XTQuant does not provide direct stock list API. "
+            "Consider using Tushare or maintaining a stock list file."
+        )
+
+        return pd.DataFrame(columns=StockBasicSchema.get_required_columns())
+
+    def get_daily_data(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        adj: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取日线行情数据
+
+        Args:
+            symbol: 股票代码（例如 "600519.SH"）
+            start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD）
+            end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD）
+            adj: 复权类型（None=不复权, "qfq"=前复权, "hfq"=后复权）
+
+        Returns:
+            pd.DataFrame: 标准格式的日线数据
+        """
+        logger.info(
+            f"Fetching daily data for {symbol} from {start_date} to {end_date} (adj={adj})"
+        )
+
+        # 转换symbol格式（Tushare格式 -> XTQuant格式: 600519.SH -> SH.600519）
+        if "." in symbol:
+            code, exchange = symbol.split(".")
+            xtquant_symbol = f"{exchange}.{code}"
+        else:
+            xtquant_symbol = symbol
+
+        # 转换日期格式
+        start_date = start_date.replace("-", "")
+        end_date = end_date.replace("-", "")
+
+        # 确定复权类型
+        dividend_type = "none"
+        if adj == "qfq":
+            dividend_type = "front"
+        elif adj == "hfq":
+            dividend_type = "back"
+
+        # 调用API
+        payload = {
+            "field_list": [],  # 空列表表示返回所有字段
+            "stock_list": [xtquant_symbol],
+            "period": "1d",
+            "start_time": start_date,
+            "end_time": end_date,
+            "dividend_type": dividend_type,
+            "fill_data": True,
+        }
+
+        data = self._call_api("/get_market_data", payload)
+
+        # 解析返回数据
+        if not data:
+            return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
+
+        # 转换为DataFrame
+        df = self._convert_dict_to_dataframe(data, symbol)
+
+        if df.empty:
+            return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
+
+        # 列名映射（XTQuant字段名 -> 标准字段名）
+        # XTQuant的字段名通常是小写的
+        df.columns = [col.lower() for col in df.columns]
+
+        # 验证并转换数据
+        df = validate_dataframe(df, DailyDataSchema, provider_name=self.name)
+
+        # 按时间排序
+        df = df.sort_values("time").reset_index(drop=True)
+
+        logger.info(f"Fetched {len(df)} daily records for {symbol}")
+        return df
+
+    def get_minute_data(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        freq: str = "1m",
+    ) -> pd.DataFrame:
+        """
+        获取分钟级行情数据
+
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期时间
+            end_date: 结束日期时间
+            freq: 频率（1m, 5m, 15m, 30m, 60m）
+
+        Returns:
+            pd.DataFrame: 标准格式的分钟数据
+        """
+        logger.info(
+            f"Fetching {freq} data for {symbol} from {start_date} to {end_date}"
+        )
+
+        # 转换symbol格式
+        if "." in symbol:
+            code, exchange = symbol.split(".")
+            xtquant_symbol = f"{exchange}.{code}"
+        else:
+            xtquant_symbol = symbol
+
+        # 转换日期格式
+        start_date = start_date.replace("-", "").replace(" ", "").replace(":", "")
+        end_date = end_date.replace("-", "").replace(" ", "").replace(":", "")
+
+        # 转换频率格式
+        freq_mapping = {
+            "1m": "1m",
+            "5m": "5m",
+            "15m": "15m",
+            "30m": "30m",
+            "60m": "1h",
+        }
+        xtquant_freq = freq_mapping.get(freq, "1m")
+
+        # 调用API
+        payload = {
+            "field_list": [],
+            "stock_list": [xtquant_symbol],
+            "period": xtquant_freq,
+            "start_time": start_date[:8],  # 只取日期部分
+            "end_time": end_date[:8],
+            "dividend_type": "none",
+            "fill_data": True,
+        }
+
+        data = self._call_api("/get_market_data", payload)
+
+        if not data:
+            return pd.DataFrame(columns=MinuteDataSchema.get_required_columns())
+
+        # 转换为DataFrame
+        df = self._convert_dict_to_dataframe(data, symbol)
+
+        if df.empty:
+            return pd.DataFrame(columns=MinuteDataSchema.get_required_columns())
+
+        # 列名标准化
+        df.columns = [col.lower() for col in df.columns]
+
+        # 验证数据
+        df = validate_dataframe(df, MinuteDataSchema, provider_name=self.name)
+
+        # 按时间排序
+        df = df.sort_values("time").reset_index(drop=True)
+
+        logger.info(f"Fetched {len(df)} minute records for {symbol}")
+        return df
+
+    def get_daily_basic(
+        self,
+        symbol: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取每日指标数据
+
+        注意：XTQuant的基础数据字段较少，可能不包含所有指标。
+
+        Args:
+            symbol: 股票代码，None表示全部
+            trade_date: 交易日期，与start_date/end_date互斥
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            pd.DataFrame: 标准格式的每日指标数据
+        """
+        logger.info(
+            f"Fetching daily basic for symbol={symbol}, "
+            f"trade_date={trade_date}, start_date={start_date}, end_date={end_date}"
+        )
+
+        # XTQuant的市场数据中不包含完整的每日指标
+        # 可以通过财务数据接口获取部分指标，但不完全匹配
+        logger.warning(
+            "XTQuant does not provide comprehensive daily basic indicators. "
+            "Consider using Tushare for this data."
+        )
+
+        return pd.DataFrame(columns=DailyBasicSchema.get_required_columns())
+
+    def __del__(self):
+        """清理资源"""
+        if self.client:
+            self.client.close()

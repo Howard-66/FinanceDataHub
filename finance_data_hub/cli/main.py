@@ -4,15 +4,21 @@ CLI 主入口模块
 提供 fdh-cli 命令行工具的入口点。
 """
 
-from typing import Optional
-from datetime import datetime
+from typing import Optional, List
+from datetime import datetime, timedelta
+import asyncio
 
 import typer
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.syntax import Syntax
+from rich import print as rprint
 
 from finance_data_hub.config import get_settings, reload_settings
+from finance_data_hub.update.updater import DataUpdater
+from finance_data_hub.providers.base import ProviderError
 
 # 创建 Typer 应用
 app = typer.Typer(
@@ -43,13 +49,28 @@ def update(
         "daily",
         "--frequency",
         "-f",
-        help="数据频率 (daily, minute_1, minute_5, tick)"
+        help="数据频率 (daily, minute_1, minute_5, basic, adj_factor)"
     ),
     symbols: Optional[str] = typer.Option(
         None,
         "--symbols",
         "-s",
         help="股票代码列表，用逗号分隔，如: 600519.SH,000858.SZ"
+    ),
+    start_date: Optional[str] = typer.Option(
+        None,
+        "--start-date",
+        help="开始日期 (YYYY-MM-DD)，默认获取最近数据"
+    ),
+    end_date: Optional[str] = typer.Option(
+        None,
+        "--end-date",
+        help="结束日期 (YYYY-MM-DD)，默认为今天"
+    ),
+    adj: Optional[str] = typer.Option(
+        None,
+        "--adj",
+        help="复权类型 (None=不复权, qfq=前复权, hfq=后复权)"
     ),
     config_file: Optional[str] = typer.Option(
         None,
@@ -69,7 +90,7 @@ def update(
     执行数据同步流程，从配置的数据源获取数据并存储到数据库。
     支持按资产类别、数据频率和特定股票代码进行筛选。
     """
-    console.print("[bold green]🚀 开始数据更新流程[/bold green]")
+    console.print("[bold green]🚀 开始数据更新流程[/bold green]\n")
 
     try:
         # 加载配置
@@ -85,31 +106,172 @@ def update(
         if symbols:
             console.print(f"[cyan]股票代码:[/cyan] {symbols}")
 
-        # 显示数据库连接信息（隐藏密码）
-        db_url = settings.database.url
-        if "@" in db_url:
-            parts = db_url.split("@")
-            if len(parts) == 2:
-                user_pass = parts[0].split("://")[1]
-                user = user_pass.split(":")[0] if ":" in user_pass else user_pass
-                console.print(f"[cyan]数据库:[/cyan] {user}@localhost:5432/trading_nexus_db")
+        if start_date:
+            console.print(f"[cyan]开始日期:[/cyan] {start_date}")
+        if end_date:
+            console.print(f"[cyan]结束日期:[/cyan] {end_date}")
+        if adj:
+            console.print(f"[cyan]复权类型:[/cyan] {adj}")
 
-        if verbose:
-            console.print(f"[cyan]日志级别:[/cyan] {settings.logging.level}")
-            console.print(f"[cyan]ETL 目录:[/cyan] {settings.etl.data_path}")
+        # 执行更新流程
+        asyncio.run(_run_update(
+            settings, asset_class, frequency, symbols,
+            start_date, end_date, adj, verbose
+        ))
 
-        # TODO: 实现实际的数据更新逻辑
-        console.print("\n[bold yellow]⚠️  功能待实现[/bold yellow]")
-        console.print("此命令将在 Phase 2 中实现数据源适配器后完成")
-
-        # 显示成功信息
-        console.print("\n[bold green]✓ 配置加载成功[/bold green]")
-        console.print(f"[dim]数据库: {settings.database.url.split('@')[-1] if '@' in settings.database.url else '未配置'}[/dim]")
-        console.print(f"[dim]Redis: {settings.redis.url}[/dim]")
+        console.print("\n[bold green]✓ 数据更新完成[/bold green]")
 
     except Exception as e:
         console.print(f"[bold red]❌ 错误: {str(e)}[/bold red]")
+        if verbose:
+            import traceback
+            console.print(traceback.format_exc())
         raise typer.Exit(1)
+
+
+async def _run_update(
+    settings,
+    asset_class: str,
+    frequency: str,
+    symbols: Optional[str],
+    start_date: Optional[str],
+    end_date: Optional[str],
+    adj: Optional[str],
+    verbose: bool,
+):
+    """执行实际的数据更新"""
+    # 解析股票代码列表
+    symbol_list = None
+    if symbols:
+        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+
+    # 设置默认日期
+    if not end_date:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    if not start_date and frequency == "daily":
+        # 日线数据默认获取最近30天
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        start_dt = end_dt - timedelta(days=30)
+        start_date = start_dt.strftime("%Y-%m-%d")
+    elif not start_date and "minute" in frequency:
+        # 分钟数据默认获取最近1天
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        start_dt = end_dt - timedelta(days=1)
+        start_date = start_dt.strftime("%Y-%m-%d")
+
+    # 初始化更新器
+    async with DataUpdater(settings, config_path="sources.yml") as updater:
+        # 进度显示
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在更新...", total=100)
+
+            try:
+                # 更新股票基本信息
+                if frequency == "basic":
+                    progress.update(task, description="更新股票基本信息...")
+                    count = await updater.update_stock_basic()
+                    progress.update(task, advance=100)
+                    console.print(f"[green]✓ 更新了 {count} 条股票基本信息[/green]")
+                    return
+
+                # 更新日线数据
+                elif frequency == "daily":
+                    progress.update(task, description="更新日线数据...")
+                    total = 0
+
+                    if not symbol_list:
+                        # 首先更新股票基本信息
+                        console.print("[yellow]先更新股票列表...[/yellow]")
+                        basic_count = await updater.update_stock_basic()
+                        console.print(f"[green]✓ 更新了 {basic_count} 条股票基本信息[/green]")
+
+                        # 获取股票列表
+                        symbols_db = await updater.data_ops.get_symbol_list()
+                        # symbol_list = symbols_db[:10]  # 限制数量避免API调用过多
+                        symbol_list = symbols_db
+                        console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]")
+
+                    # 更新数据
+                    count = await updater.update_daily_data(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        adj=adj,
+                    )
+                    total += count
+                    progress.update(task, advance=100)
+                    console.print(f"[green]✓ 更新了 {count} 条日线数据[/green]")
+
+                # 更新分钟数据
+                elif frequency in ["minute_1", "minute_5"]:
+                    freq_map = {"minute_1": "1m", "minute_5": "5m"}
+                    actual_freq = freq_map[frequency]
+
+                    progress.update(task, description=f"更新{actual_freq}数据...")
+
+                    count = await updater.update_minute_data(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        freq=actual_freq,
+                    )
+                    progress.update(task, advance=100)
+                    console.print(f"[green]✓ 更新了 {count} 条{actual_freq}数据[/green]")
+
+                # 更新每日指标
+                elif frequency == "daily_basic":
+                    progress.update(task, description="更新每日指标数据...")
+
+                    count = await updater.update_daily_basic(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    progress.update(task, advance=100)
+                    console.print(f"[green]✓ 更新了 {count} 条每日指标数据[/green]")
+
+                # 更新复权因子
+                elif frequency == "adj_factor":
+                    progress.update(task, description="更新复权因子...")
+
+                    count = await updater.update_adj_factor(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    progress.update(task, advance=100)
+                    console.print(f"[green]✓ 更新了 {count} 条复权因子数据[/green]")
+
+                else:
+                    console.print(f"[bold red]不支持的数据频率: {frequency}[/bold red]")
+                    raise typer.Exit(1)
+
+                # 显示路由器统计
+                if verbose:
+                    stats = updater.router.get_stats()
+                    if stats:
+                        console.print("\n[bold]路由统计:[/bold]")
+                        for provider, stat in stats.items():
+                            console.print(
+                                f"  [cyan]{provider}[/cyan]: "
+                                f"总调用 {stat['total']}, "
+                                f"成功 {stat['success']}, "
+                                f"失败 {stat['failure']}"
+                            )
+
+            except ProviderError as e:
+                console.print(f"\n[bold red]❌ 数据源错误: {str(e)}[/bold red]")
+                raise
+            except Exception as e:
+                console.print(f"\n[bold red]❌ 更新失败: {str(e)}[/bold red]")
+                raise
 
 
 @app.command("etl")
@@ -171,6 +333,23 @@ def etl(
         # TODO: 实现实际 ETL 逻辑
         console.print("\n[bold yellow]⚠️  功能待实现[/bold yellow]")
         console.print("此命令将在 Phase 3 中实现数据访问 SDK 后完成")
+
+        # 创建一个简单的配置示例
+        console.print("\n[bold]ETL 配置示例:[/bold]")
+        config_example = """
+# 创建一个 Parquet 文件
+CREATE TABLE IF NOT EXISTS symbol_daily_etl AS
+SELECT * FROM symbol_daily
+WHERE time BETWEEN '2024-01-01' AND '2024-12-31';
+
+# 使用 DuckDB 查询
+SELECT symbol, AVG(close) as avg_close
+FROM 'symbol_daily.parquet'
+GROUP BY symbol
+ORDER BY avg_close DESC
+LIMIT 10;
+"""
+        console.print(Syntax(config_example, "sql", theme="monokai"))
 
         console.print("\n[bold green]✓ 配置验证成功[/bold green]")
 

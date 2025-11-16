@@ -2,6 +2,7 @@
 CLI 模块单元测试
 """
 
+import pytest
 from unittest.mock import Mock, patch
 from typer.testing import CliRunner
 
@@ -45,10 +46,13 @@ def test_cli_status_verbose():
 
 
 def test_cli_update():
-    """测试更新命令"""
-    result = runner.invoke(app, ["update"])
-    assert result.exit_code == 0
-    assert "开始数据更新流程" in result.output
+    """测试更新命令 - 使用mock避免真实数据更新"""
+    # 使用mock避免真实调用provider
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, ["update"])
+        # CLI应该成功启动，即使update失败
+        assert result.exit_code == 0
+        assert "开始数据更新流程" in result.output
 
 
 def test_cli_update_with_options():
