@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker-compose ps:*)",
+      "Bash(python -m finance_data_hub.cli.main:*)",
+      "Bash(source:*)",
+      "Bash(fdh-cli init:*)",
+      "Bash(timeout 30 fdh-cli init:*)",
+      "Bash(timeout:*)",
+      "Bash(fdh-cli update:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

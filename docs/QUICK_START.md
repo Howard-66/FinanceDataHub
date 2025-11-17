@@ -46,17 +46,22 @@ cp sources.yml.example sources.yml
 
 ### 2. 初始化数据库
 
-执行SQL初始化脚本：
+使用CLI命令自动初始化数据库：
 ```bash
-# 连接到PostgreSQL
-psql postgresql://trading_nexus:trading.nexus.postgres@localhost:5432/trading_nexus_db
+# 初始化数据库（创建所有必需的表和扩展）
+fdh-cli init
 
-# 执行初始化脚本
-\i sql/init/001_create_extensions.sql
-\i sql/init/002_create_tables.sql
-\i sql/init/003_create_hypertables.sql
-\i sql/init/004_create_adj_factor.sql
+# 或显示详细信息
+fdh-cli init --verbose
 ```
+
+这将自动：
+- 创建TimescaleDB扩展
+- 创建所有数据表（asset_basic, symbol_daily, symbol_minute等）
+- 创建索引和约束
+- 创建视图和辅助函数
+
+⚠️ **注意**: 首次使用系统前必须执行此命令！
 
 ### 3. 安装依赖
 
@@ -105,6 +110,7 @@ fdh-cli config
 fdh-cli --help
 
 # 具体命令帮助
+fdh-cli init --help
 fdh-cli update --help
 fdh-cli status --help
 ```
@@ -472,4 +478,11 @@ A: 使用PostgreSQL的pg_dump工具，或配置定时备份脚本。
 
 ---
 
-**开始使用：** `fdh-cli update --frequency basic` 🚀
+**开始使用：**
+```bash
+# 1. 初始化数据库
+fdh-cli init
+
+# 2. 更新股票基本信息
+fdh-cli update --frequency basic
+```

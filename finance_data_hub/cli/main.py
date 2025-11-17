@@ -19,6 +19,7 @@ from rich import print as rprint
 from finance_data_hub.config import get_settings, reload_settings
 from finance_data_hub.update.updater import DataUpdater
 from finance_data_hub.providers.base import ProviderError
+from finance_data_hub.database.init_db import init_database
 
 # 创建 Typer 应用
 app = typer.Typer(
@@ -90,7 +91,7 @@ def update(
     执行数据同步流程，从配置的数据源获取数据并存储到数据库。
     支持按资产类别、数据频率和特定股票代码进行筛选。
     """
-    console.print("[bold green]🚀 开始数据更新流程[/bold green]\n")
+    console.print("[bold green]开始数据更新流程[/bold green]\n")
 
     try:
         # 加载配置
@@ -119,10 +120,10 @@ def update(
             start_date, end_date, adj, verbose
         ))
 
-        console.print("\n[bold green]✓ 数据更新完成[/bold green]")
+        console.print("\n[bold green][OK][/bold green] 数据更新完成")
 
     except Exception as e:
-        console.print(f"[bold red]❌ 错误: {str(e)}[/bold red]")
+        console.print(f"[bold red]ERROR:[/bold red] {str(e)}")
         if verbose:
             import traceback
             console.print(traceback.format_exc())
@@ -178,7 +179,7 @@ async def _run_update(
                     progress.update(task, description="更新股票基本信息...")
                     count = await updater.update_stock_basic()
                     progress.update(task, advance=100)
-                    console.print(f"[green]✓ 更新了 {count} 条股票基本信息[/green]")
+                    console.print(f"[green][OK][/green] 更新了 {count} 条股票基本信息")
                     return
 
                 # 更新日线数据
@@ -190,7 +191,7 @@ async def _run_update(
                         # 首先更新股票基本信息
                         console.print("[yellow]先更新股票列表...[/yellow]")
                         basic_count = await updater.update_stock_basic()
-                        console.print(f"[green]✓ 更新了 {basic_count} 条股票基本信息[/green]")
+                        console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
 
                         # 获取股票列表
                         symbols_db = await updater.data_ops.get_symbol_list()
@@ -207,7 +208,7 @@ async def _run_update(
                     )
                     total += count
                     progress.update(task, advance=100)
-                    console.print(f"[green]✓ 更新了 {count} 条日线数据[/green]")
+                    console.print(f"[green][OK][/green] 更新了 {count} 条日线数据")
 
                 # 更新分钟数据
                 elif frequency in ["minute_1", "minute_5"]:
@@ -223,7 +224,7 @@ async def _run_update(
                         freq=actual_freq,
                     )
                     progress.update(task, advance=100)
-                    console.print(f"[green]✓ 更新了 {count} 条{actual_freq}数据[/green]")
+                    console.print(f"[green][OK][/green] 更新了 {count} 条{actual_freq}数据")
 
                 # 更新每日指标
                 elif frequency == "daily_basic":
@@ -235,7 +236,7 @@ async def _run_update(
                         end_date=end_date,
                     )
                     progress.update(task, advance=100)
-                    console.print(f"[green]✓ 更新了 {count} 条每日指标数据[/green]")
+                    console.print(f"[green][OK][/green] 更新了 {count} 条每日指标数据")
 
                 # 更新复权因子
                 elif frequency == "adj_factor":
@@ -247,7 +248,7 @@ async def _run_update(
                         end_date=end_date,
                     )
                     progress.update(task, advance=100)
-                    console.print(f"[green]✓ 更新了 {count} 条复权因子数据[/green]")
+                    console.print(f"[green][OK][/green] 更新了 {count} 条复权因子数据")
 
                 else:
                     console.print(f"[bold red]不支持的数据频率: {frequency}[/bold red]")
@@ -267,10 +268,10 @@ async def _run_update(
                             )
 
             except ProviderError as e:
-                console.print(f"\n[bold red]❌ 数据源错误: {str(e)}[/bold red]")
+                console.print(f"\n[bold red]ERROR:[/bold red] 数据源错误: {str(e)}")
                 raise
             except Exception as e:
-                console.print(f"\n[bold red]❌ 更新失败: {str(e)}[/bold red]")
+                console.print(f"\n[bold red]ERROR:[/bold red] 更新失败: {str(e)}")
                 raise
 
 
@@ -310,7 +311,7 @@ def etl(
     将数据从 PostgreSQL 主存储同步到 Parquet+DuckDB 分析存储。
     支持指定日期范围和股票代码进行选择性 ETL。
     """
-    console.print("[bold blue]🔄 开始 ETL 流程[/bold blue]")
+    console.print("[bold blue]开始 ETL 流程[/bold blue]")
 
     try:
         settings = get_settings()
@@ -351,10 +352,10 @@ LIMIT 10;
 """
         console.print(Syntax(config_example, "sql", theme="monokai"))
 
-        console.print("\n[bold green]✓ 配置验证成功[/bold green]")
+        console.print("\n[bold green][OK][/bold green] 配置验证成功")
 
     except Exception as e:
-        console.print(f"[bold red]❌ 错误: {str(e)}[/bold red]")
+        console.print(f"[bold red]ERROR:[/bold red] {str(e)}")
         raise typer.Exit(1)
 
 
@@ -377,7 +378,7 @@ def status(
 
     检查数据库连接、数据新鲜度、服务健康状态等信息。
     """
-    console.print("[bold magenta]📊 系统状态检查[/bold magenta]\n")
+    console.print("[bold magenta]系统状态检查[/bold magenta]\n")
 
     try:
         settings = get_settings()
@@ -390,21 +391,21 @@ def status(
 
         # 数据库状态
         db_url = settings.database.url
-        db_status = "✓ 正常" if "localhost" in db_url or "postgresql" in db_url else "⚠️  请检查"
+        db_status = "[OK] 正常" if "localhost" in db_url or "postgresql" in db_url else "[WARNING] 请检查"
         db_info = "已连接" if "localhost" in db_url else db_url
         table.add_row("PostgreSQL", db_status, db_info)
 
         # Redis 状态
-        redis_status = "✓ 正常" if "redis://" in settings.redis.url else "⚠️  请检查"
+        redis_status = "[OK] 正常" if "redis://" in settings.redis.url else "[WARNING] 请检查"
         redis_info = "Redis 7.x" if "redis://" in settings.redis.url else settings.redis.url
         table.add_row("Redis", redis_status, redis_info)
 
         # 数据源状态
-        tushare_status = "✓ 已配置" if settings.data_source.tushare_token else "⚠️  未配置"
+        tushare_status = "[OK] 已配置" if settings.data_source.tushare_token else "[WARNING] 未配置"
         tushare_info = "Tushare Pro API" if settings.data_source.tushare_token else "缺少 TUSHARE_TOKEN"
         table.add_row("Tushare", tushare_status, tushare_info)
 
-        xtquant_status = "✓ 已配置" if settings.data_source.xtquant_api_url else "⚠️  未配置"
+        xtquant_status = "[OK] 已配置" if settings.data_source.xtquant_api_url else "[WARNING] 未配置"
         xtquant_info = settings.data_source.xtquant_api_url or "未配置"
         table.add_row("XTQuant", xtquant_status, xtquant_info)
 
@@ -424,7 +425,43 @@ def status(
         console.print(f"[dim]配置文件: .env 或环境变量[/dim]")
 
     except Exception as e:
-        console.print(f"[bold red]❌ 错误: {str(e)}[/bold red]")
+        console.print(f"[bold red]ERROR:[/bold red] {str(e)}")
+        raise typer.Exit(1)
+
+
+@app.command("init")
+def init_db(
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="显示详细信息"
+    ),
+):
+    """
+    初始化数据库
+
+    创建必要的数据库表、索引和扩展。
+    必须在首次使用系统前执行此命令。
+    """
+    console.print("[bold blue]数据库初始化[/bold blue]\n")
+
+    try:
+        settings = get_settings()
+
+        if verbose:
+            console.print("[yellow]显示详细信息[/yellow]\n")
+            console.print(f"[cyan]数据库URL:[/cyan] {settings.database.url}")
+            console.print(f"[cyan]SQL脚本目录:[/cyan] sql/init/")
+
+        # 执行数据库初始化
+        asyncio.run(init_database(settings, verbose=verbose))
+
+    except Exception as e:
+        console.print(f"[bold red]ERROR:[/bold red] {str(e)}")
+        if verbose:
+            import traceback
+            console.print(traceback.format_exc())
         raise typer.Exit(1)
 
 
@@ -441,12 +478,12 @@ def config_show(
 
     显示当前加载的所有配置项（敏感信息将被隐藏）。
     """
-    console.print("[bold cyan]⚙️  当前配置[/bold cyan]\n")
+    console.print("[bold cyan]当前配置[/bold cyan]\n")
 
     try:
         if reload:
             settings = reload_settings()
-            console.print("[green]✓ 配置已重新加载[/green]\n")
+            console.print("[green][OK][/green] 配置已重新加载\n")
         else:
             settings = get_settings()
 
@@ -492,7 +529,7 @@ def config_show(
         console.print(table)
 
     except Exception as e:
-        console.print(f"[bold red]❌ 错误: {str(e)}[/bold red]")
+        console.print(f"[bold red]ERROR:[/bold red] {str(e)}")
         raise typer.Exit(1)
 
 
