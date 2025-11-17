@@ -8,6 +8,7 @@ services:
       - POSTGRES_PASSWORD=trading.nexus.data
       - POSTGRES_USER=trading_nexus
       - POSTGRES_DB=trading_nexus_db
+      - TZ=Asia/Shanghai
     ports:
       - "5432:5432"
     volumes:
@@ -29,6 +30,8 @@ services:
       - "6379:6379"
     volumes:
       - ./redis_data:/data
+    environment:
+      - TZ=Asia/Shanghai
     command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
