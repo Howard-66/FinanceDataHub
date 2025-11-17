@@ -31,7 +31,7 @@ DATABASE_URL=postgresql://trading_nexus:trading.nexus.data@localhost:5432/tradin
 REDIS_URL=redis://localhost:6379/0
 
 # Tushare Token（从 https://tushare.pro/ 获取）
-TUSHARE_TOKEN=7c21668102a23bf1ea79451f22f6801e7365a7a15db5348b9f84f16c
+TUSHARE_TOKEN=your_tushare_token
 
 # XTQuant API地址（可选，如果使用XTQuant）
 XTQUANT_API_URL=http://localhost:8100

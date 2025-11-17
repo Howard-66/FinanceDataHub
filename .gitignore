@@ -147,6 +147,7 @@ venv.bak/
 # FinanceDataHub specific
 # Docker data directories
 pg_data/
+pg_data_bak/
 redis_data/
 
 # Data directories

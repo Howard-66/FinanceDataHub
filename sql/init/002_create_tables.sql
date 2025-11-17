@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS daily_basic (
     symbol VARCHAR(20) NOT NULL,              -- 股票代码
     trade_volume BIGINT,                      -- 交易量（手）
     turnover_rate DECIMAL(10,6),              -- 换手率
-    turnover_rate_f DECIMAL(10,6),            -- 换手率（浮动）
     volume_ratio DECIMAL(10,6),               -- 量比
     pe DECIMAL(20,6),                         -- 市盈率
     pe_ttm DECIMAL(20,6),                     -- 市盈率TTM
@@ -49,7 +48,8 @@ CREATE TABLE IF NOT EXISTS daily_basic (
     total_mv DECIMAL(20,6),                   -- 总市值（万元）
     circ_mv DECIMAL(20,6),                    -- 流通市值（万元）
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(symbol, time)                      -- 确保每个股票每天只有一条记录
 );
 
 -- 创建索引
