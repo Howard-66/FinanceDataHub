@@ -7,7 +7,10 @@
       "Bash(fdh-cli init:*)",
       "Bash(timeout 30 fdh-cli init:*)",
       "Bash(timeout:*)",
-      "Bash(fdh-cli update:*)"
+      "Bash(fdh-cli update:*)",
+      "Bash(psql \"postgresql://trading_nexus:trading.nexus.data@localhost:5432/trading_nexus_db\" -c \"SELECT symbol, COUNT(*) as record_count FROM adj_factor GROUP BY symbol ORDER BY symbol;\")",
+      "Bash(python -c:*)",
+      "Bash(fdh-cli status:*)"
     ],
     "deny": [],
     "ask": []

@@ -363,12 +363,13 @@ class TushareProvider(BaseDataProvider):
             adj_factors = self._get_adj_factor(symbol, start_date, end_date)
             if not adj_factors.empty:
                 df = df.merge(
-                    adj_factors[["trade_date", "adj_factor"]],
+                    adj_factors[["time", "adj_factor"]],
                     left_on="time",
-                    right_on="trade_date",
+                    right_on="time",
                     how="left",
                 )
-                df.drop(columns=["trade_date"], inplace=True, errors="ignore")
+                df.drop(columns=["time_y"], inplace=True, errors="ignore")
+                df.rename(columns={"time_x": "time"}, inplace=True)
 
         # 验证数据格式
         df = validate_dataframe(df, DailyDataSchema, provider_name=self.name)
@@ -587,7 +588,7 @@ class TushareProvider(BaseDataProvider):
             end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD）
 
         Returns:
-            pd.DataFrame: 包含symbol, trade_date, adj_factor的DataFrame
+            pd.DataFrame: 包含symbol, time, adj_factor的DataFrame
         """
         logger.info(
             f"Fetching adj factor for symbol={symbol}, "
@@ -614,23 +615,23 @@ class TushareProvider(BaseDataProvider):
         if df.empty:
             logger.warning(f"Empty adj_factor result for {symbol}")
             return pd.DataFrame(
-                columns=["symbol", "trade_date", "adj_factor"]
+                columns=["symbol", "time", "adj_factor"]
             )
 
         # 列名映射
         column_mapping = {
             "ts_code": "symbol",
-            "trade_date": "trade_date",
+            "trade_date": "time",
             "adj_factor": "adj_factor",
         }
 
         df = convert_to_standard_columns(df, column_mapping)
 
         # 转换时间格式
-        df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
+        df["time"] = pd.to_datetime(df["time"], format="%Y%m%d")
 
         # 按时间排序
-        df = df.sort_values("trade_date").reset_index(drop=True)
+        df = df.sort_values("time").reset_index(drop=True)
 
         logger.info(f"Fetched {len(df)} adj_factor records")
         return df

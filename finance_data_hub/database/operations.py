@@ -422,12 +422,12 @@ class DataOperations:
 
         insert_sql = """
             INSERT INTO adj_factor (
-                symbol, trade_date, adj_factor
+                symbol, time, adj_factor
             )
             VALUES (
-                :symbol, :trade_date, :adj_factor
+                :symbol, :time, :adj_factor
             )
-            ON CONFLICT (symbol, trade_date) DO UPDATE SET
+            ON CONFLICT (symbol, time) DO UPDATE SET
                 adj_factor = EXCLUDED.adj_factor,
                 updated_at = NOW()
         """
@@ -443,7 +443,7 @@ class DataOperations:
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
-                    elif key == "trade_date" or isinstance(value, pd.Timestamp):
+                    elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
                         record[key] = _normalize_datetime_for_db(value)
 
