@@ -25,7 +25,7 @@ docker-compose ps
 创建 `.env` 文件：
 ```bash
 # 数据库配置
-DATABASE_URL=postgresql://trading_nexus:trading.nexus.postgres@localhost:5432/trading_nexus_db
+DATABASE_URL=postgresql://trading_nexus:trading.nexus.data@localhost:5432/trading_nexus_db
 
 # Redis配置
 REDIS_URL=redis://localhost:6379/0
@@ -55,6 +55,7 @@ psql postgresql://trading_nexus:trading.nexus.postgres@localhost:5432/trading_ne
 \i sql/init/001_create_extensions.sql
 \i sql/init/002_create_tables.sql
 \i sql/init/003_create_hypertables.sql
+\i sql/init/004_create_adj_factor.sql
 ```
 
 ### 3. 安装依赖
