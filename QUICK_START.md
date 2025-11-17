@@ -1,4 +1,12 @@
-# FinanceDataHub Phase 2 快速开始指南
+# FinanceDataHub 快速开始指南
+
+欢迎使用 FinanceDataHub！这是一个基于现代 Python 技术的综合性金融数据服务中心。
+
+## 📋 系统要求
+
+- Python 3.11+
+- Docker & Docker Compose
+- uv 包管理器（可选，用于依赖管理）
 
 ## 🚀 快速开始
 
@@ -17,13 +25,13 @@ docker-compose ps
 创建 `.env` 文件：
 ```bash
 # 数据库配置
-DATABASE_URL=postgresql://fdh_user:fdh_password@localhost:5432/financedatahub
+DATABASE_URL=postgresql://trading_nexus:trading.nexus.postgres@localhost:5432/trading_nexus_db
 
 # Redis配置
 REDIS_URL=redis://localhost:6379/0
 
 # Tushare Token（从 https://tushare.pro/ 获取）
-TUSHARE_TOKEN=your_token_here
+TUSHARE_TOKEN=7c21668102a23bf1ea79451f22f6801e7365a7a15db5348b9f84f16c
 
 # XTQuant API地址（可选，如果使用XTQuant）
 XTQUANT_API_URL=http://localhost:8100
@@ -41,7 +49,7 @@ cp sources.yml.example sources.yml
 执行SQL初始化脚本：
 ```bash
 # 连接到PostgreSQL
-psql postgresql://fdh_user:fdh_password@localhost:5432/financedatahub
+psql postgresql://trading_nexus:trading.nexus.postgres@localhost:5432/trading_nexus_db
 
 # 执行初始化脚本
 \i sql/init/001_create_extensions.sql
@@ -51,12 +59,41 @@ psql postgresql://fdh_user:fdh_password@localhost:5432/financedatahub
 
 ### 3. 安装依赖
 
+#### 使用 uv（推荐）
+
 ```bash
-# 使用uv安装所有依赖
+# 安装 uv（如果尚未安装）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+
+# 同步依赖
 uv sync
 
-# 验证安装
-uv run fdh-cli --help
+# 激活虚拟环境
+source .venv/bin/activate
+```
+
+#### 使用 pip
+
+```bash
+# 安装核心依赖
+pip install -e .
+
+# 安装开发依赖（可选）
+pip install -e ".[dev]"
+```
+
+### 4. 验证安装
+
+```bash
+# 测试 CLI 命令
+fdh-cli --help
+
+# 查看系统状态
+fdh-cli status
+
+# 查看当前配置
+fdh-cli config
 ```
 
 ## 📖 基本使用
@@ -282,6 +319,99 @@ LIMIT 5;
 - Tushare限制200次/分钟调用，已实现自动限频
 - XTQuant调用较慢，建议分批更新
 
+## 🐍 Python API
+
+```python
+from finance_data_hub.config import get_settings
+
+# 获取配置
+settings = get_settings()
+
+# 使用配置
+db_url = settings.database.url
+redis_url = settings.redis.url
+```
+
+## 🧪 运行测试
+
+```bash
+# 运行所有测试
+pytest
+
+# 运行特定测试
+pytest tests/unit/test_config.py
+
+# 生成覆盖率报告
+pytest --cov=finance_data_hub
+```
+
+## 📁 项目结构
+
+```
+finance_data_hub/
+├── cli/                    # CLI 工具
+├── config.py              # 配置管理
+├── providers/             # 数据提供者
+│   ├── base.py            # Provider基类 (420行)
+│   ├── tushare.py         # Tushare集成 (540行)
+│   ├── xtquant.py         # XTQuant集成 (380行)
+│   └── registry.py        # 注册机制
+├── router/                # 智能路由
+│   └── smart_router.py    # 520行，支持断路器+故障转移
+├── database/              # 数据库操作
+│   ├── manager.py         # 连接池 (160行)
+│   └── operations.py      # 批量操作 (320行)
+├── update/                # 数据更新器
+│   └── updater.py         # 集成所有组件 (280行)
+└── utils/                 # 工具函数
+
+tests/
+├── unit/                  # 单元测试 (42个测试)
+└── integration/           # 集成测试
+
+配置文件:
+├── .env.example          # 环境变量模板
+├── sources.yml.example   # 数据源配置示例
+├── pyproject.toml        # 项目配置
+├── docker-compose.yml    # Docker 编排
+└── uv.lock              # 依赖锁定
+```
+
+## 🔧 开发指南
+
+### 代码风格
+
+项目使用以下工具确保代码质量：
+
+```bash
+# 代码格式化
+black .
+
+# 导入排序
+isort .
+
+# 代码检查
+flake8
+
+# 类型检查
+mypy finance_data_hub
+```
+
+### 添加新功能
+
+1. 在相应的模块中添加代码
+2. 编写单元测试
+3. 更新文档
+4. 运行所有测试
+
+### 提交代码
+
+使用 Conventional Commits 格式：
+
+```bash
+git commit -m "feat(config): add new database connection option"
+```
+
 ## 🔄 下一步
 
 ### Phase 3 即将实现
@@ -297,12 +427,35 @@ LIMIT 5;
 
 ## 📚 更多资源
 
-- [项目文档](./README.md)
-- [实施总结](./PHASE2_IMPLEMENTATION_SUMMARY.md)
-- [验证清单](./FINAL_VERIFICATION.md)
-- [数据源配置](./sources.yml.example)
+- [项目文档](./README.md) - 项目概览和完整功能列表
+- [最终交付报告](./FINAL_SUMMARY.md) - Phase 2完整交付文档，包含Bug修复记录、功能验证清单等
+- [数据源配置](./sources.yml.example) - 数据源路由配置示例
 
 ## ❓ 常见问题
+
+**Q: 如何连接数据库？**
+
+A: 默认连接信息：
+- Host: localhost
+- Port: 5432
+- Database: trading_nexus_db
+- User: trading_nexus
+- Password: trading.nexus.data
+
+**Q: uv 同步依赖失败怎么办？**
+
+A: 尝试清理并重新同步：
+```bash
+rm -rf .venv uv.lock
+uv sync
+```
+
+**Q: 如何查看详细的日志？**
+
+A: 修改 `.env` 文件中的 `LOG_LEVEL` 为 `DEBUG`：
+```bash
+LOG_LEVEL=DEBUG
+```
 
 **Q: 可以同时使用Tushare和XTQuant吗？**
 A: 是的，系统会自动根据路由策略选择数据源，并支持故障转移。

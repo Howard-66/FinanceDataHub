@@ -17,6 +17,7 @@
 | 001_create_extensions.sql | TimescaleDB扩展和版本管理 | ✅ 完成 |
 | 002_create_tables.sql | 完整表结构（5张表） | ✅ 完成 |
 | 003_create_hypertables.sql | 超表、压缩、保留策略 | ✅ 完成 |
+| 004_create_adj_factor.sql | 复权因子表 | ✅ 完成 |
 
 **表结构**:
 - `asset_basic` - 资产基本信息
@@ -24,6 +25,7 @@
 - `symbol_daily` - 日线行情超表
 - `symbol_minute` - 分钟行情超表
 - `financial_indicator` - 财务指标
+- `adj_factor` - 复权因子表
 
 #### 2. Provider层 (finance_data_hub/providers/)
 | 组件 | 行数 | 功能 | 测试 |
@@ -83,10 +85,7 @@
 
 | 文档 | 行数 | 内容 |
 |------|------|------|
-| PHASE2_IMPLEMENTATION_SUMMARY.md | 600+ | 详细实施总结 |
-| FINAL_VERIFICATION.md | 400+ | 验证清单 |
 | QUICK_START.md | 500+ | 快速开始指南 |
-| BUGFIX_REPORT.md | 100+ | Bug修复记录 |
 | FINAL_SUMMARY.md | 本文件 | 最终交付总结 |
 
 ## 📊 质量指标

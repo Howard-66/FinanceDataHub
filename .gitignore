@@ -148,7 +148,6 @@ venv.bak/
 # Docker data directories
 pg_data/
 redis_data/
-sql/init/
 
 # Data directories
 data/
