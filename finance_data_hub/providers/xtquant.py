@@ -5,6 +5,7 @@ XTQuant数据提供者
 """
 
 from typing import Optional, Dict, Any, List
+from datetime import datetime
 import pandas as pd
 import httpx
 from loguru import logger
@@ -463,3 +464,225 @@ class XTQuantProvider(BaseDataProvider):
         """清理资源"""
         if self.client:
             self.client.close()
+
+    async def get_latest_record(
+        self, symbol: str, data_type: str, table_name: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取数据库中指定symbol和数据类型的最新记录
+
+        注意：XTQuantProvider本身不直接访问数据库。
+        这个方法需要外部传入数据库操作对象来执行查询。
+
+        Args:
+            symbol: 股票代码（如 "600519.SH"）
+            data_type: 数据类型（如 "daily", "minute", "daily_basic" 等）
+            table_name: 数据库表名（如 "symbol_daily", "symbol_minute" 等）
+
+        Returns:
+            Optional[pd.DataFrame]: 最新记录，包含所有列。如果不存在返回None
+
+        Raises:
+            ProviderError: 查询失败时抛出
+        """
+        logger.warning(
+            "get_latest_record() requires external database access. "
+            "This method should be called through DataUpdater with DataOperations."
+        )
+        raise ProviderError(
+            "get_latest_record() requires external database operations",
+            provider_name=self.name
+        )
+
+    def should_overwrite_latest_record(
+        self,
+        latest_record_time: datetime,
+        current_time: datetime,
+        data_type: str,
+    ) -> bool:
+        """
+        判断是否应该覆盖最新的记录
+
+        Args:
+            latest_record_time: 数据库中最新记录的时间
+            current_time: 当前时间
+            data_type: 数据类型（如 "daily", "minute" 等）
+
+        Returns:
+            bool: 如果应该覆盖返回True，否则返回False
+        """
+        logger.debug(
+            f"Checking if should overwrite: latest={latest_record_time}, "
+            f"current={current_time}, type={data_type}"
+        )
+
+        # 根据数据类型判断
+        if data_type == "daily":
+            return self._should_overwrite_daily(latest_record_time, current_time)
+        elif data_type.startswith("minute"):
+            return self._should_overwrite_minute(latest_record_time, current_time)
+        else:
+            # 其他类型，默认不覆盖
+            return False
+
+    def _should_overwrite_daily(
+        self, latest_record_time: datetime, current_time: datetime
+    ) -> bool:
+        """
+        判断日线数据是否应该覆盖
+
+        策略：
+        1. 如果最新记录不是今天的数据，不覆盖
+        2. 如果最新记录是今天的数据：
+           - 当前在交易时间内，覆盖（盘中数据会更新）
+           - 当前不在交易时间内，不覆盖（今天的数据已经收盘）
+        """
+        latest_date = latest_record_time.date()
+        current_date = current_time.date()
+
+        # 如果不是同一天，不需要覆盖
+        if latest_date != current_date:
+            logger.debug("Not same day - no overwrite needed")
+            return False
+
+        # 同一天，检查是否在交易时间内
+        if self.is_trading_hours(current_time):
+            logger.debug("Same day and during trading hours - will overwrite")
+            return True
+        else:
+            logger.debug("Same day but after hours - no overwrite needed")
+            return False
+
+    def _should_overwrite_minute(
+        self, latest_record_time: datetime, current_time: datetime
+    ) -> bool:
+        """
+        判断分钟数据是否应该覆盖
+
+        分钟数据通常在交易时间内会持续更新，所以总是覆盖
+        """
+        # 分钟数据在交易时间内持续更新，总是覆盖
+        if self.is_trading_hours(current_time):
+            return True
+        else:
+            # 非交易时间，检查是否跨天了
+            latest_date = latest_record_time.date()
+            current_date = current_time.date()
+            return latest_date == current_date
+
+    async def get_incremental_data(
+        self,
+        symbol: Optional[str],
+        data_type: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        **kwargs,
+    ) -> pd.DataFrame:
+        """
+        获取增量数据
+
+        Args:
+            symbol: 股票代码，为None时表示批量更新所有股票
+            data_type: 数据类型（如 "daily", "minute_1", "daily_basic" 等）
+            start_date: 开始日期，为None时表示使用智能计算的日期范围
+            end_date: 结束日期，为None时表示使用智能计算的日期范围
+            **kwargs: 其他参数（如 adj, freq 等）
+
+        Returns:
+            pd.DataFrame: 增量数据，标准格式
+        """
+        logger.info(
+            f"Getting incremental data: symbol={symbol}, data_type={data_type}, "
+            f"start_date={start_date}, end_date={end_date}"
+        )
+
+        # XTQuant不支持批量更新，需要指定symbol
+        if symbol is None:
+            raise ProviderError(
+                "XTQuant requires explicit symbol list. Bulk update not supported.",
+                provider_name=self.name
+            )
+
+        # 处理单个symbol的增量更新
+        if data_type == "daily":
+            return self._get_incremental_daily(symbol, start_date, end_date, **kwargs)
+        elif data_type.startswith("minute"):
+            freq = kwargs.get("freq", "1m")
+            return self._get_incremental_minute(symbol, start_date, end_date, freq)
+        elif data_type == "daily_basic":
+            logger.warning("XTQuant does not support daily_basic incremental update")
+            return pd.DataFrame(columns=DailyBasicSchema.get_required_columns())
+        elif data_type == "adj_factor":
+            logger.warning("XTQuant does not support adj_factor incremental update")
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+        else:
+            raise ProviderError(
+                f"Unsupported data type for incremental update: {data_type}",
+                provider_name=self.name
+            )
+
+    def _get_incremental_daily(
+        self,
+        symbol: str,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        **kwargs,
+    ) -> pd.DataFrame:
+        """
+        获取日线增量数据
+
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+            **kwargs: 其他参数（如 adj）
+
+        Returns:
+            pd.DataFrame: 日线数据
+        """
+        adj = kwargs.get("adj")
+
+        if not start_date or not end_date:
+            raise ProviderError(
+                "start_date and end_date are required for incremental daily data",
+                provider_name=self.name
+            )
+
+        return self.get_daily_data(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            adj=adj,
+        )
+
+    def _get_incremental_minute(
+        self,
+        symbol: str,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        freq: str,
+    ) -> pd.DataFrame:
+        """
+        获取分钟增量数据
+
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期时间
+            end_date: 结束日期时间
+            freq: 频率
+
+        Returns:
+            pd.DataFrame: 分钟数据
+        """
+        if not start_date or not end_date:
+            raise ProviderError(
+                "start_date and end_date are required for incremental minute data",
+                provider_name=self.name
+            )
+
+        return self.get_minute_data(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            freq=freq,
+        )

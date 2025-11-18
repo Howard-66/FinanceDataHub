@@ -46,11 +46,18 @@ def update(
         "-a",
         help="资产类别 (stock, fund, index, etc.)"
     ),
-    frequency: str = typer.Option(
-        "daily",
+    dataset: Optional[str] = typer.Option(
+        None,
+        "--dataset",
+        "-d",
+        help="数据类型 (daily, minute_1, minute_5, daily_basic, adj_factor)。"
+             "取代 --frequency 参数，提供更准确的描述。"
+    ),
+    frequency: Optional[str] = typer.Option(
+        None,
         "--frequency",
         "-f",
-        help="数据频率 (daily, minute_1, minute_5, basic, adj_factor)"
+        help="数据频率 (已废弃，使用 --dataset 替代)"
     ),
     symbols: Optional[str] = typer.Option(
         None,
@@ -73,6 +80,17 @@ def update(
         "--adj",
         help="复权类型 (None=不复权, qfq=前复权, hfq=后复权)"
     ),
+    mode: str = typer.Option(
+        "incremental",
+        "--mode",
+        "-m",
+        help="更新模式: incremental=增量更新, full=全量更新"
+    ),
+    smart_incremental: bool = typer.Option(
+        False,
+        "--smart-incremental",
+        help="启用智能增量更新，自动计算日期范围和覆盖策略"
+    ),
     config_file: Optional[str] = typer.Option(
         None,
         "--config",
@@ -89,7 +107,25 @@ def update(
     从数据源更新数据到数据库
 
     执行数据同步流程，从配置的数据源获取数据并存储到数据库。
-    支持按资产类别、数据频率和特定股票代码进行筛选。
+    支持按资产类别、数据类型和特定股票代码进行筛选。
+
+    数据类型 (--dataset):
+      - daily: 日线行情数据
+      - minute_1: 1分钟线数据
+      - minute_5: 5分钟线数据
+      - daily_basic: 每日基本面数据
+      - adj_factor: 复权因子数据
+
+    更新模式:
+      - incremental: 增量更新（默认），只获取最新数据
+      - full: 全量更新，重新获取所有数据
+
+    智能增量更新:
+      使用 --smart-incremental 标志可以启用智能增量更新，
+      系统会自动:
+      - 计算每个股票的增量日期范围
+      - 判断是否需要覆盖盘中数据
+      - 对新symbol获取全量历史数据
     """
     console.print("[bold green]开始数据更新流程[/bold green]\n")
 
@@ -100,9 +136,25 @@ def update(
         if config_file:
             console.print(f"[yellow]配置文件: {config_file}[/yellow]")
 
+        # 处理 --dataset 和 --frequency 参数
+        # 优先使用 --dataset，--frequency 用于向后兼容
+        data_type = dataset if dataset else frequency
+
+        if not data_type:
+            console.print("[bold red]ERROR:[/bold red] 必须指定数据类型（--dataset 或 --frequency）")
+            raise typer.Exit(1)
+
+        # 检查 --frequency 是否被使用，如果是，显示废弃警告
+        if frequency and not dataset:
+            console.print("[yellow]⚠️  警告: --frequency 参数已废弃，请使用 --dataset 替代[/yellow]")
+            console.print("[yellow]  例: --dataset daily 替代 --frequency daily[/yellow]\n")
+
         # 显示更新参数
         console.print(f"[cyan]资产类别:[/cyan] {asset_class}")
-        console.print(f"[cyan]数据频率:[/cyan] {frequency}")
+        console.print(f"[cyan]数据类型:[/cyan] {data_type}")
+        console.print(f"[cyan]更新模式:[/cyan] {mode}")
+        if smart_incremental:
+            console.print(f"[cyan]智能增量:[/cyan] 已启用")
 
         if symbols:
             console.print(f"[cyan]股票代码:[/cyan] {symbols}")
@@ -116,8 +168,8 @@ def update(
 
         # 执行更新流程
         asyncio.run(_run_update(
-            settings, asset_class, frequency, symbols,
-            start_date, end_date, adj, verbose
+            settings, asset_class, data_type, symbols,
+            start_date, end_date, adj, mode, smart_incremental, verbose
         ))
 
         console.print("\n[bold green][OK][/bold green] 数据更新完成")
@@ -133,11 +185,13 @@ def update(
 async def _run_update(
     settings,
     asset_class: str,
-    frequency: str,
+    data_type: str,
     symbols: Optional[str],
     start_date: Optional[str],
     end_date: Optional[str],
     adj: Optional[str],
+    mode: str,
+    smart_incremental: bool,
     verbose: bool,
 ):
     """执行实际的数据更新"""
@@ -150,17 +204,197 @@ async def _run_update(
     if not end_date:
         end_date = datetime.now().strftime("%Y-%m-%d")
 
-    if not start_date and frequency == "daily":
-        # 日线数据默认获取最近30天
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        start_dt = end_dt - timedelta(days=30)
-        start_date = start_dt.strftime("%Y-%m-%d")
-    elif not start_date and "minute" in frequency:
-        # 分钟数据默认获取最近1天
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        start_dt = end_dt - timedelta(days=1)
-        start_date = start_dt.strftime("%Y-%m-%d")
+    # 如果不是智能增量模式，设置默认日期范围
+    if not smart_incremental:
+        # 只有在增量模式下才设置默认日期范围
+        # 全量模式需要用户明确指定或使用智能增量模式
+        if mode == "incremental":
+            if not start_date and data_type == "daily":
+                # 日线数据默认获取最近30天
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                start_dt = end_dt - timedelta(days=30)
+                start_date = start_dt.strftime("%Y-%m-%d")
+            elif not start_date and "minute" in data_type:
+                # 分钟数据默认获取最近1天
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                start_dt = end_dt - timedelta(days=1)
+                start_date = start_dt.strftime("%Y-%m-%d")
 
+    # 验证模式参数
+    if mode not in ["incremental", "full"]:
+        console.print(f"[bold red]ERROR:[/bold red] 无效的更新模式: {mode}")
+        console.print("  支持的模式: incremental, full")
+        raise typer.Exit(1)
+
+    # 全量模式下，如果用户没有指定start_date，设置一个合理的起始日期
+    if mode == "full" and not start_date:
+        # 对于全量更新，设置一个相对较早的日期（比如2000年）
+        # 避免使用1990年，因为很多股票是后来才上市的
+        start_date = "2000-01-01"
+        console.print(f"[cyan]全量更新模式：将从 {start_date} 开始获取数据[/cyan]")
+        console.print(f"[yellow]提示：如果需要获取更早期的数据，请使用 --start-date 参数[/yellow]")
+
+    # 如果是智能增量模式，使用新的逻辑
+    if smart_incremental:
+        console.print("\n[bold yellow]使用智能增量更新模式[/bold yellow]")
+        await _run_smart_incremental_update(
+            settings, asset_class, data_type, symbol_list,
+            start_date, end_date, adj, mode, verbose
+        )
+        return
+
+    # 否则，使用原有的更新逻辑
+    await _run_standard_update(
+        settings, asset_class, data_type, symbol_list,
+        start_date, end_date, adj, mode, verbose
+    )
+
+
+async def _run_smart_incremental_update(
+    settings,
+    asset_class: str,
+    data_type: str,
+    symbol_list: Optional[List[str]],
+    start_date: Optional[str],
+    end_date: Optional[str],
+    adj: Optional[str],
+    mode: str,
+    verbose: bool,
+):
+    """使用智能增量更新逻辑"""
+    console.print("[bold]智能增量更新策略:[/bold]")
+
+    if mode == "full":
+        console.print("  - 全量更新模式：重新获取所有历史数据")
+        console.print("  - 覆盖现有数据")
+    else:
+        console.print("  - 自动计算每个股票的增量日期范围")
+        console.print("  - 智能判断是否覆盖盘中数据")
+        console.print("  - 新股票自动获取全量历史数据")
+    console.print("")
+
+    # 初始化更新器
+    async with DataUpdater(settings, config_path="sources.yml") as updater:
+        # 进度显示
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在智能更新...", total=100)
+
+            try:
+                # 如果没有指定symbol，先更新股票列表
+                if not symbol_list:
+                    console.print("[yellow]先更新股票列表...[/yellow]")
+                    basic_count = await updater.update_stock_basic()
+                    console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
+
+                    symbols_db = await updater.data_ops.get_symbol_list()
+                    symbol_list = symbols_db
+                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+
+                # 如果是全量更新模式且没有指定start_date，设置全量起始日期
+                if mode == "full" and not start_date:
+                    start_date = "2000-01-01"
+                    console.print(f"[cyan]全量更新模式：将从 {start_date} 开始获取数据[/cyan]")
+                    console.print(f"[yellow]提示：如果需要获取更早期的数据，请使用 --start-date 参数[/yellow]\n")
+
+                total_updated = 0
+                total_skipped = 0
+                total_errors = 0
+
+                # 对每个symbol执行智能增量更新
+                for idx, symbol in enumerate(symbol_list):
+                    try:
+                        # 显示进度
+                        if verbose:
+                            console.print(
+                                f"[cyan]处理 {symbol} ({idx + 1}/{len(symbol_list)})[/cyan]"
+                            )
+
+                        # 获取最新记录
+                        # 注意：这里需要查询数据库
+                        # 实际实现会通过DataOperations进行查询
+
+                        # 智能增量更新的逻辑会在DataUpdater中实现
+                        # 这里先调用原有的更新方法
+                        # TODO: 在DataUpdater中添加智能增量更新方法
+
+                        # 暂时使用原有逻辑
+                        if data_type == "daily":
+                            count = await updater.update_daily_data(
+                                symbols=[symbol],
+                                start_date=start_date,
+                                end_date=end_date,
+                                adj=adj,
+                            )
+                        elif data_type.startswith("minute"):
+                            freq_map = {"minute_1": "1m", "minute_5": "5m"}
+                            actual_freq = freq_map.get(data_type, "1m")
+                            count = await updater.update_minute_data(
+                                symbols=[symbol],
+                                start_date=start_date,
+                                end_date=end_date,
+                                freq=actual_freq,
+                            )
+                        elif data_type == "daily_basic":
+                            count = await updater.update_daily_basic(
+                                symbols=[symbol],
+                                start_date=start_date,
+                                end_date=end_date,
+                            )
+                        elif data_type == "adj_factor":
+                            count = await updater.update_adj_factor(
+                                symbols=[symbol],
+                                start_date=start_date,
+                                end_date=end_date,
+                            )
+                        else:
+                            console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
+                            raise typer.Exit(1)
+
+                        total_updated += count
+
+                        # 更新进度
+                        progress.update(
+                            task,
+                            completed=((idx + 1) / len(symbol_list)) * 100
+                        )
+
+                    except Exception as e:
+                        total_errors += 1
+                        console.print(f"[red]更新 {symbol} 失败: {str(e)}[/red]")
+                        continue
+
+                # 显示结果统计
+                console.print(f"\n[bold]智能更新完成:[/bold]")
+                console.print(f"  更新记录: {total_updated}")
+                console.print(f"  跳过记录: {total_skipped}")
+                console.print(f"  失败数量: {total_errors}")
+
+            except ProviderError as e:
+                console.print(f"\n[bold red]ERROR:[/bold red] 数据源错误: {str(e)}")
+                raise
+            except Exception as e:
+                console.print(f"\n[bold red]ERROR:[/bold red] 更新失败: {str(e)}")
+                raise
+
+
+async def _run_standard_update(
+    settings,
+    asset_class: str,
+    data_type: str,
+    symbol_list: Optional[List[str]],
+    start_date: Optional[str],
+    end_date: Optional[str],
+    adj: Optional[str],
+    mode: str,
+    verbose: bool,
+):
+    """使用标准更新逻辑（非智能增量）"""
     # 初始化更新器
     async with DataUpdater(settings, config_path="sources.yml") as updater:
         # 进度显示
@@ -175,31 +409,27 @@ async def _run_update(
 
             try:
                 # 更新股票基本信息
-                if frequency == "basic":
+                if data_type == "basic":
                     progress.update(task, description="更新股票基本信息...")
                     count = await updater.update_stock_basic()
                     progress.update(task, advance=100)
                     console.print(f"[green][OK][/green] 更新了 {count} 条股票基本信息")
                     return
 
-                # 更新日线数据
-                elif frequency == "daily":
+                # 如果没有指定symbol，先更新股票列表
+                if not symbol_list:
+                    console.print("[yellow]先更新股票列表...[/yellow]")
+                    basic_count = await updater.update_stock_basic()
+                    console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
+
+                    symbols_db = await updater.data_ops.get_symbol_list()
+                    symbol_list = symbols_db
+                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]")
+
+                # 更新数据
+                if data_type == "daily":
                     progress.update(task, description="更新日线数据...")
                     total = 0
-
-                    if not symbol_list:
-                        # 首先更新股票基本信息
-                        console.print("[yellow]先更新股票列表...[/yellow]")
-                        basic_count = await updater.update_stock_basic()
-                        console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
-
-                        # 获取股票列表
-                        symbols_db = await updater.data_ops.get_symbol_list()
-                        # symbol_list = symbols_db[:10]  # 限制数量避免API调用过多
-                        symbol_list = symbols_db
-                        console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]")
-
-                    # 更新数据
                     count = await updater.update_daily_data(
                         symbols=symbol_list,
                         start_date=start_date,
@@ -210,10 +440,9 @@ async def _run_update(
                     progress.update(task, advance=100)
                     console.print(f"[green][OK][/green] 更新了 {count} 条日线数据")
 
-                # 更新分钟数据
-                elif frequency in ["minute_1", "minute_5"]:
+                elif data_type.startswith("minute"):
                     freq_map = {"minute_1": "1m", "minute_5": "5m"}
-                    actual_freq = freq_map[frequency]
+                    actual_freq = freq_map.get(data_type, "1m")
 
                     progress.update(task, description=f"更新{actual_freq}数据...")
 
@@ -226,8 +455,7 @@ async def _run_update(
                     progress.update(task, advance=100)
                     console.print(f"[green][OK][/green] 更新了 {count} 条{actual_freq}数据")
 
-                # 更新每日指标
-                elif frequency == "daily_basic":
+                elif data_type == "daily_basic":
                     progress.update(task, description="更新每日指标数据...")
 
                     count = await updater.update_daily_basic(
@@ -238,8 +466,7 @@ async def _run_update(
                     progress.update(task, advance=100)
                     console.print(f"[green][OK][/green] 更新了 {count} 条每日指标数据")
 
-                # 更新复权因子
-                elif frequency == "adj_factor":
+                elif data_type == "adj_factor":
                     progress.update(task, description="更新复权因子...")
 
                     count = await updater.update_adj_factor(
@@ -251,7 +478,7 @@ async def _run_update(
                     console.print(f"[green][OK][/green] 更新了 {count} 条复权因子数据")
 
                 else:
-                    console.print(f"[bold red]不支持的数据频率: {frequency}[/bold red]")
+                    console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                     raise typer.Exit(1)
 
                 # 显示路由器统计

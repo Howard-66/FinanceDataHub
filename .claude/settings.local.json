@@ -1,27 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(docker-compose ps:*)",
-      "Bash(python -m finance_data_hub.cli.main:*)",
-      "Bash(source:*)",
-      "Bash(fdh-cli init:*)",
-      "Bash(timeout 30 fdh-cli init:*)",
-      "Bash(timeout:*)",
-      "Bash(fdh-cli update:*)",
-      "Bash(psql \"postgresql://trading_nexus:trading.nexus.data@localhost:5432/trading_nexus_db\" -c \"SELECT symbol, COUNT(*) as record_count FROM adj_factor GROUP BY symbol ORDER BY symbol;\")",
-      "Bash(python -c:*)",
-      "Bash(fdh-cli status:*)",
-      "Bash(psql:*)",
-      "Bash(docker-compose exec:*)",
-      "Bash(docker cp:*)",
-      "Bash(python:*)",
-      "Bash(uv add asyncpg)",
-      "Bash(.venv/bin/fdh-cli update:*)",
-      "Bash(openspec list:*)",
-      "Bash(CHANGE_ID=optimize-incremental-update-logic)",
-      "Bash(openspec validate:*)",
-      "Bash(openspec show:*)",
-      "Bash(cat:*)"
+      "Bash(python -m py_compile finance_data_hub/providers/base.py finance_data_hub/providers/tushare.py finance_data_hub/providers/xtquant.py finance_data_hub/cli/main.py)",
+      "Bash(python -c \"from finance_data_hub.providers.base import BaseDataProvider; print(''BaseDataProvider imported successfully'')\")",
+      "Bash(python -m py_compile finance_data_hub/providers/tushare.py finance_data_hub/cli/main.py)",
+      "Bash(python -m py_compile finance_data_hub/cli/main.py)",
+      "Bash(python -c \"from finance_data_hub.cli.main import app; print(''CLI导入成功'')\")",
+      "Bash(python -c \"from finance_data_hub.providers.tushare import TushareProvider; from finance_data_hub.cli.main import app; print(''导入成功'')\")",
+      "Bash(openspec list)",
+      "Bash(openspec show optimize-incremental-update-logic)",
+      "Bash(openspec show optimize-incremental-update-logic tasks)"
     ],
     "deny": [],
     "ask": []

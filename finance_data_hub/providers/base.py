@@ -6,7 +6,8 @@
 
 import time
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any, Callable, Tuple
+from datetime import datetime
 import pandas as pd
 from loguru import logger
 
@@ -292,3 +293,231 @@ class BaseDataProvider(ABC):
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}(name='{self.name}')>"
+
+    @abstractmethod
+    async def get_latest_record(
+        self, symbol: str, data_type: str, table_name: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取数据库中指定symbol和数据类型的最新记录
+
+        Args:
+            symbol: 股票代码（如 "600519.SH"）
+            data_type: 数据类型（如 "daily", "minute", "daily_basic" 等）
+            table_name: 数据库表名（如 "symbol_daily", "symbol_minute" 等）
+
+        Returns:
+            Optional[pd.DataFrame]: 最新记录，包含所有列。如果不存在返回None
+
+        Raises:
+            ProviderError: 查询失败时抛出
+        """
+        pass
+
+    @abstractmethod
+    def should_overwrite_latest_record(
+        self,
+        latest_record_time: datetime,
+        current_time: datetime,
+        data_type: str,
+    ) -> bool:
+        """
+        判断是否应该覆盖最新的记录
+
+        Args:
+            latest_record_time: 数据库中最新记录的时间
+            current_time: 当前时间
+            data_type: 数据类型（如 "daily", "minute" 等）
+
+        Returns:
+            bool: 如果应该覆盖返回True，否则返回False
+
+        Raises:
+            ProviderError: 判断失败时抛出
+        """
+        pass
+
+    @abstractmethod
+    async def get_incremental_data(
+        self,
+        symbol: Optional[str],
+        data_type: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        **kwargs,
+    ) -> pd.DataFrame:
+        """
+        获取增量数据
+
+        Args:
+            symbol: 股票代码，为None时表示批量更新所有股票
+            data_type: 数据类型（如 "daily", "minute_1", "daily_basic" 等）
+            start_date: 开始日期，为None时表示使用智能计算的日期范围
+            end_date: 结束日期，为None时表示使用智能计算的日期范围
+            **kwargs: 其他参数（如 adj, freq 等）
+
+        Returns:
+            pd.DataFrame: 增量数据，标准格式
+
+        Raises:
+            ProviderError: 获取数据失败时抛出
+        """
+        pass
+
+    def calculate_date_range(
+        self,
+        latest_record: Optional[pd.DataFrame],
+        data_type: str,
+        current_time: datetime,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        智能计算日期范围
+
+        Args:
+            latest_record: 最新记录DataFrame，为None表示新symbol
+            data_type: 数据类型（如 "daily", "minute_1" 等）
+            current_time: 当前时间
+
+        Returns:
+            Tuple[Optional[str], Optional[str]]: (start_date, end_date)
+                如果返回 (None, None)，表示需要全量更新
+                如果返回 (start_date, end_date)，表示增量更新
+
+        Raises:
+            ProviderError: 计算失败时抛出
+        """
+        if not latest_record or latest_record.empty:
+            # 新symbol，返回None表示全量更新
+            logger.info(f"New symbol detected - will fetch full historical data")
+            return None, None
+
+        # 获取最新记录时间
+        if "time" not in latest_record.columns:
+            raise ProviderError(
+                "Latest record must contain 'time' column",
+                provider_name=self.name
+            )
+
+        latest_time = latest_record["time"].iloc[0]
+        if isinstance(latest_time, str):
+            latest_time = pd.to_datetime(latest_time)
+
+        # 根据数据类型计算日期范围
+        if data_type == "daily":
+            return self._calculate_daily_range(latest_time, current_time)
+        elif data_type.startswith("minute"):
+            return self._calculate_minute_range(latest_time, current_time)
+        elif data_type in ["daily_basic", "adj_factor"]:
+            # 非时间序列数据，处理方式类似日线
+            return self._calculate_daily_range(latest_time, current_time)
+        else:
+            raise ProviderError(
+                f"Unsupported data type for incremental update: {data_type}",
+                provider_name=self.name
+            )
+
+    def _calculate_daily_range(
+        self,
+        latest_time: datetime,
+        current_time: datetime,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        计算日线数据的日期范围
+
+        Args:
+            latest_time: 最新记录时间
+            current_time: 当前时间
+
+        Returns:
+            Tuple[str, str]: (start_date, end_date)
+        """
+        from datetime import timedelta
+
+        # 检查是否跨天了
+        latest_date = latest_time.date()
+        current_date = current_time.date()
+
+        if latest_date < current_date:
+            # 计算下一个交易日（这里简化处理，实际应该考虑交易日历）
+            next_trading_day = latest_date + timedelta(days=1)
+            start_date = next_trading_day.strftime("%Y-%m-%d")
+            end_date = current_date.strftime("%Y-%m-%d")
+            logger.debug(
+                f"Calculated daily range: {start_date} to {end_date} "
+                f"(latest: {latest_date}, current: {current_date})"
+            )
+            return start_date, end_date
+        else:
+            # 同一天，可能需要覆盖盘中数据
+            current_date_str = current_date.strftime("%Y-%m-%d")
+            logger.debug(
+                f"Same day data detected - checking if overwrite is needed "
+                f"(latest: {latest_time}, current: {current_time})"
+            )
+            return None, current_date_str
+
+    def _calculate_minute_range(
+        self,
+        latest_time: datetime,
+        current_time: datetime,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        计算分钟级数据的日期范围
+
+        Args:
+            latest_time: 最新记录时间
+            current_time: 当前时间
+
+        Returns:
+            Tuple[str, str]: (start_time, end_time)
+        """
+        from datetime import timedelta
+
+        # 计算下一分钟
+        next_minute = latest_time + timedelta(minutes=1)
+        start_time = next_minute.strftime("%Y-%m-%d %H:%M:%S")
+        end_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
+
+        logger.debug(
+            f"Calculated minute range: {start_time} to {end_time}"
+        )
+        return start_time, end_time
+
+    def is_trading_hours(self, current_time: Optional[datetime] = None) -> bool:
+        """
+        判断当前时间是否在交易时间内
+
+        Args:
+            current_time: 要检查的时间，为None时使用当前时间
+
+        Returns:
+            bool: 是否在交易时间内
+        """
+        if current_time is None:
+            current_time = datetime.now()
+
+        # 简化的中国股市交易时间判断（不考虑节假日）
+        # 上午: 9:30-11:30
+        # 下午: 13:00-15:00
+        # 周一到周五
+
+        weekday = current_time.weekday()  # 0=周一, 6=周日
+        if weekday >= 5:  # 周六周日
+            return False
+
+        hour = current_time.hour
+        minute = current_time.minute
+
+        # 上午交易时间
+        if hour == 9 and minute >= 30:
+            return True
+        elif 10 <= hour <= 11:
+            return True
+        elif hour == 11 and minute <= 30:
+            return True
+
+        # 下午交易时间
+        if 13 <= hour < 15:
+            return True
+
+        return False

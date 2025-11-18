@@ -6,6 +6,7 @@ Tushare数据提供者
 
 import time
 from typing import Optional, Dict, Any
+from datetime import datetime
 import pandas as pd
 import tushare as ts
 from loguru import logger
@@ -294,36 +295,49 @@ class TushareProvider(BaseDataProvider):
         )
 
         # 转换日期格式（去掉横杠）
-        start_date = start_date.replace("-", "")
-        end_date = end_date.replace("-", "")
+        start_date_clean = start_date.replace("-", "")
+        end_date_clean = end_date.replace("-", "")
 
-        # 根据复权类型选择API
-        if adj == "qfq":
+        # 检查是否需要获取全量数据（2000年或更早）
+        try:
+            start_year = int(start_date_clean[:4])
+            is_full_range = start_year <= 2000
+        except (ValueError, IndexError):
+            is_full_range = False
+
+        # 根据复权类型和日期范围选择API
+        # 只有明确需要复权时才使用 pro_bar
+        # 对于大日期范围，使用 daily API 更稳定
+        if adj:
+            # 需要复权数据，使用 pro_bar API
             api_name = "pro_bar"
             kwargs = {
                 "ts_code": symbol,
-                "start_date": start_date,
-                "end_date": end_date,
-                "adj": "qfq",
+                "start_date": start_date_clean,
+                "end_date": end_date_clean,
                 "freq": "D",
+                "adj": adj,
             }
-        elif adj == "hfq":
-            api_name = "pro_bar"
-            kwargs = {
-                "ts_code": symbol,
-                "start_date": start_date,
-                "end_date": end_date,
-                "adj": "hfq",
-                "freq": "D",
-            }
-        else:
-            # 对于不复权数据，使用daily API，它返回标准的DataFrame
+            logger.debug(f"Using pro_bar API for adjusted data (adj={adj})")
+        elif is_full_range:
+            # 全量范围但不需要复权，使用 daily API
+            # daily API 对于大范围日期查询更稳定
             api_name = "daily"
             kwargs = {
                 "ts_code": symbol,
-                "start_date": start_date,
-                "end_date": end_date,
+                "start_date": start_date_clean,
+                "end_date": end_date_clean,
             }
+            logger.debug(f"Using daily API for full range (start_year={start_year}, before 2000)")
+        else:
+            # 短期数据，使用 daily API
+            api_name = "daily"
+            kwargs = {
+                "ts_code": symbol,
+                "start_date": start_date_clean,
+                "end_date": end_date_clean,
+            }
+            logger.debug(f"Using daily API for short range")
 
         df = self._call_api(api_name, **kwargs)
 
@@ -635,3 +649,344 @@ class TushareProvider(BaseDataProvider):
 
         logger.info(f"Fetched {len(df)} adj_factor records")
         return df
+
+    async def get_latest_record(
+        self, symbol: str, data_type: str, table_name: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取数据库中指定symbol和数据类型的最新记录
+
+        注意：TushareProvider本身不直接访问数据库。
+        这个方法需要外部传入数据库操作对象来执行查询。
+
+        Args:
+            symbol: 股票代码（如 "600519.SH"）
+            data_type: 数据类型（如 "daily", "minute", "daily_basic" 等）
+            table_name: 数据库表名（如 "symbol_daily", "symbol_minute" 等）
+
+        Returns:
+            Optional[pd.DataFrame]: 最新记录，包含所有列。如果不存在返回None
+
+        Raises:
+            ProviderError: 查询失败时抛出
+        """
+        # 注意：这个方法需要外部传入数据库操作
+        # 实际实现会在DataUpdater中调用DataOperations的方法
+        # 然后将结果传递给其他需要的方法
+        logger.warning(
+            "get_latest_record() requires external database access. "
+            "This method should be called through DataUpdater with DataOperations."
+        )
+        raise ProviderError(
+            "get_latest_record() requires external database operations",
+            provider_name=self.name
+        )
+
+    def should_overwrite_latest_record(
+        self,
+        latest_record_time: datetime,
+        current_time: datetime,
+        data_type: str,
+    ) -> bool:
+        """
+        判断是否应该覆盖最新的记录
+
+        Args:
+            latest_record_time: 数据库中最新记录的时间
+            current_time: 当前时间
+            data_type: 数据类型（如 "daily", "minute" 等）
+
+        Returns:
+            bool: 如果应该覆盖返回True，否则返回False
+        """
+        logger.debug(
+            f"Checking if should overwrite: latest={latest_record_time}, "
+            f"current={current_time}, type={data_type}"
+        )
+
+        # 根据数据类型判断
+        if data_type == "daily":
+            return self._should_overwrite_daily(latest_record_time, current_time)
+        elif data_type.startswith("minute"):
+            return self._should_overwrite_minute(latest_record_time, current_time)
+        else:
+            # 其他类型，默认不覆盖
+            return False
+
+    def _should_overwrite_daily(
+        self, latest_record_time: datetime, current_time: datetime
+    ) -> bool:
+        """
+        判断日线数据是否应该覆盖
+
+        策略：
+        1. 如果最新记录不是今天的数据，不覆盖
+        2. 如果最新记录是今天的数据：
+           - 当前在交易时间内，覆盖（盘中数据会更新）
+           - 当前不在交易时间内，不覆盖（今天的数据已经收盘）
+        """
+        latest_date = latest_record_time.date()
+        current_date = current_time.date()
+
+        # 如果不是同一天，不需要覆盖
+        if latest_date != current_date:
+            logger.debug("Not same day - no overwrite needed")
+            return False
+
+        # 同一天，检查是否在交易时间内
+        if self.is_trading_hours(current_time):
+            logger.debug("Same day and during trading hours - will overwrite")
+            return True
+        else:
+            logger.debug("Same day but after hours - no overwrite needed")
+            return False
+
+    def _should_overwrite_minute(
+        self, latest_record_time: datetime, current_time: datetime
+    ) -> bool:
+        """
+        判断分钟数据是否应该覆盖
+
+        分钟数据通常在交易时间内会持续更新，所以总是覆盖
+        """
+        # 分钟数据在交易时间内持续更新，总是覆盖
+        if self.is_trading_hours(current_time):
+            return True
+        else:
+            # 非交易时间，检查是否跨天了
+            latest_date = latest_record_time.date()
+            current_date = current_time.date()
+            return latest_date == current_date
+
+    async def get_incremental_data(
+        self,
+        symbol: Optional[str],
+        data_type: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        **kwargs,
+    ) -> pd.DataFrame:
+        """
+        获取增量数据
+
+        Args:
+            symbol: 股票代码，为None时表示批量更新所有股票
+            data_type: 数据类型（如 "daily", "minute_1", "daily_basic" 等）
+            start_date: 开始日期，为None时表示使用智能计算的日期范围
+            end_date: 结束日期，为None时表示使用智能计算的日期范围
+            **kwargs: 其他参数（如 adj, freq 等）
+
+        Returns:
+            pd.DataFrame: 增量数据，标准格式
+        """
+        logger.info(
+            f"Getting incremental data: symbol={symbol}, data_type={data_type}, "
+            f"start_date={start_date}, end_date={end_date}"
+        )
+
+        # 处理批量更新（无symbol）
+        if symbol is None:
+            return self._get_incremental_data_bulk(data_type, start_date, end_date, **kwargs)
+
+        # 处理单个symbol的增量更新
+        if data_type == "daily":
+            return self._get_incremental_daily(symbol, start_date, end_date, **kwargs)
+        elif data_type.startswith("minute"):
+            freq = kwargs.get("freq", "1m")
+            return self._get_incremental_minute(symbol, start_date, end_date, freq)
+        elif data_type == "daily_basic":
+            return self._get_incremental_daily_basic(symbol, start_date, end_date)
+        elif data_type == "adj_factor":
+            return self._get_incremental_adj_factor(symbol, start_date, end_date)
+        else:
+            raise ProviderError(
+                f"Unsupported data type for incremental update: {data_type}",
+                provider_name=self.name
+            )
+
+    def _get_incremental_data_bulk(
+        self,
+        data_type: str,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        **kwargs,
+    ) -> pd.DataFrame:
+        """
+        批量获取增量数据（不指定symbol）
+
+        Args:
+            data_type: 数据类型
+            start_date: 开始日期
+            end_date: 结束日期
+            **kwargs: 其他参数
+
+        Returns:
+            pd.DataFrame: 所有股票的增量数据
+        """
+        logger.debug(f"Getting bulk incremental data for type: {data_type}")
+
+        if data_type == "daily":
+            # Tushare支持使用trade_date批量获取所有股票数据
+            if not end_date:
+                end_date = datetime.now().strftime("%Y-%m-%d")
+            if not start_date:
+                start_date = end_date  # 默认只获取今天的
+
+            # 转换日期格式
+            trade_date = end_date.replace("-", "")
+
+            df = self._call_api(
+                "daily",
+                trade_date=trade_date,
+            )
+
+            if df.empty:
+                return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
+
+            # 转换格式
+            column_mapping = {
+                "trade_date": "time",
+                "ts_code": "symbol",
+                "open": "open",
+                "high": "high",
+                "low": "low",
+                "close": "close",
+                "vol": "volume",
+                "amount": "amount",
+                "pct_chg": "change_pct",
+                "change": "change_amount",
+            }
+            df = convert_to_standard_columns(df, column_mapping)
+            df["time"] = pd.to_datetime(df["time"], format="%Y%m%d")
+
+            return df
+
+        else:
+            raise ProviderError(
+                f"Bulk update not supported for data type: {data_type}",
+                provider_name=self.name
+            )
+
+    def _get_incremental_daily(
+        self,
+        symbol: str,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        **kwargs,
+    ) -> pd.DataFrame:
+        """
+        获取日线增量数据
+
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+            **kwargs: 其他参数（如 adj）
+
+        Returns:
+            pd.DataFrame: 日线数据
+        """
+        adj = kwargs.get("adj")
+
+        if not start_date or not end_date:
+            raise ProviderError(
+                "start_date and end_date are required for incremental daily data",
+                provider_name=self.name
+            )
+
+        return self.get_daily_data(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            adj=adj,
+        )
+
+    def _get_incremental_minute(
+        self,
+        symbol: str,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        freq: str,
+    ) -> pd.DataFrame:
+        """
+        获取分钟增量数据
+
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期时间
+            end_date: 结束日期时间
+            freq: 频率
+
+        Returns:
+            pd.DataFrame: 分钟数据
+        """
+        if not start_date or not end_date:
+            raise ProviderError(
+                "start_date and end_date are required for incremental minute data",
+                provider_name=self.name
+            )
+
+        return self.get_minute_data(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            freq=freq,
+        )
+
+    def _get_incremental_daily_basic(
+        self,
+        symbol: str,
+        start_date: Optional[str],
+        end_date: Optional[str],
+    ) -> pd.DataFrame:
+        """
+        获取每日指标增量数据
+
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            pd.DataFrame: 每日指标数据
+        """
+        if not start_date or not end_date:
+            raise ProviderError(
+                "start_date and end_date are required for incremental daily_basic data",
+                provider_name=self.name
+            )
+
+        return self.get_daily_basic(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    def _get_incremental_adj_factor(
+        self,
+        symbol: str,
+        start_date: Optional[str],
+        end_date: Optional[str],
+    ) -> pd.DataFrame:
+        """
+        获取复权因子增量数据
+
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            pd.DataFrame: 复权因子数据
+        """
+        if not start_date or not end_date:
+            raise ProviderError(
+                "start_date and end_date are required for incremental adj_factor data",
+                provider_name=self.name
+            )
+
+        return self.get_adj_factor(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+        )

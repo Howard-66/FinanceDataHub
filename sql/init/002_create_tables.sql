@@ -29,7 +29,6 @@ COMMENT ON COLUMN asset_basic.is_hs IS '沪深港通：N-否，H-沪股通，S-�
 
 -- 每日指标表
 CREATE TABLE IF NOT EXISTS daily_basic (
-    id SERIAL PRIMARY KEY,
     time TIMESTAMPTZ NOT NULL,                -- 交易日期
     symbol VARCHAR(20) NOT NULL,              -- 股票代码
     trade_volume BIGINT,                      -- 交易量（手）
@@ -49,12 +48,7 @@ CREATE TABLE IF NOT EXISTS daily_basic (
     circ_mv DECIMAL(20,6),                    -- 流通市值（万元）
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(symbol, time)                      -- 确保每个股票每天只有一条记录
+    PRIMARY KEY (symbol, time)                -- 复合主键替代 UNIQUE 约束
 );
-
--- 创建索引
-CREATE INDEX IF NOT EXISTS idx_daily_basic_time ON daily_basic(time);
-CREATE INDEX IF NOT EXISTS idx_daily_basic_symbol ON daily_basic(symbol);
-CREATE INDEX IF NOT EXISTS idx_daily_basic_symbol_time ON daily_basic(symbol, time DESC);
 
 COMMENT ON TABLE daily_basic IS '每日指标表 - 存储PE、PB、换手率等每日计算指标';

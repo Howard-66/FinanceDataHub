@@ -1,24 +1,24 @@
 ## Implementation Tasks
 
 ### Phase 1: Core Incremental Update Logic
-- [ ] 1.1 新增 `get_latest_record()` 抽象方法到 BaseDataProvider
-- [ ] 1.2 新增 `should_overwrite_latest_record()` 抽象方法到 BaseDataProvider
-- [ ] 1.3 新增 `get_incremental_data()` 抽象方法到 BaseDataProvider
-- [ ] 1.4 实现 `calculate_date_range()` 工具方法用于智能日期计算
+- [x] 1.1 新增 `get_latest_record()` 抽象方法到 BaseDataProvider
+- [x] 1.2 新增 `should_overwrite_latest_record()` 抽象方法到 BaseDataProvider
+- [x] 1.3 新增 `get_incremental_data()` 抽象方法到 BaseDataProvider
+- [x] 1.4 实现 `calculate_date_range()` 工具方法用于智能日期计算
 
 ### Phase 2: Data Provider Implementations
-- [ ] 2.1 在 TushareProvider 中实现 `get_latest_record()` 方法
-- [ ] 2.2 在 TushareProvider 中实现 `should_overwrite_latest_record()` 方法
-- [ ] 2.3 在 TushareProvider 中实现 `get_incremental_data()` 方法
-- [ ] 2.4 在 XTQuantProvider 中实现相同的增量更新方法
+- [x] 2.1 在 TushareProvider 中实现 `get_latest_record()` 方法
+- [x] 2.2 在 TushareProvider 中实现 `should_overwrite_latest_record()` 方法
+- [x] 2.3 在 TushareProvider 中实现 `get_incremental_data()` 方法
+- [x] 2.4 在 XTQuantProvider 中实现相同的增量更新方法
 
 ### Phase 3: CLI Update Enhancement
-- [ ] 3.1 修改 `fdh-cli update` 命令，集成新的增量更新逻辑
-- [ ] 3.2 新增 `--dataset` 参数替代 `--frequency`，支持多种数据类型
-- [ ] 3.3 保持 `--frequency` 参数向后兼容，添加废弃警告
-- [ ] 3.4 新增 `--smart-incremental` 标志启用智能增量更新
-- [ ] 3.5 更新增量更新场景的验证逻辑，支持时间序列和非时间序列数据
-- [ ] 3.6 新增日志记录，清晰显示增量更新决策过程
+- [x] 3.1 修改 `fdh-cli update` 命令，集成新的增量更新逻辑
+- [x] 3.2 新增 `--dataset` 参数替代 `--frequency`，支持多种数据类型
+- [x] 3.3 保持 `--frequency` 参数向后兼容，添加废弃警告
+- [x] 3.4 新增 `--smart-incremental` 标志启用智能增量更新
+- [x] 3.5 更新增量更新场景的验证逻辑，支持时间序列和非时间序列数据
+- [x] 3.6 新增日志记录，清晰显示增量更新决策过程
 
 ### Phase 4: Testing
 - [ ] 4.1 编写 BaseDataProvider 增量更新抽象方法测试

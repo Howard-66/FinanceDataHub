@@ -46,7 +46,7 @@ class DatabaseInitializer:
         # 获取所有SQL文件并排序
         sql_files = sorted([
             f for f in sql_dir.glob("*.sql")
-            if f.name.startswith(('001_', '002_', '003_', '004_'))
+            if f.name.startswith(('001_', '002_', '003_', '004_', '005_'))
         ])
 
         if not sql_files:

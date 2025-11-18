@@ -54,7 +54,7 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION upsert_asset_basic IS '批量插入或更新资产基本信息';
 
--- 数据完整性检查函数
+-- 数据完整性检查函数（优化版）
 CREATE OR REPLACE FUNCTION check_data_integrity()
 RETURNS TABLE(
     table_name TEXT,
@@ -63,29 +63,38 @@ RETURNS TABLE(
 ) AS $$
 BEGIN
     RETURN QUERY
+    -- 对于 asset_basic（普通表），仍使用 COUNT(*)
     SELECT
         'asset_basic'::TEXT,
         COUNT(*)::BIGINT,
         NULL::TIMESTAMPTZ
     FROM asset_basic
     UNION ALL
+    -- 对于超表，使用 TimescaleDB 的近似值函数（读取元数据，速度快）
     SELECT
         'symbol_daily'::TEXT,
-        COUNT(*)::BIGINT,
-        MAX(time)::TIMESTAMPTZ
-    FROM symbol_daily
+        (SELECT approximate_row_count('symbol_daily'))::BIGINT,
+        (SELECT MAX(time) FROM symbol_daily)::TIMESTAMPTZ
     UNION ALL
     SELECT
         'symbol_minute'::TEXT,
-        COUNT(*)::BIGINT,
-        MAX(time)::TIMESTAMPTZ
-    FROM symbol_minute
+        (SELECT approximate_row_count('symbol_minute'))::BIGINT,
+        (SELECT MAX(time) FROM symbol_minute)::TIMESTAMPTZ
+    UNION ALL
+    SELECT
+        'symbol_tick'::TEXT,
+        (SELECT approximate_row_count('symbol_tick'))::BIGINT,
+        (SELECT MAX(time) FROM symbol_tick)::TIMESTAMPTZ
+    UNION ALL
+    SELECT
+        'daily_basic'::TEXT,
+        (SELECT approximate_row_count('daily_basic'))::BIGINT,
+        (SELECT MAX(time) FROM daily_basic)::TIMESTAMPTZ
     UNION ALL
     SELECT
         'adj_factor'::TEXT,
-        COUNT(*)::BIGINT,
-        MAX(time)::TIMESTAMPTZ
-    FROM adj_factor;
+        (SELECT approximate_row_count('adj_factor'))::BIGINT,
+        (SELECT MAX(time) FROM adj_factor)::TIMESTAMPTZ;
 END;
 $$ LANGUAGE plpgsql;
 

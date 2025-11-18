@@ -20,13 +20,17 @@ CREATE TABLE IF NOT EXISTS symbol_daily (
     PRIMARY KEY (symbol, time)
 );
 
--- 创建索引
-CREATE INDEX IF NOT EXISTS idx_symbol_daily_time ON symbol_daily(time);
-CREATE INDEX IF NOT EXISTS idx_symbol_daily_symbol_time ON symbol_daily(symbol, time DESC);
-CREATE INDEX IF NOT EXISTS idx_symbol_daily_close ON symbol_daily(close);
+-- ⚠️  删除冗余索引：PRIMARY KEY 已自动创建 (symbol, time) 索引
+-- ⚠️  删除冗余索引：create_hypertable 会自动在 time 列创建索引
+-- ⚠️  删除高基数值索引：idx_symbol_daily_close 对写入性能有害
 
--- 将symbol_daily转换为TimescaleDB超表
-SELECT create_hypertable('symbol_daily', 'time', if_not_exists => TRUE);
+-- 将symbol_daily转换为TimescaleDB超表，设置分区间隔为5年
+SELECT create_hypertable(
+    'symbol_daily',
+    'time',
+    if_not_exists => TRUE,
+    chunk_time_interval => INTERVAL '5 years'
+);
 
 COMMENT ON TABLE symbol_daily IS '日线数据表 - 存储股票日K线数据（TimescaleDB超表）';
 
@@ -45,12 +49,16 @@ CREATE TABLE IF NOT EXISTS symbol_minute (
     PRIMARY KEY (symbol, time)
 );
 
--- 创建索引
-CREATE INDEX IF NOT EXISTS idx_symbol_minute_time ON symbol_minute(time);
-CREATE INDEX IF NOT EXISTS idx_symbol_minute_symbol_time ON symbol_minute(symbol, time DESC);
+-- ⚠️  删除冗余索引：PRIMARY KEY 已自动创建 (symbol, time) 索引
+-- ⚠️  删除冗余索引：create_hypertable 会自动在 time 列创建索引
 
--- 将symbol_minute转换为TimescaleDB超表，设置为按天分区
-SELECT create_hypertable('symbol_minute', 'time', if_not_exists => TRUE);
+-- 将symbol_minute转换为TimescaleDB超表，设置分区间隔为1周
+SELECT create_hypertable(
+    'symbol_minute',
+    'time',
+    if_not_exists => TRUE,
+    chunk_time_interval => INTERVAL '1 week'
+);
 
 COMMENT ON TABLE symbol_minute IS '分钟数据表 - 存储股票分钟级K线数据（TimescaleDB超表）';
 
@@ -62,16 +70,21 @@ CREATE TABLE IF NOT EXISTS symbol_tick (
     volume BIGINT NOT NULL,                   -- 成交量
     amount DECIMAL(30,6),                     -- 成交额
     side VARCHAR(10),                         -- 买卖方向：B-买入，S-卖出
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (symbol, time)                -- 添加复合主键，确保同股票同时间唯一性
 );
 
--- 创建索引
-CREATE INDEX IF NOT EXISTS idx_symbol_tick_time ON symbol_tick(time);
-CREATE INDEX IF NOT EXISTS idx_symbol_tick_symbol_time ON symbol_tick(symbol, time DESC);
-CREATE INDEX IF NOT EXISTS idx_symbol_tick_price ON symbol_tick(price);
+-- ⚠️  删除冗余索引：PRIMARY KEY 已自动创建 (symbol, time) 索引
+-- ⚠️  删除冗余索引：create_hypertable 会自动在 time 列创建索引
+-- ⚠️  删除高基数值索引：idx_symbol_tick_price 对写入性能有害
 
--- 将symbol_tick转换为TimescaleDB超表，按小时分区
-SELECT create_hypertable('symbol_tick', 'time', if_not_exists => TRUE);
+-- 将symbol_tick转换为TimescaleDB超表，设置分区间隔为1天
+SELECT create_hypertable(
+    'symbol_tick',
+    'time',
+    if_not_exists => TRUE,
+    chunk_time_interval => INTERVAL '1 day'
+);
 
 COMMENT ON TABLE symbol_tick IS 'Tick数据表 - 存储逐笔交易数据（TimescaleDB超表）';
 
@@ -86,11 +99,24 @@ CREATE TABLE IF NOT EXISTS adj_factor (
     PRIMARY KEY (symbol, time)
 );
 
--- 创建索引
-CREATE INDEX IF NOT EXISTS idx_adj_factor_time ON adj_factor(time);
-CREATE INDEX IF NOT EXISTS idx_adj_factor_symbol_time ON adj_factor(symbol, time DESC);
+-- ⚠️  删除冗余索引：PRIMARY KEY 已自动创建 (symbol, time) 索引
+-- ⚠️  删除冗余索引：create_hypertable 会自动在 time 列创建索引
 
--- 将adj_factor转换为TimescaleDB超表
-SELECT create_hypertable('adj_factor', 'time', if_not_exists => TRUE);
+-- 将adj_factor转换为TimescaleDB超表，设置分区间隔为5年
+SELECT create_hypertable(
+    'adj_factor',
+    'time',
+    if_not_exists => TRUE,
+    chunk_time_interval => INTERVAL '5 years'
+);
+
+-- 每日指标表（从 002 中移入）
+-- 将daily_basic转换为TimescaleDB超表，设置分区间隔为5年
+SELECT create_hypertable(
+    'daily_basic',
+    'time',
+    if_not_exists => TRUE,
+    chunk_time_interval => INTERVAL '5 years'
+);
 
 COMMENT ON TABLE adj_factor IS '复权因子表 - 存储股票复权因子数据（TimescaleDB超表）';
