@@ -16,7 +16,12 @@
       "Bash(docker cp:*)",
       "Bash(python:*)",
       "Bash(uv add asyncpg)",
-      "Bash(.venv/bin/fdh-cli update:*)"
+      "Bash(.venv/bin/fdh-cli update:*)",
+      "Bash(openspec list:*)",
+      "Bash(CHANGE_ID=optimize-incremental-update-logic)",
+      "Bash(openspec validate:*)",
+      "Bash(openspec show:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
