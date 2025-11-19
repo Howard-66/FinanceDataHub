@@ -9,7 +9,8 @@
       "Bash(python -c \"from finance_data_hub.providers.tushare import TushareProvider; from finance_data_hub.cli.main import app; print(''导入成功'')\")",
       "Bash(openspec list)",
       "Bash(openspec show optimize-incremental-update-logic)",
-      "Bash(openspec show optimize-incremental-update-logic tasks)"
+      "Bash(openspec show optimize-incremental-update-logic tasks)",
+      "Bash(python -m py_compile finance_data_hub/update/updater.py finance_data_hub/cli/main.py)"
     ],
     "deny": [],
     "ask": []

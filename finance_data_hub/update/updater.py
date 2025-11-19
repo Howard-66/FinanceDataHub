@@ -105,15 +105,17 @@ class DataUpdater:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         adj: Optional[str] = None,
+        mode: str = "incremental",
     ) -> int:
         """
         更新日线数据
 
         Args:
             symbols: 股票代码列表，None表示全部
-            start_date: 开始日期
-            end_date: 结束日期
+            start_date: 开始日期，为None时使用默认逻辑
+            end_date: 结束日期，为None时使用今天
             adj: 复权类型
+            mode: 更新模式，"incremental" 或 "full"
 
         Returns:
             int: 更新的记录数
@@ -130,37 +132,46 @@ class DataUpdater:
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
+        # 根据模式设置默认 start_date
         if not start_date:
-            # 默认获取最近30天的数据
-            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-            start_dt = end_dt - timedelta(days=30)
-            start_date = start_dt.strftime("%Y-%m-%d")
+            if mode == "incremental":
+                # 增量模式：默认获取最近30天
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                start_dt = end_dt - timedelta(days=30)
+                start_date = start_dt.strftime("%Y-%m-%d")
+            else:
+                # 全量模式：使用一个很早的日期（实际覆盖范围由各 symbol 的查询结果决定）
+                start_date = "1990-01-01"
 
         logger.info(
             f"Updating daily data for {len(symbols)} symbols "
-            f"from {start_date} to {end_date} (adj={adj})"
+            f"from {start_date} to {end_date} (adj={adj}, mode={mode})"
         )
 
         total_records = 0
 
         for symbol in symbols:
             try:
-                # 获取最新数据日期
-                latest_date = await self.data_ops.get_latest_data_date(
-                    symbol, "symbol_daily"
-                )
+                if mode == "incremental":
+                    # 增量模式：查询最新记录，只获取增量数据
+                    latest_date = await self.data_ops.get_latest_data_date(
+                        symbol, "symbol_daily"
+                    )
 
-                # 如果有最新日期，从该日期后一天开始
-                if latest_date:
-                    next_day = latest_date + timedelta(days=1)
-                    symbol_start_date = next_day.strftime("%Y-%m-%d")
-                    if symbol_start_date > end_date:
-                        logger.debug(f"Skipping {symbol} - already up to date")
-                        continue
+                    if latest_date:
+                        next_day = latest_date + timedelta(days=1)
+                        symbol_start_date = next_day.strftime("%Y-%m-%d")
+                        if symbol_start_date > end_date:
+                            logger.debug(f"Skipping {symbol} - already up to date")
+                            continue
+                    else:
+                        # 新 symbol，使用默认的 start_date（全量更新）
+                        symbol_start_date = start_date
+                        logger.info(f"New symbol {symbol} - fetching full history from {symbol_start_date}")
                 else:
+                    # 全量模式：始终使用全局 start_date，获取完整历史数据
                     symbol_start_date = start_date
-
-                logger.debug(f"Fetching data for {symbol} from {symbol_start_date}")
+                    logger.debug(f"Full mode: fetching data for {symbol} from {symbol_start_date}")
 
                 # 从路由器获取数据
                 data = self.router.route(

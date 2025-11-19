@@ -1,46 +1,43 @@
 ## ADDED Requirements
-### Requirement: Smart Incremental Data Fetching
-All data providers SHALL implement intelligent incremental data fetching to optimize updates.
+### Requirement: Smart Download Capability
+All data providers SHALL support intelligent download strategy that automatically determines whether to fetch full or incremental data.
 
-#### Scenario: Fetch incremental daily data
-- **GIVEN** provider is initialized and connected
-- **WHEN** `get_incremental_data()` is called with symbol, frequency='daily', and database connection
-- **THEN** the provider SHALL:
-  1. Query database to find the latest timestamp for the symbol
-  2. Determine if the latest record is incomplete intraday data
-  3. Calculate appropriate start_date (latest record + 1 day OR None for new symbol)
-  4. Calculate end_date as current date or current trading day
-  5. Fetch data from start_date to end_date (or all data if start_date is None)
-  6. Return standardized DataFrame with incremental data
-
-#### Scenario: Fetch incremental minute data
-- **GIVEN** provider supports minute-level data
-- **WHEN** `get_incremental_data()` is called with symbol, frequency='minute_1'
-- **THEN** the provider SHALL:
-  1. Query database to find the latest minute timestamp
-  2. Calculate start_date as latest timestamp + 1 minute
-  3. Calculate end_date as current time
-  4. Fetch minute-level data in the calculated range
-  5. Return standardized DataFrame with minute-level data
-
-#### Scenario: Handle new symbol initialization
+#### Scenario: Smart download for new symbol (no database record)
 - **GIVEN** symbol does NOT exist in database
-- **WHEN** `get_incremental_data()` is called for the new symbol
+- **WHEN** provider is called with symbol but NO start_date and end_date
 - **THEN** the provider SHALL:
   1. Call provider API without start_date and end_date parameters
   2. Provider API SHALL fetch complete historical data for the symbol
   3. Return full historical dataset
   4. No need to query asset_basic for list_date
 
-#### Scenario: Support bulk asset update via trade_date
-- **GIVEN** user wants to update all assets for a specific date
-- **WHEN** `get_incremental_data()` is called with frequency='daily' but NO symbol specified
+#### Scenario: Smart download for existing symbol
+- **GIVEN** symbol exists in database (latest record: 2024-11-15)
+- **WHEN** provider is called with symbol and no date parameters
 - **THEN** the provider SHALL:
-  1. Use provider's trade_date parameter support
-  2. For Tushare: call API with trade_date=current_date, no symbol parameter
-  3. Fetch all assets data for the specified date
-  4. Return combined DataFrame for all assets
-  5. Skip asset_basic table queries (not needed for trade_date approach)
+  1. Use the database query result provided by caller
+  2. Calculate start_date as latest record + 1 day (2024-11-18)
+  3. Calculate end_date as current date
+  4. Fetch incremental data from 2024-11-18 to current date
+  5. Return standardized DataFrame with incremental data
+
+#### Scenario: Force update mode (ignore database)
+- **GIVEN** force_update=True is set
+- **WHEN** provider is called with symbol and force_update flag
+- **THEN** the provider SHALL:
+  1. Ignore database existing records
+  2. Use caller-provided date range or API's full range
+  3. Fetch data and allow overwriting existing records
+  4. Return fetched data
+
+#### Scenario: Support trade_date batch update (Tushare)
+- **GIVEN** trade_date parameter is provided
+- **WHEN** provider is called with trade_date but NO symbol
+- **THEN** the provider SHALL:
+  1. For Tushare: call API with trade_date parameter, no symbol
+  2. Fetch all stocks data for the specified trade_date
+  3. Return combined DataFrame for all stocks
+  4. Skip database queries (not applicable for batch mode)
 
 ### Requirement: Latest Record Query Capability
 Data providers SHALL provide methods to query database for latest records.

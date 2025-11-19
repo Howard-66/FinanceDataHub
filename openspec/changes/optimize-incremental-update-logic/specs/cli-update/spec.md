@@ -1,100 +1,112 @@
 ## MODIFIED Requirements
-### Requirement: Incremental Update Mode
-The `fdh-cli update` command SHALL implement intelligent incremental update strategy.
+### Requirement: Smart Download Mode (Default)
+The `fdh-cli update` command SHALL implement intelligent download strategy by default.
 
-#### Scenario: Update existing symbol with smart date range
-- **GIVEN** database contains historical data for symbol 600519.SH
-- **WHEN** user runs `fdh-cli update --symbols 600519.SH --mode incremental`
-- **THEN** the command SHALL:
-  1. Query database to find the latest record timestamp for the symbol
-  2. Check if the latest record is intraday data (same day but incomplete)
-  3. If latest record is from today after trading hours, fetch data from previous trading day to current time
-  4. If latest record is from today during trading hours, decide whether to overwrite based on market status
-  5. Calculate appropriate start_date and end_date for incremental fetch
-  6. Fetch incremental data from providers using smart routing
-  7. Insert/update data in TimescaleDB with proper upsert logic
-
-#### Scenario: Initialize new symbol with full historical data
+#### Scenario: Smart download for new symbol (no database record)
 - **GIVEN** database does NOT contain data for symbol 600519.SH
-- **WHEN** user runs `fdh-cli update --symbols 600519.SH --mode incremental`
+- **WHEN** user runs `fdh-cli update --dataset daily --symbols 600519.SH`
 - **THEN** the command SHALL:
-  1. Detect that no existing data exists for the symbol
-  2. Call provider API without start_date and end_date parameters
+  1. Query database and detect no existing data for the symbol
+  2. Call provider API WITHOUT start_date and end_date parameters
   3. Provider SHALL fetch complete historical data for the symbol
   4. Insert full historical dataset into database
-  5. No need to query asset_basic for list_date
 
-#### Scenario: Update all assets without specifying symbols
-- **GIVEN** user wants to update all stocks for today
-- **WHEN** user runs `fdh-cli update --dataset daily --mode incremental` (no --symbols)
+#### Scenario: Smart download for existing symbol
+- **GIVEN** database contains historical data for symbol 600519.SH (latest: 2024-11-15)
+- **WHEN** user runs `fdh-cli update --dataset daily --symbols 600519.SH`
 - **THEN** the command SHALL:
-  1. Use provider's trade_date capability (for Tushare)
-  2. Call Tushare API with trade_date=current_date, no symbol parameter
-  3. Fetch all stocks data for today in one API call
+  1. Query database to find the latest record timestamp (2024-11-15)
+  2. Calculate next trading day (2024-11-18)
+  3. Fetch data from 2024-11-18 to current date (incremental)
+  4. Insert/update data in database with upsert logic
+
+#### Scenario: Smart download for all assets (no symbols specified)
+- **GIVEN** user wants to update all stocks
+- **WHEN** user runs `fdh-cli update --dataset daily` (no --symbols)
+- **THEN** the command SHALL:
+  1. Query database to get all symbols
+  2. For each symbol, apply smart download logic
+  3. Process symbols sequentially or in batches to avoid rate limits
+
+#### Scenario: Trade date batch update (Tushare specific)
+- **GIVEN** user wants to update all stocks for a specific date
+- **WHEN** user runs `fdh-cli update --dataset daily --trade-date 2024-11-18`
+- **THEN** the command SHALL:
+  1. Use Tushare's trade_date capability
+  2. Call Tushare API with trade_date=20241118, no symbol parameter
+  3. Fetch all stocks data for 2024-11-18 in one API call
   4. Insert data into database for all fetched symbols
-  5. For providers without trade_date support, use alternative bulk update strategy
+  5. Skip non-Tushare providers or use alternative strategy
 
-#### Scenario: Use --dataset instead of --frequency
-- **GIVEN** user wants to update daily basic data
-- **WHEN** user runs `fdh-cli update --dataset daily_basic --mode incremental`
+#### Scenario: Force update mode
+- **GIVEN** user wants to force refresh all data for a symbol
+- **WHEN** user runs `fdh-cli update --dataset daily --symbols 600519.SH --force`
 - **THEN** the command SHALL:
-  1. Recognize that daily_basic is not a time frequency but a data type
-  2. Fetch daily basic data for the specified symbols
-  3. Apply appropriate incremental update logic based on data type
-  4. The --dataset parameter replaces the less accurate --frequency parameter
-  5. Legacy --frequency parameter remains supported for backward compatibility
+  1. Ignore database existing records
+  2. Use user-specified date range or default to full range
+  3. Fetch and overwrite all data in the specified range
+  4. Useful for data cleanup or correction
 
-#### Scenario: Handle multiple data types
-- **GIVEN** user wants to update both daily price and daily basic data
-- **WHEN** user runs `fdh-cli update --symbols 600519.SH --dataset daily,daily_basic --mode incremental`
+#### Scenario: Force update with date range
+- **GIVEN** user wants to update specific date range
+- **WHEN** user runs `fdh-cli update --dataset daily --symbols 600519.SH --start-date 2020-01-01 --end-date 2024-12-31`
 - **THEN** the command SHALL:
-  1. For daily (price data): apply time-based incremental logic
-  2. For daily_basic (indicator data): apply appropriate incremental logic for non-time-series data
-  3. Process each dataset type independently
-  4. Report results for each dataset type separately
-  5. Both --dataset and legacy --frequency parameters are accepted
+  1. Ignore database existing records for the date range
+  2. Fetch data for 2020-01-01 to 2024-12-31
+  3. Overwrite any existing data in this range
 
-#### Scenario: Fallback to full update on failure
-- **WHEN** incremental update fails due to data provider errors
-- **THEN** the command SHALL:
-  1. Log the error details
-  2. Attempt full refresh for the failed symbols
-  3. Report both the incremental failure and full refresh success
-  4. Exit with appropriate status code
+### Requirement: Intraday Data Overwrite Logic
+The system SHALL intelligently handle intraday data updates.
 
-#### Scenario: Daily data intraday handling
-- **GIVEN** current time is within trading hours (9:30-15:00 on weekdays)
-- **WHEN** incremental update fetches daily data for today
+#### Scenario: During trading hours (9:30-15:00)
+- **GIVEN** current time is 14:00 on 2024-11-18 (trading day)
+- **WHEN** smart download processes symbol with latest record on 2024-11-18
 - **THEN** the system SHALL:
-  1. Check if today's data already exists in database
-  2. If yes, verify if it needs updating (e.g., partial day data)
-  3. Fetch today's data and overwrite existing incomplete records
-  4. Ensure OHLCV data represents the current state of the day
+  1. Detect latest record is from today during trading hours
+  2. Fetch today's data again to update incomplete intraday data
+  3. Overwrite the existing today's record with fresh data
+  4. Ensure OHLCV reflects current market state
 
-#### Scenario: Daily data after-hours handling
-- **GIVEN** current time is after trading hours or on weekends
-- **WHEN** incremental update processes daily data
+#### Scenario: After trading hours
+- **GIVEN** current time is 20:00 on 2024-11-18 (after market close)
+- **WHEN** smart download processes symbol with latest record on 2024-11-18
 - **THEN** the system SHALL:
-  1. Fetch from the last complete trading day to current date
-  2. Avoid fetching partial day data for current date
-  3. Ensure all fetched data represents complete daily bars
+  1. Detect latest record is from today after trading hours
+  2. Skip today's data (already complete)
+  3. Fetch from next trading day (if any)
+  4. Ensure no partial day data is fetched
 
-### Requirement: Progress Display for Incremental Updates
-The system SHALL provide detailed progress information showing incremental update decisions.
+### Requirement: Update Strategy Matrix
+The system SHALL automatically select optimal update strategy based on parameters.
 
-#### Scenario: Show incremental update rationale
-- **WHEN** incremental update is in progress
+#### Strategy Selection Matrix:
+| Parameters | Strategy Selected |
+|------------|-------------------|
+| `--symbols X` (no dates, no --force) | Smart download (incremental if exists, full if new) |
+| `--symbols X --force` | Force full update |
+| `--symbols X --start-date Y` | Force update from Y to today |
+| `--symbols X --start-date Y --end-date Z` | Force update from Y to Z |
+| `--trade-date D` | Batch update using trade_date (Tushare only) |
+| No `--symbols` (no dates) | Smart download for all symbols |
+
+### Requirement: Dataset Parameter
+The `--dataset` parameter SHALL accurately describe data types.
+
+#### Supported Dataset Types:
+- **Time-series data**: `daily`, `minute_1`, `minute_5`, `minute_15`, `minute_30`, `minute_60`
+- **Indicator data**: `daily_basic`, `adj_factor`
+- The `--frequency` parameter is deprecated but still supported for backward compatibility
+
+### Requirement: Progress Display
+The system SHALL provide detailed progress information showing update decisions.
+
+#### Scenario: Verbose output for smart download
+- **WHEN** user runs `fdh-cli update --dataset daily --symbols 600519.SH --verbose`
 - **THEN** the command SHALL display:
   - Symbol being processed
-  - Last record timestamp found in database
-  - Decision rationale (full vs incremental, date range calculated)
-  - Number of new records fetched
-  - Number of records overwritten (if applicable)
-
-#### Scenario: Smart update mode with verbose logging
-- **WHEN** user runs `fdh-cli update --smart-incremental --verbose`
-- **THEN** the command SHALL display:
-  - Database queries executed
-  - Date range calculations performed
-  - Provider selection decisions
-  - Data validation results
+  - Latest record timestamp found (or "new symbol")
+  - Strategy selected (smart incremental / smart full / force update)
+  - Date range calculated
+  - Provider used
+  - Number of records fetched
+  - Number of records updated/overwritten

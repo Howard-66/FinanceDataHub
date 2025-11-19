@@ -226,14 +226,6 @@ async def _run_update(
         console.print("  支持的模式: incremental, full")
         raise typer.Exit(1)
 
-    # 全量模式下，如果用户没有指定start_date，设置一个合理的起始日期
-    if mode == "full" and not start_date:
-        # 对于全量更新，设置一个相对较早的日期（比如2000年）
-        # 避免使用1990年，因为很多股票是后来才上市的
-        start_date = "2000-01-01"
-        console.print(f"[cyan]全量更新模式：将从 {start_date} 开始获取数据[/cyan]")
-        console.print(f"[yellow]提示：如果需要获取更早期的数据，请使用 --start-date 参数[/yellow]")
-
     # 如果是智能增量模式，使用新的逻辑
     if smart_incremental:
         console.print("\n[bold yellow]使用智能增量更新模式[/bold yellow]")
@@ -296,12 +288,6 @@ async def _run_smart_incremental_update(
                     symbol_list = symbols_db
                     console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
 
-                # 如果是全量更新模式且没有指定start_date，设置全量起始日期
-                if mode == "full" and not start_date:
-                    start_date = "2000-01-01"
-                    console.print(f"[cyan]全量更新模式：将从 {start_date} 开始获取数据[/cyan]")
-                    console.print(f"[yellow]提示：如果需要获取更早期的数据，请使用 --start-date 参数[/yellow]\n")
-
                 total_updated = 0
                 total_skipped = 0
                 total_errors = 0
@@ -330,6 +316,7 @@ async def _run_smart_incremental_update(
                                 start_date=start_date,
                                 end_date=end_date,
                                 adj=adj,
+                                mode=mode,
                             )
                         elif data_type.startswith("minute"):
                             freq_map = {"minute_1": "1m", "minute_5": "5m"}
@@ -435,6 +422,7 @@ async def _run_standard_update(
                         start_date=start_date,
                         end_date=end_date,
                         adj=adj,
+                        mode=mode,
                     )
                     total += count
                     progress.update(task, advance=100)
