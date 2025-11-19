@@ -102,3 +102,181 @@ def test_cli_config_reload():
     result = runner.invoke(app, ["config", "--reload"])
     assert result.exit_code == 0
     assert "配置已重新加载" in result.output
+
+
+def test_cli_update_with_dataset():
+    """测试使用 --dataset 参数的更新命令"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "daily",
+            "--symbols", "600519.SH"
+        ])
+        assert result.exit_code == 0
+        assert "数据类型: daily" in result.output
+        assert "智能下载" in result.output
+
+
+def test_cli_update_with_force():
+    """测试强制更新模式"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "daily",
+            "--symbols", "600519.SH",
+            "--force"
+        ])
+        assert result.exit_code == 0
+        assert "强制更新" in result.output
+
+
+def test_cli_update_with_force_and_date_range():
+    """测试强制更新模式配合日期范围"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "daily",
+            "--symbols", "600519.SH",
+            "--start-date", "2020-01-01",
+            "--end-date", "2024-12-31"
+        ])
+        assert result.exit_code == 0
+        assert "强制更新" in result.output
+        assert "开始日期: 2020-01-01" in result.output
+        assert "结束日期: 2024-12-31" in result.output
+
+
+def test_cli_update_with_trade_date():
+    """测试交易日批量更新模式"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "daily",
+            "--trade-date", "2024-11-18"
+        ])
+        assert result.exit_code == 0
+        assert "交易日: 2024-11-18" in result.output
+        assert "交易日批量更新模式" in result.output
+
+
+def test_cli_update_smart_download_no_symbols():
+    """测试智能下载模式 - 无symbol参数（全资产更新）"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        with patch('finance_data_hub.update.updater.DataUpdater.data_ops') as mock_ops:
+            mock_ops.get_symbol_list.return_value = ["600519.SH", "000858.SZ"]
+            result = runner.invoke(app, [
+                "update",
+                "--dataset", "daily"
+            ])
+            assert result.exit_code == 0
+            assert "智能下载" in result.output
+
+
+def test_cli_update_with_verbose():
+    """测试详细输出模式"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "daily",
+            "--symbols", "600519.SH",
+            "--verbose"
+        ])
+        assert result.exit_code == 0
+        assert "verbose" in result.output.lower() or "详细" in result.output
+
+
+def test_cli_update_strategy_matrix_force_takes_precedence():
+    """测试策略矩阵 - force参数优先级"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        # 当同时提供 force 和 start_date 时，应该是强制更新模式
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "daily",
+            "--symbols", "600519.SH",
+            "--force",
+            "--start-date", "2020-01-01"
+        ])
+        assert result.exit_code == 0
+        assert "强制更新" in result.output
+
+
+def test_cli_update_strategy_matrix_trade_date_priority():
+    """测试策略矩阵 - trade_date优先级最高"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        # 当同时提供 trade_date 和其他参数时，trade_date优先级最高
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "daily",
+            "--symbols", "600519.SH",
+            "--trade-date", "2024-11-18"
+        ])
+        assert result.exit_code == 0
+        assert "交易日批量更新模式" in result.output
+
+
+def test_cli_update_deprecated_frequency_warning():
+    """测试 --frequency 参数废弃警告"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--frequency", "daily"
+        ])
+        assert result.exit_code == 0
+        assert "警告" in result.output
+        assert "已废弃" in result.output
+
+
+def test_cli_update_missing_dataset_and_frequency():
+    """测试缺少数据类型参数时的错误处理"""
+    result = runner.invoke(app, ["update"])
+    assert result.exit_code != 0
+    assert "必须指定数据类型" in result.output
+
+
+def test_cli_update_adj_parameter():
+    """测试复权类型参数"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "daily",
+            "--symbols", "600519.SH",
+            "--adj", "qfq"
+        ])
+        assert result.exit_code == 0
+        assert "复权类型: qfq" in result.output
+
+
+def test_cli_update_minute_data():
+    """测试分钟数据更新"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "minute_1",
+            "--symbols", "600519.SH"
+        ])
+        assert result.exit_code == 0
+        assert "数据类型: minute_1" in result.output
+
+
+def test_cli_update_daily_basic():
+    """测试每日基本面数据更新"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "daily_basic",
+            "--symbols", "600519.SH"
+        ])
+        assert result.exit_code == 0
+        assert "数据类型: daily_basic" in result.output
+
+
+def test_cli_update_adj_factor():
+    """测试复权因子数据更新"""
+    with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
+        result = runner.invoke(app, [
+            "update",
+            "--dataset", "adj_factor",
+            "--symbols", "600519.SH"
+        ])
+        assert result.exit_code == 0
+        assert "数据类型: adj_factor" in result.output

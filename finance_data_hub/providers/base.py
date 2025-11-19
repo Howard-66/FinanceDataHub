@@ -13,6 +13,55 @@ from loguru import logger
 
 
 # ===========================
+# 市场交易时间配置
+# ===========================
+
+class MarketTradingHours:
+    """市场交易时间配置"""
+
+    # 交易时间段：(开始小时, 开始分钟, 结束小时, 结束分钟)
+    TRADING_SESSIONS = {
+        # 中国 A股
+        "CN": [
+            (9, 30, 11, 30),  # 上午
+            (13, 0, 15, 0),   # 下午
+        ],
+        # 美国股市
+        "US": [
+            (9, 30, 16, 0),   # 正常交易时间
+        ],
+        # 日本股市
+        "JP": [
+            (9, 0, 11, 30),   # 上午
+            (12, 30, 15, 0),  # 下午
+        ],
+        # 香港股市
+        "HK": [
+            (9, 30, 12, 0),   # 上午
+            (13, 0, 16, 0),   # 下午
+        ],
+    }
+
+    # 市场时区映射
+    MARKET_TIMEZONES = {
+        "CN": "Asia/Shanghai",
+        "US": "America/New_York",
+        "JP": "Asia/Tokyo",
+        "HK": "Asia/Hong_Kong",
+    }
+
+    @classmethod
+    def get_trading_sessions(cls, market: str = "CN") -> List[Tuple[int, int, int, int]]:
+        """获取市场的交易时间段"""
+        return cls.TRADING_SESSIONS.get(market.upper(), cls.TRADING_SESSIONS["CN"])
+
+    @classmethod
+    def get_market_timezone(cls, market: str = "CN") -> str:
+        """获取市场的时区"""
+        return cls.MARKET_TIMEZONES.get(market.upper(), "Asia/Shanghai")
+
+
+# ===========================
 # 错误类定义
 # ===========================
 
@@ -70,18 +119,20 @@ class BaseDataProvider(ABC):
     所有具体的数据提供者（TushareProvider、XTQuantProvider等）都必须继承此类。
     """
 
-    def __init__(self, name: str, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, name: str, config: Optional[Dict[str, Any]] = None, market: str = "CN"):
         """
         初始化数据提供者
 
         Args:
             name: 提供者名称（例如 "tushare", "xtquant"）
             config: 提供者配置字典
+            market: 市场代码（CN=中国, US=美国, JP=日本, HK=香港）
         """
         self.name = name
         self.config = config or {}
+        self.market = market.upper()
         self._is_initialized = False
-        logger.info(f"Initializing provider: {self.name}")
+        logger.info(f"Initializing provider: {self.name} for market {self.market}")
 
     @abstractmethod
     def initialize(self) -> None:
@@ -493,31 +544,45 @@ class BaseDataProvider(ABC):
         Returns:
             bool: 是否在交易时间内
         """
+        try:
+            from zoneinfo import ZoneInfo
+        except ImportError:
+            # Python < 3.9, 使用pytz
+            import pytz
+            ZoneInfo = lambda tz: pytz.timezone(tz)
+
+        # 获取市场的时区
+        market_tz = MarketTradingHours.get_market_timezone(self.market)
+        tz = ZoneInfo(market_tz)
+
         if current_time is None:
-            current_time = datetime.now()
+            # 使用市场当前时间
+            import datetime as dt
+            current_time = dt.datetime.now(tz)
+        elif current_time.tzinfo is None:
+            # 如果没有时区信息，假设是市场时间
+            current_time = current_time.replace(tzinfo=tz)
+        else:
+            # 转换为市场时间
+            current_time = current_time.astimezone(tz)
 
-        # 简化的中国股市交易时间判断（不考虑节假日）
-        # 上午: 9:30-11:30
-        # 下午: 13:00-15:00
-        # 周一到周五
-
+        # 检查是否为工作日
         weekday = current_time.weekday()  # 0=周一, 6=周日
         if weekday >= 5:  # 周六周日
             return False
 
+        # 获取市场的交易时间段
+        trading_sessions = MarketTradingHours.get_trading_sessions(self.market)
         hour = current_time.hour
         minute = current_time.minute
 
-        # 上午交易时间
-        if hour == 9 and minute >= 30:
-            return True
-        elif 10 <= hour <= 11:
-            return True
-        elif hour == 11 and minute <= 30:
-            return True
-
-        # 下午交易时间
-        if 13 <= hour < 15:
-            return True
+        # 检查是否在交易时间内
+        for start_h, start_m, end_h, end_m in trading_sessions:
+            # 特殊处理跨小时的边界
+            if start_h == end_h - 1 and hour == start_h and minute >= start_m:
+                return True
+            # 正常情况：当前时间在交易时间段内
+            if (start_h < hour < end_h) or (hour == start_h and minute >= start_m) or (hour == end_h and minute < end_m):
+                return True
 
         return False

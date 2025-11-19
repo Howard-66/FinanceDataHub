@@ -10,7 +10,12 @@
       "Bash(openspec list)",
       "Bash(openspec show optimize-incremental-update-logic)",
       "Bash(openspec show optimize-incremental-update-logic tasks)",
-      "Bash(python -m py_compile finance_data_hub/update/updater.py finance_data_hub/cli/main.py)"
+      "Bash(python -m py_compile finance_data_hub/update/updater.py finance_data_hub/cli/main.py)",
+      "Bash(python -m pytest:*)",
+      "Bash(python:*)",
+      "Bash(timeout 10 fdh-cli:*)",
+      "Bash(echo:*)",
+      "Bash(openspec:*)"
     ],
     "deny": [],
     "ask": []

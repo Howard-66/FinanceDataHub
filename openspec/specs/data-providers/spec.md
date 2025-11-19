@@ -72,3 +72,35 @@ The system SHALL implement comprehensive error handling for all data providers.
 - **WHEN** provider processes the response
 - **THEN** the provider SHALL return empty DataFrame with correct schema
 
+### Requirement: Incremental Data Fetching
+All providers SHALL support incremental data fetching to enable smart download mode.
+
+#### Scenario: Fetch with None date range (full download)
+- **GIVEN** provider is configured with valid credentials
+- **WHEN** get_daily_data is called with start_date=None, end_date=None
+- **THEN** the provider SHALL fetch complete historical data from the beginning
+
+#### Scenario: Fetch with calculated date range (incremental)
+- **GIVEN** provider has last record date from database
+- **WHEN** get_daily_data is called with start_date after last record
+- **THEN** the provider SHALL fetch only data from specified start_date onwards
+
+#### Scenario: Trade date batch fetching
+- **GIVEN** provider supports trade_date parameter (Tushare)
+- **WHEN** get_daily_data is called with trade_date="2024-11-18"
+- **THEN** the provider SHALL batch fetch all stocks for that trading date
+
+#### Scenario: Auto-batching for large datasets
+- **GIVEN** provider receives more than 6000 records (Tushare limit)
+- **WHEN** fetching daily data
+- **THEN** the provider SHALL automatically batch requests adjusting end_date backwards
+
+#### Scenario: Provider method signature consistency
+- **GIVEN** any data provider (Tushare, XTQuant)
+- **WHEN** calling data fetching methods
+- **THEN** all providers SHALL support these parameters:
+  - symbol: Optional[str] (None for batch/all)
+  - start_date: Optional[str] (None for smart/fetch all)
+  - end_date: Optional[str] (None for fetch to latest)
+  - trade_date: Optional[str] (None for regular mode)
+

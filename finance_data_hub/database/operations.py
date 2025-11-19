@@ -13,22 +13,40 @@ from loguru import logger
 from finance_data_hub.database.manager import DatabaseManager
 
 
-def _normalize_datetime_for_db(value):
+def _normalize_datetime_for_db(value, data_type="daily"):
     """
     将pandas Timestamp转换为带时区的Python datetime
 
     Args:
         value: pandas Timestamp或datetime对象
+        data_type: 数据类型 ('daily', 'minute', 'daily_basic', 'adj_factor')
 
     Returns:
-        datetime: 带UTC时区的datetime对象
+        datetime: 带Asia/Shanghai时区的datetime对象
     """
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        # Python < 3.9, 使用pytz
+        import pytz
+        ZoneInfo = lambda tz: pytz.timezone(tz)
+
     if isinstance(value, pd.Timestamp):
+        # 中国股市使用Asia/Shanghai时区
+        china_tz = ZoneInfo('Asia/Shanghai')
+
         if value.tz is None:
-            # 如果没有时区信息，假设是UTC
-            return value.tz_localize('UTC').to_pydatetime()
+            # 无时区信息，根据数据类型处理
+            if data_type == "daily" or data_type == "daily_basic" or data_type == "adj_factor":
+                # 日线数据：设置为收盘时间 15:00:00
+                value = value.replace(hour=15, minute=0, second=0, microsecond=0)
+            # else: minute数据保持原时间
+
+            # 本地化为中国时间
+            return value.tz_localize(china_tz).to_pydatetime()
         else:
-            return value.tz_convert('UTC').to_pydatetime()
+            # 已有时区，转换为中国时间
+            return value.tz_convert(china_tz).to_pydatetime()
     return value
 
 
@@ -86,7 +104,8 @@ class DataOperations:
                 open_interest = EXCLUDED.open_interest,
                 settle = EXCLUDED.settle,
                 change_pct = EXCLUDED.change_pct,
-                change_amount = EXCLUDED.change_amount
+                change_amount = EXCLUDED.change_amount,
+                updated_at = NOW()
         """
 
         total_inserted = 0
@@ -105,7 +124,7 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value)
+                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
 
             # 确保所有必需字段都存在，缺失的字段设置为None
             required_fields = {
@@ -167,7 +186,8 @@ class DataOperations:
                 open_interest = EXCLUDED.open_interest,
                 settle = EXCLUDED.settle,
                 change_pct = EXCLUDED.change_pct,
-                change_amount = EXCLUDED.change_amount
+                change_amount = EXCLUDED.change_amount,
+                updated_at = NOW()
         """
 
         total_inserted = 0
@@ -183,7 +203,7 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value)
+                        record[key] = _normalize_datetime_for_db(value, data_type="minute")
 
             # 确保所有必需字段都存在，缺失的字段设置为None
             required_fields = {
@@ -250,10 +270,12 @@ class DataOperations:
                     record[key] = None
 
         async with self.db_manager._engine.begin() as conn:
-            result = await conn.execute(text(insert_sql), records)
+            await conn.execute(text(insert_sql), records)
 
-        logger.info(f"Inserted/updated {result.rowcount} asset_basic records")
-        return result.rowcount
+        # PostgreSQL ON CONFLICT 可能返回 -1，使用实际的记录数更可靠
+        actual_count = len(records)
+        logger.info(f"Inserted/updated {actual_count} asset_basic records (batch: {len(records)})")
+        return actual_count
 
     async def insert_daily_basic_batch(
         self, data: pd.DataFrame, batch_size: int = 1000
@@ -296,7 +318,8 @@ class DataOperations:
                 float_share = EXCLUDED.float_share,
                 free_share = EXCLUDED.free_share,
                 total_mv = EXCLUDED.total_mv,
-                circ_mv = EXCLUDED.circ_mv
+                circ_mv = EXCLUDED.circ_mv,
+                updated_at = NOW()
         """
 
         total_inserted = 0
@@ -312,7 +335,7 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value)
+                        record[key] = _normalize_datetime_for_db(value, data_type="daily_basic")
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)
@@ -445,7 +468,7 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value)
+                        record[key] = _normalize_datetime_for_db(value, data_type="adj_factor")
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)

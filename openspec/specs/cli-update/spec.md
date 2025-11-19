@@ -4,33 +4,42 @@
 TBD - created by archiving change implement-phase2-core-batch-processing. Update Purpose after archive.
 ## Requirements
 ### Requirement: fdh-cli update Command Enhancement
-The `fdh-cli update` command SHALL be enhanced to support complete data synchronization from sources to database.
+The `fdh-cli update` command SHALL be enhanced to support complete data synchronization from sources to database with smart download and force update modes.
 
 #### Scenario: Execute full update
-- **WHEN** user runs `fdh-cli update --asset-class stock --frequency daily`
+- **WHEN** user runs `fdh-cli update --asset-class stock --dataset daily`
 - **THEN** the command SHALL:
   1. Load configuration from sources.yml
   2. Initialize data providers (Tushare, XTQuant)
   3. Use smart router to select appropriate provider
-  4. Fetch data from provider
+  4. Fetch data from provider using smart download mode
   5. Validate and standardize data format
   6. Insert/update data in TimescaleDB
   7. Display progress and results
 
-#### Scenario: Incremental update mode
-- **WHEN** user runs `fdh-cli update --mode incremental`
+#### Scenario: Smart Download Mode (Default)
+- **WHEN** user runs `fdh-cli update --dataset daily` without --force
 - **THEN** the command SHALL:
   1. Query database for latest timestamp per symbol
-  2. Fetch only newer data from providers
-  3. Append new records to database
-  4. Skip existing data
+  2. If no records exist → fetch full historical data (pass None to API)
+  3. If records exist → calculate start_date from last record + 1 day
+  4. Fetch incremental data from calculated start_date
+  5. Smart overwrite intraday data during trading hours
+  6. Skip overwriting completed daily data after market close
 
-#### Scenario: Full refresh mode
-- **WHEN** user runs `fdh-cli update --mode full`
+#### Scenario: Force Update Mode
+- **WHEN** user runs `fdh-cli update --dataset daily --force`
 - **THEN** the command SHALL:
-  1. Delete all existing data for specified symbols/frequency
-  2. Fetch complete dataset from providers
-  3. Insert fresh data into database
+  1. Ignore database state completely
+  2. Use user-specified date range or fetch full data
+  3. Overwrite existing data without checking timestamps
+
+#### Scenario: Trade Date Batch Update
+- **WHEN** user runs `fdh-cli update --dataset daily --trade-date 2024-11-18`
+- **THEN** the command SHALL:
+  1. Use Tushare's trade_date parameter to batch fetch all stocks
+  2. Fetch data for specified trading date only
+  3. Batch insert into database (1000 records per batch)
 
 #### Scenario: Update specific symbols
 - **WHEN** user runs `fdh-cli update --symbols 600519.SH,000858.SZ`

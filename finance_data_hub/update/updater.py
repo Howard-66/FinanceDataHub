@@ -105,17 +105,17 @@ class DataUpdater:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         adj: Optional[str] = None,
-        mode: str = "incremental",
+        force_update: bool = False,
     ) -> int:
         """
         更新日线数据
 
         Args:
             symbols: 股票代码列表，None表示全部
-            start_date: 开始日期，为None时使用默认逻辑
+            start_date: 开始日期，None表示智能下载（查询数据库自动计算）
             end_date: 结束日期，为None时使用今天
             adj: 复权类型
-            mode: 更新模式，"incremental" 或 "full"
+            force_update: 是否强制更新（忽略数据库状态）
 
         Returns:
             int: 更新的记录数
@@ -132,46 +132,39 @@ class DataUpdater:
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
-        # 根据模式设置默认 start_date
-        if not start_date:
-            if mode == "incremental":
-                # 增量模式：默认获取最近30天
-                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-                start_dt = end_dt - timedelta(days=30)
-                start_date = start_dt.strftime("%Y-%m-%d")
-            else:
-                # 全量模式：使用一个很早的日期（实际覆盖范围由各 symbol 的查询结果决定）
-                start_date = "1990-01-01"
-
         logger.info(
             f"Updating daily data for {len(symbols)} symbols "
-            f"from {start_date} to {end_date} (adj={adj}, mode={mode})"
+            f"from {start_date} to {end_date} (adj={adj}, force={force_update})"
         )
 
         total_records = 0
 
         for symbol in symbols:
             try:
-                if mode == "incremental":
-                    # 增量模式：查询最新记录，只获取增量数据
+                # 智能下载逻辑：确定该symbol的实际起始日期
+                symbol_start_date = start_date
+
+                if not force_update and not start_date:
+                    # 查询数据库最新记录
                     latest_date = await self.data_ops.get_latest_data_date(
                         symbol, "symbol_daily"
                     )
 
                     if latest_date:
+                        # 有记录，计算下一个交易日
                         next_day = latest_date + timedelta(days=1)
                         symbol_start_date = next_day.strftime("%Y-%m-%d")
                         if symbol_start_date > end_date:
                             logger.debug(f"Skipping {symbol} - already up to date")
                             continue
+                        logger.debug(f"Smart incremental: {symbol} from {symbol_start_date}")
                     else:
-                        # 新 symbol，使用默认的 start_date（全量更新）
-                        symbol_start_date = start_date
-                        logger.info(f"New symbol {symbol} - fetching full history from {symbol_start_date}")
-                else:
-                    # 全量模式：始终使用全局 start_date，获取完整历史数据
-                    symbol_start_date = start_date
-                    logger.debug(f"Full mode: fetching data for {symbol} from {symbol_start_date}")
+                        # 新symbol，智能下载模式：传None让API获取全量数据
+                        symbol_start_date = None
+                        logger.info(f"Smart download: {symbol} - fetching full history")
+                elif force_update:
+                    # 强制更新模式：使用提供的日期范围或全量
+                    logger.debug(f"Force update: {symbol} from {symbol_start_date or 'beginning'}")
 
                 # 从路由器获取数据
                 data = self.router.route(
@@ -207,15 +200,17 @@ class DataUpdater:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         freq: str = "1m",
+        force_update: bool = False,
     ) -> int:
         """
         更新分钟数据
 
         Args:
             symbols: 股票代码列表
-            start_date: 开始日期
+            start_date: 开始日期，None表示智能下载
             end_date: 结束日期
             freq: 频率
+            force_update: 是否强制更新（忽略数据库状态）
 
         Returns:
             int: 更新的记录数
@@ -228,25 +223,42 @@ class DataUpdater:
             logger.warning("No symbols to update")
             return 0
 
-        # 确定日期范围（分钟数据默认只获取最近1天）
+        # 确定日期范围
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
-        if not start_date:
-            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-            start_dt = end_dt - timedelta(days=1)
-            start_date = start_dt.strftime("%Y-%m-%d")
-
         logger.info(
             f"Updating {freq} data for {len(symbols)} symbols "
-            f"from {start_date} to {end_date}"
+            f"from {start_date or 'smart'} to {end_date} (force={force_update})"
         )
 
         total_records = 0
 
         for symbol in symbols:
             try:
-                logger.debug(f"Fetching {freq} data for {symbol}")
+                # 智能下载逻辑：确定该symbol的实际起始日期
+                symbol_start_date = start_date
+
+                if not force_update and not start_date:
+                    # 查询数据库最新记录（分钟级别）
+                    table_name = f"symbol_minute_{freq}"
+                    latest_date = await self.data_ops.get_latest_data_date(
+                        symbol, table_name
+                    )
+
+                    if latest_date:
+                        # 有记录，计算下一分钟
+                        next_minute = latest_date + timedelta(minutes=1)
+                        # 转换为日期字符串（分钟数据使用datetime）
+                        symbol_start_date = next_minute.strftime("%Y-%m-%d %H:%M:%S")
+                        logger.debug(f"Smart incremental: {symbol} from {symbol_start_date}")
+                    else:
+                        # 新symbol，智能下载模式：传None让API获取全量数据
+                        symbol_start_date = None
+                        logger.info(f"Smart download: {symbol} - fetching full history")
+                elif force_update:
+                    # 强制更新模式：使用提供的日期范围或全量
+                    logger.debug(f"Force update: {symbol} from {symbol_start_date or 'beginning'}")
 
                 # 从路由器获取数据
                 data = self.router.route(
@@ -255,7 +267,7 @@ class DataUpdater:
                     freq=freq,
                     method_name="get_minute_data",
                     symbol=symbol,
-                    start_date=start_date,
+                    start_date=symbol_start_date,
                     end_date=end_date,
                 )
 
@@ -279,14 +291,16 @@ class DataUpdater:
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        force_update: bool = False,
     ) -> int:
         """
         更新每日指标数据
 
         Args:
             symbols: 股票代码列表
-            start_date: 开始日期
+            start_date: 开始日期，None表示智能下载
             end_date: 结束日期
+            force_update: 是否强制更新（忽略数据库状态）
 
         Returns:
             int: 更新的记录数
@@ -302,20 +316,37 @@ class DataUpdater:
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
-        if not start_date:
-            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-            start_dt = end_dt - timedelta(days=30)
-            start_date = start_dt.strftime("%Y-%m-%d")
-
         logger.info(
             f"Updating daily basic for {len(symbols)} symbols "
-            f"from {start_date} to {end_date}"
+            f"from {start_date or 'smart'} to {end_date} (force={force_update})"
         )
 
         total_records = 0
 
         for symbol in symbols:
             try:
+                # 智能下载逻辑：确定该symbol的实际起始日期
+                symbol_start_date = start_date
+
+                if not force_update and not start_date:
+                    # 查询数据库最新记录
+                    latest_date = await self.data_ops.get_latest_data_date(
+                        symbol, "daily_basic"
+                    )
+
+                    if latest_date:
+                        # 有记录，计算下一个交易日
+                        next_day = latest_date + timedelta(days=1)
+                        symbol_start_date = next_day.strftime("%Y-%m-%d")
+                        logger.debug(f"Smart incremental: {symbol} from {symbol_start_date}")
+                    else:
+                        # 新symbol，智能下载模式：传None让API获取全量数据
+                        symbol_start_date = None
+                        logger.info(f"Smart download: {symbol} - fetching full history")
+                elif force_update:
+                    # 强制更新模式：使用提供的日期范围或全量
+                    logger.debug(f"Force update: {symbol} from {symbol_start_date or 'beginning'}")
+
                 # 批量获取数据（Tushare支持批量）
                 symbols_chunk = [symbol]
 
@@ -324,7 +355,7 @@ class DataUpdater:
                     data_type="daily_basic",
                     method_name="get_daily_basic",
                     symbol=symbol,
-                    start_date=start_date,
+                    start_date=symbol_start_date,
                     end_date=end_date,
                 )
 
@@ -348,14 +379,16 @@ class DataUpdater:
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        force_update: bool = False,
     ) -> int:
         """
         更新复权因子数据
 
         Args:
             symbols: 股票代码列表，None表示全部
-            start_date: 开始日期
+            start_date: 开始日期，None表示智能下载
             end_date: 结束日期
+            force_update: 是否强制更新（忽略数据库状态）
 
         Returns:
             int: 更新的记录数
@@ -368,19 +401,13 @@ class DataUpdater:
             logger.warning("No symbols to update")
             return 0
 
-        # 确定全局日期范围
+        # 确定日期范围
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
-        if not start_date:
-            # 复权因子变化不频繁，默认获取最近1年的数据
-            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-            start_dt = end_dt - timedelta(days=365)
-            start_date = start_dt.strftime("%Y-%m-%d")
-
         logger.info(
             f"Updating adj_factor for {len(symbols)} symbols "
-            f"from {start_date} to {end_date}"
+            f"from {start_date or 'smart'} to {end_date} (force={force_update})"
         )
 
         total_records = 0
@@ -388,24 +415,31 @@ class DataUpdater:
 
         for symbol in symbols:
             try:
-                # 获取该股票最新的复权因子日期
-                latest_date = await self.data_ops.get_latest_data_date(
-                    symbol, "adj_factor"
-                )
+                # 智能下载逻辑：确定该symbol的实际起始日期
+                symbol_start_date = start_date
 
-                # 如果有最新日期，从该日期后一天开始
-                if latest_date:
-                    next_day = latest_date + timedelta(days=1)
-                    symbol_start_date = next_day.strftime("%Y-%m-%d")
-                    if symbol_start_date > end_date:
-                        logger.debug(f"Skipping {symbol} - already up to date")
-                        skipped_count += 1
-                        continue
-                else:
-                    # 首次获取，使用全局起始日期
-                    symbol_start_date = start_date
+                if not force_update and not start_date:
+                    # 获取该股票最新的复权因子日期
+                    latest_date = await self.data_ops.get_latest_data_date(
+                        symbol, "adj_factor"
+                    )
 
-                logger.debug(f"Fetching adj_factor for {symbol} from {symbol_start_date}")
+                    if latest_date:
+                        # 有记录，计算下一个交易日
+                        next_day = latest_date + timedelta(days=1)
+                        symbol_start_date = next_day.strftime("%Y-%m-%d")
+                        if symbol_start_date > end_date:
+                            logger.debug(f"Skipping {symbol} - already up to date")
+                            skipped_count += 1
+                            continue
+                        logger.debug(f"Smart incremental: {symbol} from {symbol_start_date}")
+                    else:
+                        # 新symbol，智能下载模式：传None让API获取全量数据
+                        symbol_start_date = None
+                        logger.info(f"Smart download: {symbol} - fetching full history")
+                elif force_update:
+                    # 强制更新模式：使用提供的日期范围或全量
+                    logger.debug(f"Force update: {symbol} from {symbol_start_date or 'beginning'}")
 
                 # 从路由器获取数据
                 data = self.router.route(

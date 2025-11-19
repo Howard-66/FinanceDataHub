@@ -343,7 +343,9 @@ Phase 1 和 Phase 2 已全部完成！系统已具备生产就绪能力。
 - ✅ **数据提供者**: TushareProvider (直连API) + XTQuantProvider (HTTP客户端)
 - ✅ **智能路由**: sources.yml 配置驱动 + 断路器模式 + 自动故障转移
 - ✅ **数据库层**: 5张核心表 (asset_basic, daily_basic, symbol_daily, symbol_minute, adj_factor)
-- ✅ **增量更新**: 自动检测最新数据，避免重复获取
+- ✅ **智能下载模式**: 自动检测数据库状态，新symbol全量，有symbol增量
+- ✅ **强制更新模式**: `--force` 参数忽略数据库状态，强制覆盖
+- ✅ **交易日批量更新**: `--trade-date` 参数批量获取指定交易日所有股票
 - ✅ **复权因子**: 完整的前/后复权因子管理（增量更新）
 
 #### 核心特性
@@ -370,11 +372,27 @@ psql "$DATABASE_URL" -f sql/init/001_create_extensions.sql
 psql "$DATABASE_URL" -f sql/init/002_create_tables.sql
 psql "$DATABASE_URL" -f sql/init/003_create_hypertables.sql
 psql "$DATABASE_URL" -f sql/init/004_create_adj_factor.sql
+psql "$DATABASE_URL" -f sql/init/005_create_functions.sql
 
 # 5. 获取数据
-fdh-cli update --frequency basic     # 股票基本信息
-fdh-cli update --frequency daily     # 日线数据
-fdh-cli update --frequency adj_factor # 复权因子
+
+# 智能下载模式（默认）- 自动检测数据库状态
+fdh-cli update --dataset daily              # 自动增量更新所有股票
+fdh-cli update --dataset daily_basic        # 自动增量更新每日指标
+fdh-cli update --symbols 600519.SH,000858.SZ # 更新指定股票
+
+# 强制更新模式 - 忽略数据库状态
+fdh-cli update --dataset daily --force      # 强制全量更新所有股票
+fdh-cli update --dataset daily --force --start-date 2024-01-01 # 指定日期范围
+
+# 交易日批量更新 - 批量获取指定交易日所有股票
+fdh-cli update --dataset daily --trade-date 2024-11-18
+fdh-cli update --dataset daily_basic --trade-date 2024-11-18
+
+# 向后兼容 - 仍支持 --frequency 参数
+fdh-cli update --frequency basic            # 股票基本信息
+fdh-cli update --frequency daily            # 日线数据（已废弃，请使用 --dataset）
+fdh-cli update --frequency adj_factor       # 复权因子
 
 # 6. 查看状态
 fdh-cli status --verbose
@@ -428,7 +446,8 @@ sql/init/
 ├── 001_create_extensions.sql    # 扩展
 ├── 002_create_tables.sql        # 5张表
 ├── 003_create_hypertables.sql   # 超表+策略
-└── 004_create_adj_factor.sql    # 复权因子表
+├── 004_create_adj_factor.sql    # 复权因子表
+└── 005_create_functions.sql     # 存储函数
 
 tests/
 ├── unit/                  # 单元测试 (42个测试)
