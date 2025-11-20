@@ -43,16 +43,16 @@ routing_strategy:
         providers: [xtquant]  # 1分钟数据只使用xtquant
         fallback: false
       5m:
-        providers: [xtquant, tushare]
+        providers: [xtquant]
         fallback: true
       15m:
-        providers: [xtquant, tushare]
+        providers: [xtquant]
         fallback: true
       30m:
-        providers: [xtquant, tushare]
+        providers: [xtquant]
         fallback: true
       60m:
-        providers: [xtquant, tushare]
+        providers: [xtquant]
         fallback: true
 
     # 每日指标
