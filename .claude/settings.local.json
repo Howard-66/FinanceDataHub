@@ -15,7 +15,17 @@
       "Bash(python:*)",
       "Bash(timeout 10 fdh-cli:*)",
       "Bash(echo:*)",
-      "Bash(openspec:*)"
+      "Bash(openspec:*)",
+      "Bash(mkdir:*)",
+      "Bash(cat finance_data_hub/__init__.py)",
+      "Bash(fdh-cli init)",
+      "Bash(timeout 60 fdh-cli init)",
+      "Bash(timeout 120 fdh-cli init)",
+      "Bash(psql \"$DATABASE_URL\" -c \"SELECT view_name FROM timescaledb_information.continuous_aggregates WHERE view_name LIKE ''%weekly'' OR view_name LIKE ''%monthly'' ORDER BY view_name;\")",
+      "Bash(fdh-cli status --aggregates)",
+      "Bash(fdh-cli refresh-aggregates --table symbol_weekly --start 2024-01-01 --end 2024-12-31)",
+      "Bash(fdh-cli refresh-aggregates --table adj_factor_weekly)",
+      "Bash(fdh-cli refresh-aggregates --table daily_basic_monthly)"
     ],
     "deny": [],
     "ask": []

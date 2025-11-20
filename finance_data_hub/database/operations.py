@@ -15,10 +15,10 @@ from finance_data_hub.database.manager import DatabaseManager
 
 def _normalize_datetime_for_db(value, data_type="daily"):
     """
-    将pandas Timestamp转换为带时区的Python datetime
+    将pandas Timestamp或字符串转换为带时区的Python datetime
 
     Args:
-        value: pandas Timestamp或datetime对象
+        value: pandas Timestamp、datetime对象或字符串
         data_type: 数据类型 ('daily', 'minute', 'daily_basic', 'adj_factor')
 
     Returns:
@@ -30,6 +30,10 @@ def _normalize_datetime_for_db(value, data_type="daily"):
         # Python < 3.9, 使用pytz
         import pytz
         ZoneInfo = lambda tz: pytz.timezone(tz)
+
+    # 如果是字符串，先转换为 pd.Timestamp
+    if isinstance(value, str):
+        value = pd.to_datetime(value)
 
     if isinstance(value, pd.Timestamp):
         # 中国股市使用Asia/Shanghai时区
@@ -513,6 +517,292 @@ class DataOperations:
                     "symbol": symbol,
                     "start_date": start_date,
                     "end_date": end_date,
+                },
+            )
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        # 转换为DataFrame
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_weekly_data(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取周线聚合的 OHLCV 数据
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 周线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+
+        query = text("""
+            SELECT time, symbol, open, high, low, close, volume, amount, adj_factor
+            FROM symbol_weekly
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            ORDER BY symbol, time
+        """)
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(
+                query,
+                {
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
+                },
+            )
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        # 转换为DataFrame
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_monthly_data(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取月线聚合的 OHLCV 数据
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 月线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+
+        query = text("""
+            SELECT time, symbol, open, high, low, close, volume, amount, adj_factor
+            FROM symbol_monthly
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            ORDER BY symbol, time
+        """)
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(
+                query,
+                {
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
+                },
+            )
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        # 转换为DataFrame
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_daily_basic_weekly(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取周线聚合的每日基础指标
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 周线基础指标数据，包含聚合后的各种指标列
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily_basic")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily_basic")
+
+        query = text("""
+            SELECT time, symbol, avg_turnover_rate, avg_volume_ratio, avg_pe, avg_pe_ttm,
+                   avg_pb, avg_ps, avg_ps_ttm, avg_dv_ratio, avg_dv_ttm,
+                   total_share, float_share, free_share, total_mv, circ_mv
+            FROM daily_basic_weekly
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            ORDER BY symbol, time
+        """)
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(
+                query,
+                {
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
+                },
+            )
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        # 转换为DataFrame
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_daily_basic_monthly(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取月线聚合的每日基础指标
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 月线基础指标数据，包含聚合后的各种指标列
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily_basic")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily_basic")
+
+        query = text("""
+            SELECT time, symbol, avg_turnover_rate, avg_volume_ratio, avg_pe, avg_pe_ttm,
+                   avg_pb, avg_ps, avg_ps_ttm, avg_dv_ratio, avg_dv_ttm,
+                   total_share, float_share, free_share, total_mv, circ_mv
+            FROM daily_basic_monthly
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            ORDER BY symbol, time
+        """)
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(
+                query,
+                {
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
+                },
+            )
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        # 转换为DataFrame
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_adj_factor_weekly(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取周线聚合的复权因子数据
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 周线复权因子数据，包含 time, symbol, adj_factor 列
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "adj_factor")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "adj_factor")
+
+        query = text("""
+            SELECT time, symbol, adj_factor
+            FROM adj_factor_weekly
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            ORDER BY symbol, time
+        """)
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(
+                query,
+                {
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
+                },
+            )
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        # 转换为DataFrame
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_adj_factor_monthly(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取月线聚合的复权因子数据
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 月线复权因子数据，包含 time, symbol, adj_factor 列
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "adj_factor")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "adj_factor")
+
+        query = text("""
+            SELECT time, symbol, adj_factor
+            FROM adj_factor_monthly
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            ORDER BY symbol, time
+        """)
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(
+                query,
+                {
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
                 },
             )
             rows = result.fetchall()

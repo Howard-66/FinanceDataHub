@@ -869,6 +869,230 @@ def config_show(
         raise typer.Exit(1)
 
 
+@app.command("refresh-aggregates")
+def refresh_aggregates(
+    table_name: str = typer.Option(
+        ...,
+        "--table",
+        "-t",
+        help="要刷新的连续聚合表名 (symbol_weekly, symbol_monthly, daily_basic_weekly, daily_basic_monthly, adj_factor_weekly, adj_factor_monthly)"
+    ),
+    start_date: Optional[str] = typer.Option(
+        None,
+        "--start",
+        help="刷新开始日期 (YYYY-MM-DD)，默认为空（刷新所有历史数据）"
+    ),
+    end_date: Optional[str] = typer.Option(
+        None,
+        "--end",
+        help="刷新结束日期 (YYYY-MM-DD)，默认为空（刷新到最新）"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="显示详细日志"
+    ),
+):
+    """
+    手动刷新连续聚合
+
+    强制刷新指定的连续聚合视图，可指定日期范围。
+    用于在新数据插入后立即更新聚合，或修复聚合数据。
+    """
+    console.print(f"[bold cyan]刷新连续聚合: {table_name}[/bold cyan]\n")
+
+    try:
+        settings = get_settings()
+
+        # 构建刷新 SQL
+        if start_date and end_date:
+            refresh_sql = f"CALL refresh_continuous_aggregate('{table_name}', '{start_date}', '{end_date}');"
+            console.print(f"刷新范围: {start_date} 到 {end_date}")
+        elif start_date:
+            refresh_sql = f"CALL refresh_continuous_aggregate('{table_name}', '{start_date}', NULL);"
+            console.print(f"刷新范围: {start_date} 到最新")
+        elif end_date:
+            refresh_sql = f"CALL refresh_continuous_aggregate('{table_name}', NULL, '{end_date}');"
+            console.print(f"刷新范围: 所有历史到 {end_date}")
+        else:
+            refresh_sql = f"CALL refresh_continuous_aggregate('{table_name}', NULL, NULL);"
+            console.print("刷新范围: 所有历史数据")
+
+        console.print("")
+
+        # 执行刷新
+        from sqlalchemy import text
+        from finance_data_hub.database.manager import DatabaseManager
+        from sqlalchemy.ext.asyncio import AsyncEngine
+
+        async def _refresh():
+            db_manager = DatabaseManager(settings)
+            await db_manager.initialize()
+
+            # 使用连接执行，refresh_continuous_aggregate 不能在事务中运行
+            if verbose:
+                console.print("[bold]执行SQL:[/bold]")
+                console.print(f"  {refresh_sql}\n")
+
+            console.print("[bold]正在刷新聚合...[/bold]")
+            # 使用原始 asyncpg 连接执行，绕过 SQLAlchemy 事务管理
+            async with db_manager._engine.connect() as conn:
+                # 获取原始的 asyncpg 连接
+                raw_conn = await conn.get_raw_connection()
+                # 访问实际的 asyncpg 连接（通过适配器）
+                pg_conn = raw_conn._connection
+                # 在 autocommit 模式下执行
+                await pg_conn.execute(refresh_sql)
+
+            console.print("[green][OK][/green] 刷新完成！\n")
+
+            await db_manager.close()
+
+        asyncio.run(_refresh())
+
+        # 显示结果
+        console.print("[bold]聚合刷新成功！[/bold]")
+
+    except Exception as e:
+        console.print(f"\n[bold red]ERROR:[/bold red] 刷新失败: {str(e)}")
+        if verbose:
+            console.print(traceback.format_exc())
+        raise typer.Exit(1)
+
+
+@app.command("status")
+def status_show(
+    aggregates: bool = typer.Option(
+        False,
+        "--aggregates",
+        "-a",
+        help="显示连续聚合状态信息"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="显示详细信息"
+    ),
+):
+    """
+    显示系统状态
+
+    包括数据库连接状态、表信息和可选的连续聚合状态。
+    """
+    console.print("[bold cyan]系统状态检查[/bold cyan]\n")
+
+    try:
+        settings = get_settings()
+
+        if aggregates:
+            # 显示聚合状态
+            console.print("[bold]连续聚合状态[/bold]\n")
+
+            from sqlalchemy import text
+            from finance_data_hub.database.manager import DatabaseManager
+
+            async def _check_aggregates():
+                db_manager = DatabaseManager(settings)
+                await db_manager.initialize()
+
+                # 使用连接而不是事务上下文以保持连接活跃
+                async with db_manager._engine.connect() as conn:
+                    # 查询聚合列表
+                    result = await conn.execute(text("""
+                        SELECT view_name, view_owner
+                        FROM timescaledb_information.continuous_aggregates
+                        WHERE view_name IN ('symbol_weekly', 'symbol_monthly', 'daily_basic_weekly', 'daily_basic_monthly', 'adj_factor_weekly', 'adj_factor_monthly')
+                        ORDER BY view_name
+                    """))
+
+                    if not result.rowcount:
+                        console.print("[yellow]未找到连续聚合[/yellow]")
+                        return
+
+                    # 创建表格
+                    table = Table(title="连续聚合列表")
+                    table.add_column("聚合名称", style="cyan")
+                    table.add_column("状态", style="green")
+                    table.add_column("大小", style="yellow")
+                    table.add_column("最后刷新", style="blue")
+
+                    for row in result.fetchall():
+                        view_name = row.view_name
+
+                        # 查询聚合大小
+                        size_result = await conn.execute(text(f"""
+                            SELECT pg_size_pretty(pg_total_relation_size('{view_name}')) AS size
+                        """))
+                        size_row = size_result.fetchone()
+                        size_str = size_row.size if size_row else "未知"
+
+                        # 最后刷新时间 - 简化显示（TimescaleDB版本兼容性）
+                        last_refresh = "后台自动刷新"
+
+                        # 确定状态
+                        status = "[green]活跃[/green]"
+
+                        table.add_row(view_name, status, size_str, last_refresh)
+
+                console.print(table)
+
+                # 显示刷新策略（在同一个连接中）
+                try:
+                    console.print("\n[bold]刷新策略[/bold]\n")
+
+                    async with db_manager._engine.connect() as conn2:
+                        policy_result = await conn2.execute(text("""
+                            SELECT view_name, refresh_lag, end_offset, schedule_interval
+                            FROM timescaledb_information.continuous_aggregates ca
+                            JOIN timescaledb_information.continuous_aggregate_policies cap
+                              ON ca.view_name = cap.view_name
+                            WHERE ca.view_name IN ('symbol_weekly', 'symbol_monthly', 'daily_basic_weekly', 'daily_basic_monthly', 'adj_factor_weekly', 'adj_factor_monthly')
+                            ORDER BY ca.view_name
+                        """))
+
+                        if policy_result.rowcount:
+                            policy_table = Table(title="刷新策略")
+                            policy_table.add_column("聚合名称", style="cyan")
+                            policy_table.add_column("刷新滞后", style="yellow")
+                            policy_table.add_column("结束偏移", style="yellow")
+                            policy_table.add_column("调度间隔", style="yellow")
+
+                            for row in policy_result.fetchall():
+                                policy_table.add_row(
+                                    row.view_name,
+                                    str(row.refresh_lag),
+                                    str(row.end_offset),
+                                    str(row.schedule_interval)
+                                )
+
+                            console.print(policy_table)
+                        else:
+                            console.print("[yellow]未找到刷新策略信息[/yellow]")
+                except Exception as policy_error:
+                    # 忽略 TimescaleDB 版本兼容性错误
+                    if 'does not exist' in str(policy_error) or 'undefined' in str(policy_error).lower():
+                        console.print("[yellow]（刷新策略查询不可用，请使用 TimescaleDB 2.0+ 版本）[/yellow]")
+                    else:
+                        console.print(f"[yellow]刷新策略查询失败: {str(policy_error)[:100]}[/yellow]")
+
+                await db_manager.close()
+
+            asyncio.run(_check_aggregates())
+
+        else:
+            # 显示基本状态
+            console.print("[yellow]使用 --aggregates 参数查看连续聚合状态[/yellow]")
+
+    except Exception as e:
+        console.print(f"\n[bold red]ERROR:[/bold red] {str(e)}")
+        if verbose:
+            import traceback
+            console.print(traceback.format_exc())
+        raise typer.Exit(1)
+
+
 @app.callback()
 def main(
     version: Optional[bool] = typer.Option(

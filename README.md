@@ -348,6 +348,20 @@ Phase 1 和 Phase 2 已全部完成！系统已具备生产就绪能力。
 - ✅ **交易日批量更新**: `--trade-date` 参数批量获取指定交易日所有股票
 - ✅ **复权因子**: 完整的前/后复权因子管理（增量更新）
 
+#### Phase 2.5 - 高周期数据聚合 ✅
+- ✅ **TimescaleDB 连续聚合**: 自动维护周线、月线数据聚合
+- ✅ **6 个聚合视图**:
+  - `symbol_weekly` - 周线 OHLCV 数据（带复权处理）
+  - `symbol_monthly` - 月线 OHLCV 数据（带复权处理）
+  - `daily_basic_weekly` - 周线聚合基础指标
+  - `daily_basic_monthly` - 月线聚合基础指标
+  - `adj_factor_weekly` - 周线复权因子聚合
+  - `adj_factor_monthly` - 月线复权因子聚合
+- ✅ **智能刷新策略**: 1小时自动刷新，实时物化
+- ✅ **SDK 支持**: `FinanceDataHub.get_weekly()`, `get_monthly()` 等方法
+- ✅ **CLI 管理**: `fdh-cli refresh-aggregates`, `fdh-cli status --aggregates`
+- ✅ **数据验证**: 提供验证脚本确保聚合准确性（< 0.01% 误差）
+
 #### 核心特性
 - ✅ **多数据源整合**: 统一 Tushare 和 XTQuant 接口
 - ✅ **智能故障转移**: 断路器 + 自动切换
@@ -373,6 +387,7 @@ psql "$DATABASE_URL" -f sql/init/002_create_tables.sql
 psql "$DATABASE_URL" -f sql/init/003_create_hypertables.sql
 psql "$DATABASE_URL" -f sql/init/004_create_adj_factor.sql
 psql "$DATABASE_URL" -f sql/init/005_create_functions.sql
+psql "$DATABASE_URL" -f sql/init/006_create_continuous_aggregates.sql
 
 # 5. 获取数据
 
@@ -394,8 +409,46 @@ fdh-cli update --frequency basic            # 股票基本信息
 fdh-cli update --frequency daily            # 日线数据（已废弃，请使用 --dataset）
 fdh-cli update --frequency adj_factor       # 复权因子
 
-# 6. 查看状态
+# 6. 高周期数据聚合（可选）
+# 连续聚合会自动创建并每小时刷新一次
+# 手动刷新指定聚合
+fdh-cli refresh-aggregates --table symbol_weekly --start 2024-01-01 --end 2024-12-31
+# 查看聚合状态
+fdh-cli status --aggregates
+# 验证聚合准确性
+python scripts/validate_aggregates.py --symbol 600519.SH --year 2024
+
+# 7. 查看状态
 fdh-cli status --verbose
+
+# 8. Python SDK 使用示例
+python3 << 'EOF'
+from finance_data_hub import FinanceDataHub
+from finance_data_hub.config import get_settings
+
+settings = get_settings()
+fdh = FinanceDataHub(settings)
+
+# 获取周线数据
+weekly = fdh.get_weekly(['600519.SH'], '2024-01-01', '2024-12-31')
+print(f"周线数据: {len(weekly)} 条")
+
+# 获取月线数据
+monthly = fdh.get_monthly(['000858.SZ'], '2020-01-01', '2024-12-31')
+print(f"月线数据: {len(monthly)} 条")
+
+# 获取周线基础指标
+weekly_metrics = fdh.get_daily_basic_weekly(['600519.SH'], '2024-01-01', '2024-12-31')
+print(f"周线指标: {len(weekly_metrics)} 条")
+
+# 获取周线复权因子
+weekly_adj = fdh.get_adj_factor_weekly(['600519.SH'], '2024-01-01', '2024-12-31')
+print(f"周线复权因子: {len(weekly_adj)} 条")
+
+# 获取月线复权因子
+monthly_adj = fdh.get_adj_factor_monthly(['600519.SH'], '2020-01-01', '2024-12-31')
+print(f"月线复权因子: {len(monthly_adj)} 条")
+EOF
 ```
 
 ### 测试结果

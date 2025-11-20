@@ -46,7 +46,7 @@ class DatabaseInitializer:
         # 获取所有SQL文件并排序
         sql_files = sorted([
             f for f in sql_dir.glob("*.sql")
-            if f.name.startswith(('001_', '002_', '003_', '004_', '005_'))
+            if f.name.startswith(('001_', '002_', '003_', '004_', '005_', '006_'))
         ])
 
         if not sql_files:
@@ -71,7 +71,7 @@ class DatabaseInitializer:
             # 读取SQL内容
             sql_content = sql_file.read_text(encoding='utf-8')
 
-            # 简单的SQL分割 - 按分号分割并过滤空语句和注释
+            # 更智能的SQL分割 - 支持dollar-quoted字符串
             statements = []
             current_statement = []
             in_dollar_quote = False
@@ -96,30 +96,38 @@ class DatabaseInitializer:
                     i += 1
                     continue
 
-                # 处理dollar-quoted字符串状态
+                # 处理dollar-quoted字符串状态 - 改进的逻辑
                 if not in_dollar_quote:
-                    # 检查是否进入dollar quote
-                    if ' AS $$' in line or ' AS $' in line:
-                        in_dollar_quote = True
-                        # 提取tag
-                        if ' AS $$' in line:
+                    # 检查是否进入dollar quote - 精确匹配AS关键字后的$
+                    # 匹配形如 "RETURNS ... AS $$" 或 "RETURNS ... AS $tag$" 的模式
+                    if ' AS ' in line and '$' in line:
+                        # 提取AS后的内容
+                        as_part = line.split(' AS ', 1)[1] if ' AS ' in line else ''
+                        if as_part.startswith('$$'):
+                            in_dollar_quote = True
                             dollar_tag = '$$'
-                        else:
-                            tag_part = line.split(' AS $')[1].split()[0] if ' AS $' in line else '$function$'
-                            if '$' in tag_part:
-                                dollar_tag = '$' + tag_part.split('$')[1] + '$'
-                            else:
-                                dollar_tag = '$' + tag_part + '$'
-
-                # 检查是否退出dollar quote
-                if in_dollar_quote and dollar_tag and dollar_tag in line:
-                    in_dollar_quote = False
-                    dollar_tag = None
+                        elif as_part.startswith('$') and '$' in as_part[1:]:
+                            # 提取tag，例如 $function$
+                            end_dollar = as_part.find('$', 1)
+                            if end_dollar > 0:
+                                tag = as_part[:end_dollar+1]
+                                in_dollar_quote = True
+                                dollar_tag = tag
+                else:
+                    # 在dollar quote中，检查是否退出
+                    # 使用更精确的匹配 - 检查整行是否只包含dollar tag和其他字符
+                    if dollar_tag and dollar_tag in line:
+                        # 检查这是否是退出的地方
+                        # 如果当前行包含dollar tag，且后面跟空白和可选的语言信息
+                        line_after_tag = line.split(dollar_tag, 1)[1] if dollar_tag in line else ''
+                        if not line_after_tag or line_after_tag.strip().startswith('LANGUAGE') or line_after_tag.strip().startswith(';'):
+                            in_dollar_quote = False
+                            dollar_tag = None
 
                 current_statement.append(line)
 
                 # 当遇到分号且不在dollar quote中时，结束语句
-                if ';' in line and not in_dollar_quote:
+                if ';' in stripped and not in_dollar_quote:
                     statement = '\n'.join(current_statement)
                     if statement.strip():
                         statements.append(statement)
@@ -163,7 +171,13 @@ class DatabaseInitializer:
             'symbol_daily',
             'symbol_minute',
             'daily_basic',
-            'adj_factor'
+            'adj_factor',
+            'symbol_weekly',       # 连续聚合视图
+            'symbol_monthly',      # 连续聚合视图
+            'daily_basic_weekly',   # 连续聚合视图
+            'daily_basic_monthly',  # 连续聚合视图
+            'adj_factor_weekly',    # 复权因子周线聚合
+            'adj_factor_monthly'    # 复权因子月线聚合
         ]
 
         results = {}
