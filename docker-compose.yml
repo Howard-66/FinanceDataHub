@@ -2,7 +2,7 @@ services:
   timescaledb:
     # 1. 改回极其稳定的 pg16 版本，避免 pg17 潜在的兼容问题
     image: timescale/timescaledb:latest-pg17
-    container_name: trading_nexus_container
+    container_name: trading_nexus_postgres
     restart: always
     environment:
       - POSTGRES_PASSWORD=trading.nexus.data
