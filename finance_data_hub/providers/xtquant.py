@@ -468,6 +468,7 @@ class XTQuantProvider(BaseDataProvider):
             "60m": "1h",
         }
         xtquant_freq = freq_mapping.get(freq, "1m")
+        logger.info(f"Frequency mapping: {freq} -> {xtquant_freq}")
 
         # XTQuant需要两步：
         # 1. 先下载数据到本地（使用 download_history_data）
@@ -482,6 +483,7 @@ class XTQuantProvider(BaseDataProvider):
 
         # 第一步：下载数据到本地
         logger.debug(f"Downloading {freq} data for {symbol} from {start_date[:8]} to {end_date[:8]}")
+        logger.debug(f"Download payload: period={xtquant_freq}, start={start_date[:8]}, end={end_date[:8]}")
         self._call_api("/download_history_data", download_payload)
 
         # 第二步：从本地获取数据
@@ -496,6 +498,7 @@ class XTQuantProvider(BaseDataProvider):
             "use_client_data": False,
         }
 
+        logger.debug(f"Getting local data with payload: period={xtquant_freq}, start={start_date[:8]}, end={end_date[:8]}")
         data = self._call_api("/get_local_data", payload)
         # print('data from call_api:\n', data)
 
@@ -704,7 +707,14 @@ class XTQuantProvider(BaseDataProvider):
         if data_type == "daily":
             return self._get_incremental_daily(symbol, start_date, end_date, **kwargs)
         elif data_type.startswith("minute"):
-            freq = kwargs.get("freq", "1m")
+            # 从data_type中提取频率 (e.g., "minute_5" -> "5m")
+            if "_" in data_type:
+                minute_freq = data_type.split("_")[1]  # "minute_5" -> "5"
+                freq = kwargs.get("freq", f"{minute_freq}m")  # Default to "5m"
+                logger.debug(f"Extracted frequency from data_type '{data_type}': {freq}")
+            else:
+                freq = kwargs.get("freq", "1m")  # Default for "minute"
+                logger.debug(f"Using default frequency for data_type '{data_type}': {freq}")
             return self._get_incremental_minute(symbol, start_date, end_date, freq)
         elif data_type == "daily_basic":
             logger.warning("XTQuant does not support daily_basic incremental update")

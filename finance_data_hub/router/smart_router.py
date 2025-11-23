@@ -416,6 +416,11 @@ class SmartRouter:
                     f"(method: {method_name}, route: {asset_class}/{data_type})"
                 )
 
+                # 如果有 freq 参数，将其添加到 kwargs 中传递给 provider 方法
+                if freq:
+                    kwargs["freq"] = freq
+                    logger.debug(f"Passing freq={freq} to provider method")
+
                 result = method(**kwargs)
 
                 # 记录成功

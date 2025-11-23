@@ -313,8 +313,20 @@ async def _run_smart_download(
                                 force_update=False,
                             )
                         elif data_type.startswith("minute"):
-                            freq_map = {"minute_1": "1m", "minute_5": "5m"}
+                            # 从 data_type 中提取频率
+                            freq_map = {
+                                "minute_1": "1m",
+                                "minute_5": "5m",
+                                "minute_15": "15m",
+                                "minute_30": "30m",
+                                "minute_60": "60m",
+                                "minute": "1m",  # 默认
+                            }
                             actual_freq = freq_map.get(data_type, "1m")
+
+                            if verbose:
+                                console.print(f"[dim]  频率映射: {data_type} -> {actual_freq}[/dim]")
+
                             count = await updater.update_minute_data(
                                 symbols=[symbol],
                                 start_date=None,  # 智能下载
@@ -428,8 +440,20 @@ async def _run_force_update(
                                 force_update=True,
                             )
                         elif data_type.startswith("minute"):
-                            freq_map = {"minute_1": "1m", "minute_5": "5m"}
+                            # 从 data_type 中提取频率
+                            freq_map = {
+                                "minute_1": "1m",
+                                "minute_5": "5m",
+                                "minute_15": "15m",
+                                "minute_30": "30m",
+                                "minute_60": "60m",
+                                "minute": "1m",  # 默认
+                            }
                             actual_freq = freq_map.get(data_type, "1m")
+
+                            if verbose:
+                                console.print(f"[dim]  频率映射: {data_type} -> {actual_freq}[/dim]")
+
                             count = await updater.update_minute_data(
                                 symbols=[symbol],
                                 start_date=start_date,
