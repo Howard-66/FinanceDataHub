@@ -25,7 +25,11 @@
       "Bash(fdh-cli status --aggregates)",
       "Bash(fdh-cli refresh-aggregates --table symbol_weekly --start 2024-01-01 --end 2024-12-31)",
       "Bash(fdh-cli refresh-aggregates --table adj_factor_weekly)",
-      "Bash(fdh-cli refresh-aggregates --table daily_basic_monthly)"
+      "Bash(fdh-cli refresh-aggregates --table daily_basic_monthly)",
+      "Bash(timeout 30 fdh-cli update:*)",
+      "Bash(fdh-cli update:*)",
+      "Bash(/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/.venv/bin/fdh-cli:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []

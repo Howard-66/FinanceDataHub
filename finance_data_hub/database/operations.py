@@ -50,7 +50,11 @@ def _normalize_datetime_for_db(value, data_type="daily"):
             return value.tz_localize(china_tz).to_pydatetime()
         else:
             # 已有时区，转换为中国时间
-            return value.tz_convert(china_tz).to_pydatetime()
+            # xtquant数据已经转换为Asia/Shanghai时区，直接使用
+            if str(value.tz) == 'Asia/Shanghai':
+                return value.to_pydatetime()
+            else:
+                return value.tz_convert(china_tz).to_pydatetime()
     return value
 
 
@@ -135,6 +139,8 @@ class DataOperations:
                 "adj_factor": None,
                 "open_interest": None,
                 "settle": None,
+                "change_pct": None,
+                "change_amount": None,
             }
             for record in records:
                 for field, default_value in required_fields.items():
@@ -172,13 +178,11 @@ class DataOperations:
         insert_sql = """
             INSERT INTO symbol_minute (
                 time, symbol, open, high, low, close,
-                volume, amount, open_interest, settle,
-                change_pct, change_amount
+                volume, amount
             )
             VALUES (
                 :time, :symbol, :open, :high, :low, :close,
-                :volume, :amount, :open_interest, :settle,
-                :change_pct, :change_amount
+                :volume, :amount
             )
             ON CONFLICT (symbol, time) DO UPDATE SET
                 open = EXCLUDED.open,
@@ -187,10 +191,6 @@ class DataOperations:
                 close = EXCLUDED.close,
                 volume = EXCLUDED.volume,
                 amount = EXCLUDED.amount,
-                open_interest = EXCLUDED.open_interest,
-                settle = EXCLUDED.settle,
-                change_pct = EXCLUDED.change_pct,
-                change_amount = EXCLUDED.change_amount,
                 updated_at = NOW()
         """
 
@@ -209,15 +209,13 @@ class DataOperations:
                         # 转换时间戳为带时区的Python datetime
                         record[key] = _normalize_datetime_for_db(value, data_type="minute")
 
-            # 确保所有必需字段都存在，缺失的字段设置为None
-            required_fields = {
-                "open_interest": None,
-                "settle": None,
-            }
+            # 清理DataFrame中不属于symbol_minute表的字段
+            valid_fields = {"time", "symbol", "open", "high", "low", "close", "volume", "amount"}
             for record in records:
-                for field, default_value in required_fields.items():
-                    if field not in record:
-                        record[field] = default_value
+                # 删除不属于表结构的字段
+                fields_to_remove = [key for key in record.keys() if key not in valid_fields and key != "time"]
+                for field in fields_to_remove:
+                    del record[field]
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)

@@ -211,7 +211,8 @@ class XTQuantProvider(BaseDataProvider):
         """
         将XTQuant API返回的字典转换为DataFrame
 
-        XTQuant返回的数据格式: {'field_name': {'timestamp': value}}
+        XTQuant返回的数据格式：
+        {'symbol': {'time': {'key': timestamp, ...}, 'open': {...}, 'close': {...}, ...}}
 
         Args:
             data_dict: API返回的数据字典
@@ -223,22 +224,51 @@ class XTQuantProvider(BaseDataProvider):
         if not data_dict:
             return pd.DataFrame()
 
-        # 提取时间索引（从任意一个字段）
-        first_field = next(iter(data_dict.values()))
-        if isinstance(first_field, dict):
-            timestamps = list(first_field.keys())
-        else:
-            return pd.DataFrame()
+        logger.debug(f"Converting data dict, keys: {list(data_dict.keys())}")
 
-        # 构建DataFrame
-        df_data = {"time": pd.to_datetime(timestamps, unit="ms")}
+        # XTQuant返回的数据格式是嵌套的：{'symbol': {field: {key: value}}}
+        # 如果data_dict直接包含symbol数据，提取它
+        if symbol in data_dict:
+            data_dict = data_dict[symbol]
+            logger.debug(f"Extracted data for symbol {symbol}")
+        elif len(data_dict) == 1 and isinstance(list(data_dict.values())[0], dict):
+            # 如果只有一个symbol的数据，提取它
+            data_dict = list(data_dict.values())[0]
+            logger.debug(f"Extracted single symbol data")
 
-        for field_name, values in data_dict.items():
-            if isinstance(values, dict):
-                df_data[field_name.lower()] = [values.get(ts) for ts in timestamps]
+        logger.debug(f"Processing fields: {list(data_dict.keys())}")
 
-        df = pd.DataFrame(df_data)
+        # 直接使用pandas的DataFrame构造器，它会自动处理字典格式的嵌套结构
+        # 这会创建：{field: [values_by_key_order]}
+        df = pd.DataFrame(data_dict)
+
+        if df.empty:
+            logger.warning("Empty DataFrame after conversion")
+            return df
+
+        # 转换时间戳（毫秒 -> datetime）
+        if "time" in df.columns:
+            time_values = df["time"]
+            sample_ts = time_values.iloc[0]
+            logger.debug(f"Converting time column, sample: {repr(sample_ts)}, type: {type(sample_ts).__name__}")
+
+            try:
+                # xtquant返回的是UTC毫秒时间戳，需要转换为中国时区
+                # 首先转换为UTC时间的Timestamp
+                df["time"] = pd.to_datetime(time_values, unit="ms", utc=True)
+                # 然后转换为中国时区
+                df["time"] = df["time"].dt.tz_convert('Asia/Shanghai')
+                logger.debug(f"时间戳转换成功，时间范围: {df['time'].min()} 到 {df['time'].max()}")
+            except (ValueError, TypeError) as e:
+                logger.error(f"Failed to convert timestamps: {e}")
+                logger.error(f"  时间戳样例: {sample_ts}")
+                # 保留原始时间值，不转换
+                df["time"] = time_values
+
+        # 添加symbol列
         df["symbol"] = symbol
+
+        logger.debug(f"DataFrame created with shape: {df.shape}, columns: {list(df.columns)}")
 
         return df
 
@@ -294,15 +324,23 @@ class XTQuantProvider(BaseDataProvider):
         )
 
         # 转换symbol格式（Tushare格式 -> XTQuant格式: 600519.SH -> SH.600519）
-        if "." in symbol:
-            code, exchange = symbol.split(".")
-            xtquant_symbol = f"{exchange}.{code}"
-        else:
-            xtquant_symbol = symbol
+        # if "." in symbol:
+        #     code, exchange = symbol.split(".")
+        #     xtquant_symbol = f"{exchange}.{code}"
+        # else:
+        #     xtquant_symbol = symbol
 
         # 转换日期格式
-        start_date = start_date.replace("-", "")
-        end_date = end_date.replace("-", "")
+        # None表示获取全量历史数据，使用默认起始日期
+        if start_date is None:
+            start_date = "20000101"  # 默认从2000年开始
+        else:
+            start_date = start_date.replace("-", "")
+
+        if end_date is None:
+            end_date = datetime.now().strftime("%Y%m%d")
+        else:
+            end_date = end_date.replace("-", "")
 
         # 确定复权类型
         dividend_type = "none"
@@ -310,26 +348,45 @@ class XTQuantProvider(BaseDataProvider):
             dividend_type = "front"
         elif adj == "hfq":
             dividend_type = "back"
+        
+        # XTQuant需要两步：
+        # 1. 先下载数据到本地（使用 download_history_data）
+        # 2. 然后从本地获取（使用 get_local_data）
+        download_payload = {
+            "stock_code": symbol,
+            "period": "1d",
+            "start_time": start_date,
+            "end_time": end_date,
+            "incrementally": None,  # 增量下载
+        }
 
-        # 调用API
+        # 第一步：下载数据到本地
+        logger.debug(f"Downloading daily data for {symbol} from {start_date} to {end_date}")
+        self._call_api("/download_history_data", download_payload)
+
+        # 第二步：从本地获取数据
         payload = {
             "field_list": [],  # 空列表表示返回所有字段
-            "stock_list": [xtquant_symbol],
+            "stock_list": [symbol],
             "period": "1d",
             "start_time": start_date,
             "end_time": end_date,
             "dividend_type": dividend_type,
             "fill_data": True,
+            "use_client_data": False,
         }
 
-        data = self._call_api("/get_market_data", payload)
+        data = self._call_api("/get_local_data", payload)
+        print('data from call_api:\n', data)
 
         # 解析返回数据
         if not data:
+            print("Invalid daily data from xtquant")
             return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
 
         # 转换为DataFrame
         df = self._convert_dict_to_dataframe(data, symbol)
+        print(df.tail(5))
 
         if df.empty:
             return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
@@ -337,6 +394,19 @@ class XTQuantProvider(BaseDataProvider):
         # 列名映射（XTQuant字段名 -> 标准字段名）
         # XTQuant的字段名通常是小写的
         df.columns = [col.lower() for col in df.columns]
+
+        # 计算缺失的字段
+        # xtquant没有直接提供change_pct和change_amount，但提供了preClose
+        if "close" in df.columns and "preclose" in df.columns:
+            # 计算涨跌额和涨跌幅
+            df["change_amount"] = df["close"] - df["preclose"]
+            df["change_pct"] = (df["close"] - df["preclose"]) / df["preclose"] * 100
+            logger.debug(f"Calculated change_pct and change_amount for {len(df)} records")
+        else:
+            logger.warning(f"Missing preclose field, cannot calculate change_pct and change_amount")
+            # 设为None
+            df["change_amount"] = None
+            df["change_pct"] = None
 
         # 验证并转换数据
         df = validate_dataframe(df, DailyDataSchema, provider_name=self.name)
@@ -371,15 +441,23 @@ class XTQuantProvider(BaseDataProvider):
         )
 
         # 转换symbol格式
-        if "." in symbol:
-            code, exchange = symbol.split(".")
-            xtquant_symbol = f"{exchange}.{code}"
-        else:
-            xtquant_symbol = symbol
+        # if "." in symbol:
+        #     code, exchange = symbol.split(".")
+        #     xtquant_symbol = f"{exchange}.{code}"
+        # else:
+        #     xtquant_symbol = symbol
 
         # 转换日期格式
-        start_date = start_date.replace("-", "").replace(" ", "").replace(":", "")
-        end_date = end_date.replace("-", "").replace(" ", "").replace(":", "")
+        # None表示获取全量历史数据，使用默认起始日期
+        if start_date is None:
+            start_date = ""  # 默认从2000年开始
+        else:
+            start_date = start_date.replace("-", "").replace(" ", "").replace(":", "")
+
+        if end_date is None:
+            end_date = ""
+        else:
+            end_date = end_date.replace("-", "").replace(" ", "").replace(":", "")
 
         # 转换频率格式
         freq_mapping = {
@@ -391,24 +469,43 @@ class XTQuantProvider(BaseDataProvider):
         }
         xtquant_freq = freq_mapping.get(freq, "1m")
 
-        # 调用API
-        payload = {
-            "field_list": [],
-            "stock_list": [xtquant_symbol],
+        # XTQuant需要两步：
+        # 1. 先下载数据到本地（使用 download_history_data）
+        # 2. 然后从本地获取（使用 get_local_data）
+        download_payload = {
+            "stock_code": symbol,
             "period": xtquant_freq,
             "start_time": start_date[:8],  # 只取日期部分
             "end_time": end_date[:8],
-            "dividend_type": "none",
-            "fill_data": True,
+            "incrementally": None,  # 增量下载
         }
 
-        data = self._call_api("/get_market_data", payload)
+        # 第一步：下载数据到本地
+        logger.debug(f"Downloading {freq} data for {symbol} from {start_date[:8]} to {end_date[:8]}")
+        self._call_api("/download_history_data", download_payload)
+
+        # 第二步：从本地获取数据
+        payload = {
+            "field_list": [],
+            "stock_list": [symbol],
+            "period": xtquant_freq,
+            "start_time": start_date[:8],  # 只取日期部分
+            "end_time": end_date[:8],
+            "dividend_type": "front",
+            "fill_data": True,
+            "use_client_data": False,
+        }
+
+        data = self._call_api("/get_local_data", payload)
+        # print('data from call_api:\n', data)
 
         if not data:
+            print('Invalid data...')
             return pd.DataFrame(columns=MinuteDataSchema.get_required_columns())
 
         # 转换为DataFrame
         df = self._convert_dict_to_dataframe(data, symbol)
+        print(df.tail(5))
 
         if df.empty:
             return pd.DataFrame(columns=MinuteDataSchema.get_required_columns())
