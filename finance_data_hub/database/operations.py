@@ -160,7 +160,7 @@ class DataOperations:
         return total_inserted
 
     async def insert_symbol_minute_batch(
-        self, data: pd.DataFrame, batch_size: int = 1000
+        self, data: pd.DataFrame, batch_size: int = 1000, freq: str = "1m"
     ) -> int:
         """
         批量插入分钟数据
@@ -168,6 +168,7 @@ class DataOperations:
         Args:
             data: 包含分钟数据的DataFrame
             batch_size: 批处理大小
+            freq: 数据频率（1m, 5m, 15m, 30m, 60m）
 
         Returns:
             int: 插入的记录数
@@ -177,14 +178,14 @@ class DataOperations:
 
         insert_sql = """
             INSERT INTO symbol_minute (
-                time, symbol, open, high, low, close,
+                time, symbol, frequency, open, high, low, close,
                 volume, amount
             )
             VALUES (
-                :time, :symbol, :open, :high, :low, :close,
+                :time, :symbol, :frequency, :open, :high, :low, :close,
                 :volume, :amount
             )
-            ON CONFLICT (symbol, time) DO UPDATE SET
+            ON CONFLICT (symbol, time, frequency) DO UPDATE SET
                 open = EXCLUDED.open,
                 high = EXCLUDED.high,
                 low = EXCLUDED.low,
@@ -202,6 +203,10 @@ class DataOperations:
 
             # 处理NaT值，转换为None；处理时间戳为带时区的datetime
             for record in records:
+                # 添加 frequency 字段（如果不存在）
+                if "frequency" not in record:
+                    record["frequency"] = freq
+
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
@@ -210,7 +215,7 @@ class DataOperations:
                         record[key] = _normalize_datetime_for_db(value, data_type="minute")
 
             # 清理DataFrame中不属于symbol_minute表的字段
-            valid_fields = {"time", "symbol", "open", "high", "low", "close", "volume", "amount"}
+            valid_fields = {"time", "symbol", "frequency", "open", "high", "low", "close", "volume", "amount"}
             for record in records:
                 # 删除不属于表结构的字段
                 fields_to_remove = [key for key in record.keys() if key not in valid_fields and key != "time"]
@@ -226,7 +231,7 @@ class DataOperations:
                 f"{len(batch)} records (total: {total_inserted})"
             )
 
-        logger.info(f"Total inserted {total_inserted} records to symbol_minute")
+        logger.info(f"Total inserted {total_inserted} records to symbol_minute (freq={freq})")
         return total_inserted
 
     async def insert_asset_basic_batch(self, data: pd.DataFrame) -> int:

@@ -377,7 +377,7 @@ class XTQuantProvider(BaseDataProvider):
         }
 
         data = self._call_api("/get_local_data", payload)
-        print('data from call_api:\n', data)
+        # print('data from call_api:\n', data)
 
         # 解析返回数据
         if not data:

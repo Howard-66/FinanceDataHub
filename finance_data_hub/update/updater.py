@@ -273,7 +273,7 @@ class DataUpdater:
 
                 if data is not None and not data.empty:
                     inserted = await self.data_ops.insert_symbol_minute_batch(
-                        data, batch_size=1000
+                        data, batch_size=1000, freq=freq
                     )
                     total_records += inserted
                 else:
