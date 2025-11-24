@@ -311,7 +311,7 @@ class FinanceDataHub:
 
 3.  **Phase 3 (数据访问与查询)**:
     - 封装 `FinanceDataHub` SDK 类。
-    - 实现基于 PG 和 DuckDB 的基础查询接口。
+    - 【暂不实现】实现基于 PG 和 DuckDB 的基础查询接口。
     - 在 SDK 中加入“智能路由”逻辑和异步接口。
 
 4.  **Phase 4 (流式处理与高级特性)**:

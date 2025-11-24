@@ -30,7 +30,9 @@
       "Bash(fdh-cli update:*)",
       "Bash(/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/.venv/bin/fdh-cli:*)",
       "Bash(timeout:*)",
-      "Bash(chmod +x:*)"
+      "Bash(chmod +x:*)",
+      "Bash(find:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
