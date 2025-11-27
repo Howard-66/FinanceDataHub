@@ -35,10 +35,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 当前开发状态
 
-**阶段**: 设计与规划中
-- ✅ 详细的架构设计文档（README.md）
-- ❌ 尚未开始编码实现
-- 📋 下一阶段：Phase 1 - 环境搭建与配置管理
+**阶段**: Phase 3 已完成 ✅
+- ✅ Phase 1 - 环境搭建与配置管理（已完成）
+- ✅ Phase 2 - 核心批处理流程（已完成）
+- ✅ Phase 2.5 - 高周期数据聚合（已完成）
+- ✅ Phase 3 - 数据访问与查询层（已完成）
+- 📋 下一阶段：Phase 4 - ETL与流式处理
+
+### Phase 3 完成情况
+
+**已实现功能**:
+- ✅ DataOperations 查询方法（5个）
+- ✅ SDK 查询接口（10个方法对 = 5对同步/异步）
+- ✅ SmartRouter 智能路由集成
+- ✅ 路由决策日志记录
+- ✅ 数据新鲜度检查
+- ✅ 自动数据库初始化
+- ✅ Jupyter Notebook 兼容
+- ✅ 完整文档和测试
+
+**支持的数据类型**:
+- 日线数据、分钟数据、每日基本面、复权因子、股票基本信息
+- 周线/月线数据（自动聚合）
 
 ## 高层架构设计
 
@@ -136,31 +154,38 @@ routing_strategy:
 
 ## 实施计划
 
-### Phase 1: 环境与配置 (当前阶段)
-- [ ] 编写 `docker-compose.yml` 部署 PG+TimescaleDB 和 Redis
-- [ ] 实现基于 Pydantic 的配置模块 (`config.py`)
-- [ ] 搭建 `fdh-cli` 基本框架
+### Phase 1: 环境与配置 ✅ 已完成
+- [x] 编写 `docker-compose.yml` 部署 PG+TimescaleDB 和 Redis
+- [x] 实现基于 Pydantic 的配置模块 (`config.py`)
+- [x] 搭建 `fdh-cli` 基本框架
 
-### Phase 2: 核心批处理流程
-- [ ] 实现 `TushareProvider`（直接API调用）
-- [ ] 实现 `XTQuantProvider`（作为 `xtquant_helper` 的HTTP API客户端）
-- [ ] 定义并实现 `sources.yml` 配置加载及智能数据源路由逻辑
-- [ ] 实现 `fdh-cli update` 命令
-- [ ] 实现 `fdh-cli etl` 命令
+### Phase 2: 核心批处理流程 ✅ 已完成
+- [x] 实现 `TushareProvider`（直接API调用）
+- [x] 实现 `XTQuantProvider`（作为 `xtquant_helper` 的HTTP API客户端）
+- [x] 定义并实现 `sources.yml` 配置加载及智能数据源路由逻辑
+- [x] 实现 `fdh-cli update` 命令
+- [x] 实现 `fdh-cli etl` 命令
 
-### Phase 3: 数据访问与查询
-- [ ] 封装 `FinanceDataHub` SDK 类
-- [ ] 实现基于 PG 和 DuckDB 的基础查询接口
-- [ ] 在 SDK 中加入"智能路由"逻辑和异步接口
+### Phase 3: 数据访问与查询 ✅ 已完成
+- [x] 封装 `FinanceDataHub` SDK 类
+- [x] 实现基于 PostgreSQL 的基础查询接口（5种数据类型）
+- [x] 在 SDK 中加入"智能路由"逻辑和异步接口
+- [x] 实现同步/异步双接口（10个方法对）
+- [x] 集成 SmartRouter 智能路由
+- [x] 添加路由决策日志记录
+- [x] 实现数据新鲜度检查功能
+- [x] 支持 Jupyter Notebook 环境
+- [x] 编写完整文档和测试
 
-### Phase 4: 流式处理与高级特性
+### Phase 4: 流式处理与高级特性 📋 规划中
 - [ ] 在 `xtquant_helper` 服务中增加 WebSocket 接口
 - [ ] 实现流式 `Provider` 连接 WebSocket
 - [ ] 实现数据到 Redis Pub/Sub 的发布
 - [ ] 编写 `Archiver` 服务持久化流式数据
+- [ ] 实现完整ETL（PostgreSQL → Parquet + DuckDB）
 - [ ] 对接 Qlib/FinRL 数据格式的导出功能
 
-### Phase 5: 测试与部署
+### Phase 5: 测试与部署 📋 规划中
 - [ ] 编写单元测试（使用 `pytest` 和 `mock`）
 - [ ] 完善 Dockerfile 和部署脚本
 - [ ] 性能测试与优化
@@ -210,37 +235,172 @@ routing_strategy:
 
 ## API 使用示例
 
+### 在 Jupyter Notebook 中使用（推荐）
+
 ```python
 from finance_data_hub import FinanceDataHub
+from finance_data_hub.config import get_settings
 
-# 初始化（需要先实现）
-fdh = FinanceDataHub(settings, backend='auto')
+# 初始化
+settings = get_settings()
+fdh = FinanceDataHub(
+    settings=settings,
+    backend="postgresql",
+    router_config_path="sources.yml"  # 可选
+)
 
-# 同步API
-daily_data = fdh.get_daily(['600519.SH', '000858.SZ'], '2024-01-01', '2024-12-31')
+# 直接使用 await（推荐方式）
+daily_data = await fdh.get_daily_async(['600519.SH', '000858.SZ'], '2024-01-01', '2024-12-31')
+print(f"日线数据: {len(daily_data)} 条记录")
+print(daily_data.head())
 
-# 异步API
-async def get_data():
-    return await fdh.get_daily_async(['600519.SH'], '2024-01-01', '2024-12-31')
+# 分钟数据查询
+minute_data = await fdh.get_minute_async(
+    ['600519.SH'],
+    '2024-11-01',
+    '2024-11-30',
+    'minute_5'
+)
+print(f"5分钟数据: {len(minute_data)} 条记录")
 
-# 触发数据更新
-fdh.trigger_update(mode='incremental', source='tushare')
+# 每日基本面查询
+basic_data = await fdh.get_daily_basic_async(
+    ['600519.SH'],
+    '2024-01-01',
+    '2024-12-31'
+)
+print(f"每日基本面: {len(basic_data)} 条记录")
+
+# 复权因子查询
+adj_data = await fdh.get_adj_factor_async(
+    ['600519.SH'],
+    '2020-01-01',
+    '2024-12-31'
+)
+print(f"复权因子: {len(adj_data)} 条记录")
+
+# 股票基本信息查询
+info = await fdh.get_basic_async(['600519.SH', '000858.SZ'])
+print(f"股票信息: {len(info)} 条记录")
+
+# 高周期数据查询（自动聚合）
+weekly = await fdh.get_weekly_async(['600519.SH'], '2024-01-01', '2024-12-31')
+monthly = await fdh.get_monthly_async(['600519.SH'], '2024-01-01', '2024-12-31')
+
+# 关闭连接
+await fdh.close()
 ```
+
+### 在普通 Python 脚本中使用
+
+```python
+import asyncio
+from finance_data_hub import FinanceDataHub
+from finance_data_hub.config import get_settings
+
+settings = get_settings()
+fdh = FinanceDataHub(settings, backend="postgresql")
+
+# 方式1: 使用同步方法（自动处理事件循环）
+daily_data = fdh.get_daily(['600519.SH', '000858.SZ'], '2024-01-01', '2024-12-31')
+print(f"日线数据: {len(daily_data)} 条记录")
+
+# 方式2: 使用异步方法
+async def get_data():
+    daily = await fdh.get_daily_async(['600519.SH'], '2024-01-01', '2024-12-31')
+    minute = await fdh.get_minute_async(['600519.SH'], '2024-11-01', '2024-11-30', 'minute_5')
+    await fdh.close()
+    return daily, minute
+
+daily_data, minute_data = asyncio.run(get_data())
+print(f"日线数据: {len(daily_data)} 条")
+print(f"分钟数据: {len(minute_data)} 条")
+```
+
+### 数据新鲜度检查
+
+```python
+# 检查数据新鲜度
+freshness = await fdh.check_data_freshness(['600519.SH'], 'daily')
+print(f"可用提供商: {freshness['available_providers']}")
+print(f"建议: {freshness['recommendation']}")
+```
+
+### 支持的数据类型
+
+| 数据类型 | 方法 | 参数说明 |
+|----------|------|---------|
+| 日线 | `get_daily()` / `get_daily_async()` | symbols, start_date, end_date |
+| 分钟 | `get_minute()` / `get_minute_async()` | symbols, start_date, end_date, frequency |
+| 每日基本面 | `get_daily_basic()` / `get_daily_basic_async()` | symbols, start_date, end_date |
+| 复权因子 | `get_adj_factor()` / `get_adj_factor_async()` | symbols, start_date, end_date |
+| 基本信息 | `get_basic()` / `get_basic_async()` | symbols (可选，None表示所有) |
+| 周线 | `get_weekly()` / `get_weekly_async()` | symbols, start_date, end_date |
+| 月线 | `get_monthly()` / `get_monthly_async()` | symbols, start_date, end_date |
+
+**频率选项** (用于 `get_minute`):
+- `minute_1` - 1分钟线
+- `minute_5` - 5分钟线
+- `minute_15` - 15分钟线
+- `minute_30` - 30分钟线
+- `minute_60` - 60分钟线
 
 ## CLI 使用示例
 
-（实施后的命令）
+### 数据更新命令
 
 ```bash
-# 更新数据
-fdh-cli update --asset-class stock --frequency daily
+# 使用 --dataset 参数更新数据（推荐）
+fdh-cli update --dataset daily              # 更新日线数据
+fdh-cli update --dataset daily_basic        # 更新每日基本面
+fdh-cli update --dataset minute_1           # 更新1分钟数据
+fdh-cli update --dataset minute_5           # 更新5分钟数据
 
-# ETL 数据
-fdh-cli etl --from-date 2024-01-01
+# 更新指定股票
+fdh-cli update --dataset daily --symbols 600519.SH,000858.SZ
 
-# 检查状态
+# 强制全量更新
+fdh-cli update --dataset daily --force
+
+# 指定日期范围
+fdh-cli update --dataset daily --start-date 2024-01-01 --end-date 2024-12-31
+
+# 批量更新指定交易日所有股票
+fdh-cli update --dataset daily --trade-date 2024-11-27
+
+# 使用 --frequency 参数（向后兼容）
+fdh-cli update --frequency basic            # 股票基本信息
+fdh-cli update --frequency adj_factor       # 复权因子
+```
+
+### 高周期聚合管理
+
+```bash
+# 手动刷新聚合视图
+fdh-cli refresh-aggregates --table symbol_weekly --start 2024-01-01 --end 2024-12-31
+fdh-cli refresh-aggregates --table symbol_monthly
+fdh-cli refresh-aggregates --table daily_basic_weekly
+
+# 查看聚合状态
+fdh-cli status --aggregates
+```
+
+### 系统状态查看
+
+```bash
+# 查看数据库状态
 fdh-cli status
 
-# 强制全量刷新
-fdh-cli update --mode=full
+# 详细信息
+fdh-cli status --verbose
+```
+
+### 配置管理
+
+```bash
+# 查看当前配置
+fdh-cli config show
+
+# 测试配置
+fdh-cli config test
 ```

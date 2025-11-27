@@ -16,22 +16,26 @@ The system SHALL support a YAML configuration file (sources.yml) that defines da
 - **THEN** it SHALL register both providers with their respective API endpoints and capabilities
 
 ### Requirement: Smart Data Source Router
-The system SHALL provide an intelligent router that automatically selects the best data source based on configuration rules.
+The system SHALL provide an intelligent router that automatically selects the best data source based on configuration rules. The router SHALL now integrate with SDK data access layer for data source provider selection and availability checking.
 
-#### Scenario: Route by asset class and frequency
-- **GIVEN** configuration specifies daily stock data should use tushare first, then xtquant
-- **WHEN** system needs to fetch daily stock data
-- **THEN** the router SHALL select tushare as primary source
+#### Scenario: SDK integration for data source routing
+- **GIVEN** FinanceDataHub SDK is initialized with SmartRouter
+- **WHEN** user calls `fdh.get_daily(['600519.SH'], '2020-01-01', '2024-12-31')`
+- **THEN** system SHALL:
+  - Use SmartRouter to determine optimal data source provider
+  - Check provider availability and health
+  - Log data source selection decision with timestamp and reason
+  - Support failover if primary provider fails
+  - Recommend data update if data is stale
 
-#### Scenario: Failover mechanism
-- **GIVEN** primary data source is unavailable
-- **WHEN** system attempts to fetch data
-- **THEN** the router SHALL automatically try the secondary source
-
-#### Scenario: Route by symbol
-- **GIVEN** configuration specifies certain symbols should use specific providers
-- **WHEN** system fetches data for those symbols
-- **THEN** the router SHALL use the configured provider for each symbol
+#### Scenario: SmartRouter availability check
+- **GIVEN** SmartRouter is integrated with SDK
+- **WHEN** user queries data that may need updating
+- **THEN** system SHALL:
+  - Check with SmartRouter if data source is available
+  - Recommend update if data is stale
+  - Proceed with query from PostgreSQL if data is current
+  - Log all routing decisions
 
 ### Requirement: Dynamic Provider Selection
 The router SHALL support dynamic provider selection based on runtime conditions.
@@ -52,17 +56,21 @@ The router SHALL support dynamic provider selection based on runtime conditions.
 - **THEN** it SHALL reinitialize all providers with new configuration
 
 ### Requirement: Routing Statistics and Monitoring
-The system SHALL track routing decisions and provider performance metrics.
+The system SHALL track routing decisions and provider performance metrics. The router SHALL track data source provider metrics for SDK integration.
 
 #### Scenario: Track provider usage
-- **WHEN** router selects a provider
-- **THEN** it SHALL record which provider was used for each request
+- **WHEN** router selects a data source provider
+- **THEN** it SHALL record:
+  - Provider type used for the query
+  - Query parameters (symbols, time range, data type)
+  - Selection rationale
+  - Query execution time
 
-#### Scenario: Record success/failure rates
-- **WHEN** a provider completes a request (success or failure)
-- **THEN** the router SHALL update success/failure counters for that provider
-
-#### Scenario: Log routing decisions
-- **WHEN** router makes a selection decision
-- **THEN** it SHALL log the decision with reason for debugging
+#### Scenario: Provider performance metrics
+- **WHEN** query completes against a provider
+- **THEN** it SHALL update metrics for:
+  - Average query latency by provider
+  - Data volume processed by provider
+  - Success/failure rates by provider
+  - Availability metrics per provider
 

@@ -32,7 +32,8 @@
       "Bash(timeout:*)",
       "Bash(chmod +x:*)",
       "Bash(find:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []

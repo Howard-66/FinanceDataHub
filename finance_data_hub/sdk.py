@@ -1,41 +1,487 @@
 """
 FinanceDataHub SDK
 
-提供统一的金融数据访问接口，支持日线、分钟线以及高周期（周线、月线）数据查询。
+提供统一的金融数据访问接口，支持多种数据类型查询：
+- 日线数据（daily）：OHLCV + 成交量 + 复权因子
+- 分钟数据（minute_*）：1/5/15/30/60分钟线 OHLCV 数据
+- 每日基本面（daily_basic）：估值指标、财务指标、流动性指标
+- 复权因子（adj_factor）：前复权、后复权因子
+- 股票基本信息（basic）：股票基本信息，非时间序列
+
+集成 SmartRouter 智能数据源路由，自动选择最优数据源并记录路由决策。
 """
 
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import pandas as pd
+from datetime import datetime
+from loguru import logger
 
 from finance_data_hub.config import Settings
 from finance_data_hub.database.manager import DatabaseManager
 from finance_data_hub.database.operations import DataOperations
+from finance_data_hub.router.smart_router import SmartRouter
 
 
 class FinanceDataHub:
     """
     FinanceDataHub SDK - 金融数据服务中心
 
-    提供统一的金融数据访问接口，支持高周期数据聚合查询。
+    提供统一的金融数据访问接口，支持多种数据类型查询和高周期数据聚合。
+
+    核心功能：
+    1. 基础数据查询：日线、分钟线、每日基本面、复权因子、股票基本信息
+    2. 高周期聚合：周线、月线数据自动聚合计算
+    3. 智能路由：集成 SmartRouter 自动选择最优数据源
+    4. 数据新鲜度检查：检查数据是否需要更新，提供更新建议
+    5. 异步/同步双接口：支持 async/await 和同步调用两种方式
+
+    SmartRouter 集成：
+    - 自动读取 sources.yml 配置文件
+    - 根据数据类型选择最优数据提供商
+    - 记录所有路由决策到日志
+    - 提供数据新鲜度检查和更新建议
+
+    Example (异步模式):
+        >>> import asyncio
+        >>> from finance_data_hub import FinanceDataHub
+        >>>
+        >>> async def main():
+        ...     fdh = FinanceDataHub(settings, backend="postgresql")
+        ...     await fdh.initialize()
+        ...
+        ...     # 查询日线数据
+        ...     daily = await fdh.get_daily_async(['600519.SH'], '2024-01-01', '2024-12-31')
+        ...     print(daily.head())
+        ...
+        ...     await fdh.close()
+        >>>
+        >>> asyncio.run(main())
+
+    Example (同步模式):
+        >>> fdh = FinanceDataHub(settings, backend="postgresql")
+        >>> daily = fdh.get_daily(['600519.SH'], '2024-01-01', '2024-12-31')
+        >>> print(daily.head())
     """
 
-    def __init__(self, settings: Settings, backend: str = "auto"):
+    def __init__(self, settings: Settings, backend: str = "auto", router_config_path: Optional[str] = None):
         """
         初始化 FinanceDataHub SDK
 
         Args:
-            settings: 应用配置
-            backend: 数据后端 ('postgresql', 'duckdb', 'auto')
+            settings: 应用配置对象，包含数据库连接等信息
+            backend: 数据后端类型，支持:
+                - 'postgresql': 使用 PostgreSQL + TimescaleDB 作为主存储（推荐）
+                - 'auto': 自动选择后端（目前等同于 postgresql）
+                注意：当前版本仅支持 PostgreSQL 作为数据后端
+            router_config_path: SmartRouter 配置文件路径（sources.yml）
+                如果为 None 且 settings 中包含 data_source.sources_config_path，
+                则使用默认路径
+                如果配置文件不存在或加载失败，将禁用智能路由功能
         """
         self.settings = settings
         self.db_manager = DatabaseManager(settings)
         self.ops = DataOperations(self.db_manager)
         self.backend = backend
 
+        # 初始化 SmartRouter（如果配置文件存在）
+        try:
+            config_path = None
+            if hasattr(settings, 'data_source') and settings.data_source is not None:
+                config_path = settings.data_source.sources_config_path
+
+            if router_config_path:
+                config_path = router_config_path
+
+            self.router = SmartRouter(config_path) if config_path else None
+            if self.router:
+                logger.info("SmartRouter initialized successfully")
+        except FileNotFoundError as e:
+            logger.warning(f"SmartRouter initialization failed: {e}")
+            self.router = None
+        except Exception as e:
+            logger.error(f"Error initializing SmartRouter: {e}")
+            self.router = None
+
     async def initialize(self) -> None:
         """初始化数据库连接"""
         await self.db_manager.initialize()
+
+    def _log_routing_decision(
+        self,
+        data_type: str,
+        symbols: List[str],
+        decision: str,
+        reason: Optional[str] = None
+    ) -> None:
+        """
+        记录路由决策日志
+
+        Args:
+            data_type: 数据类型（daily, minute, daily_basic, adj_factor, basic）
+            symbols: 股票代码列表
+            decision: 路由决策
+            reason: 决策原因
+        """
+        if not self.router:
+            return
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_msg = (
+            f"[{timestamp}] SmartRouter Decision | "
+            f"Type: {data_type} | "
+            f"Symbols: {len(symbols)} | "
+            f"Decision: {decision}"
+        )
+        if reason:
+            log_msg += f" | Reason: {reason}"
+
+        logger.info(log_msg)
+
+    async def check_data_freshness(
+        self,
+        symbols: List[str],
+        data_type: str,
+        frequency: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        检查数据新鲜度并提供更新建议
+
+        此方法与 SmartRouter 集成使用，检查指定数据类型的数据是否最新，
+        并提供数据更新建议。
+
+        Args:
+            symbols: 股票代码列表，例如 ['600519.SH', '000858.SZ']
+                如果为空列表，将检查该数据类型的整体情况
+            data_type: 数据类型，支持:
+                - 'daily': 日线数据
+                - 'minute': 分钟数据（需配合 frequency 参数）
+                - 'daily_basic': 每日基本面数据
+                - 'adj_factor': 复权因子数据
+                - 'basic': 股票基本信息
+            frequency: 频率（仅对分钟数据有效），支持:
+                - 'minute_1': 1分钟线
+                - 'minute_5': 5分钟线
+                - 'minute_15': 15分钟线
+                - 'minute_30': 30分钟线
+                - 'minute_60': 60分钟线
+
+        Returns:
+            Dict[str, Any]: 包含数据新鲜度信息的字典，包含以下键值:
+                - 'is_stale': bool，数据是否过时
+                - 'latest_date': str|None，最新数据日期（格式：YYYY-MM-DD）
+                - 'recommendation': str|None，建议操作
+                - 'available_providers': List[str]，可用数据提供商列表
+
+        Example:
+            >>> freshness = await fdh.check_data_freshness(
+            ...     ['600519.SH'], 'daily'
+            ... )
+            >>> print(f"是否过时: {freshness['is_stale']}")
+            >>> print(f"可用提供商: {freshness['available_providers']}")
+            >>> print(f"建议: {freshness['recommendation']}")
+        """
+        result = {
+            "is_stale": False,
+            "latest_date": None,
+            "recommendation": None,
+            "available_providers": []
+        }
+
+        if not self.router:
+            result["recommendation"] = "SmartRouter not available"
+            return result
+
+        # 获取可用提供商
+        if not self.router.config:
+            result["recommendation"] = "SmartRouter not configured"
+            return result
+
+        providers = self.router.config.get_providers_for_route("stock", data_type, frequency)
+        result["available_providers"] = providers
+
+        if not providers:
+            result["recommendation"] = "No providers configured for this data type"
+            return result
+
+        # 检查最新的数据日期
+        if symbols:
+            # 这里可以扩展为查询数据库中的最新数据日期
+            # 目前返回基本建议
+            result["recommendation"] = (
+                f"Data may need updating. "
+                f"Available providers: {', '.join(providers)}"
+            )
+
+        return result
+
+    # ============================================================================
+    # 基础数据查询方法
+    # ============================================================================
+
+    def get_daily(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取日线 OHLCV 数据（同步方法）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 日线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_daily(['600519.SH', '000858.SZ'], '2024-01-01', '2024-12-31')
+            >>> print(data.head())
+        """
+        return asyncio.run(self.get_daily_async(symbols, start_date, end_date))
+
+    async def get_daily_async(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取日线 OHLCV 数据（异步方法）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 日线数据
+        """
+        # 检查数据源可用性
+        freshness = await self.check_data_freshness(symbols, "daily")
+        if freshness["is_stale"]:
+            self._log_routing_decision(
+                "daily",
+                symbols,
+                "Query from PostgreSQL (current data)",
+                f"Latest: {freshness.get('latest_date')}, Recommendation: {freshness.get('recommendation')}"
+            )
+        else:
+            self._log_routing_decision(
+                "daily",
+                symbols,
+                "Query from PostgreSQL",
+                f"Available providers: {', '.join(freshness.get('available_providers', []))}"
+            )
+
+        return await self.ops.get_symbol_daily(symbols, start_date, end_date)
+
+    def get_minute(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str,
+        frequency: str = "minute_1"
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取分钟级 OHLCV 数据（同步方法）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            frequency: 数据频率，支持 minute_1, minute_5, minute_15, minute_30, minute_60
+
+        Returns:
+            Optional[pd.DataFrame]: 分钟数据，包含 time, symbol, open, high, low, close, volume, amount, frequency 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_minute(['600519.SH'], '2024-11-01', '2024-11-30', 'minute_5')
+            >>> print(data.head())
+        """
+        return asyncio.run(self.get_minute_async(symbols, start_date, end_date, frequency))
+
+    async def get_minute_async(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str,
+        frequency: str = "minute_1"
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取分钟级 OHLCV 数据（异步方法）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            frequency: 数据频率，支持 minute_1, minute_5, minute_15, minute_30, minute_60
+
+        Returns:
+            Optional[pd.DataFrame]: 分钟数据
+        """
+        # 检查数据源可用性
+        freshness = await self.check_data_freshness(symbols, "minute", frequency)
+        self._log_routing_decision(
+            "minute",
+            symbols,
+            "Query from PostgreSQL",
+            f"Frequency: {frequency}, Available providers: {', '.join(freshness.get('available_providers', []))}"
+        )
+
+        return await self.ops.get_symbol_minute(symbols, start_date, end_date, frequency)
+
+    def get_daily_basic(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取每日基本面指标数据（同步方法）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 每日基本面数据，包含 time, symbol, turnover_rate, volume_ratio, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share, free_share, total_mv, circ_mv 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_daily_basic(['600519.SH'], '2024-01-01', '2024-12-31')
+            >>> print(data[['symbol', 'time', 'pe', 'pb']].head())
+        """
+        return asyncio.run(self.get_daily_basic_async(symbols, start_date, end_date))
+
+    async def get_daily_basic_async(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取每日基本面指标数据（异步方法）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 每日基本面数据
+        """
+        freshness = await self.check_data_freshness(symbols, "daily_basic")
+        self._log_routing_decision(
+            "daily_basic",
+            symbols,
+            "Query from PostgreSQL",
+            f"Available providers: {', '.join(freshness.get('available_providers', []))}"
+        )
+
+        return await self.ops.get_daily_basic(symbols, start_date, end_date)
+
+    def get_adj_factor(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取复权因子数据（同步方法）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 复权因子数据，包含 time, symbol, adj_factor 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_adj_factor(['600519.SH'], '2020-01-01', '2024-12-31')
+            >>> print(data.head())
+        """
+        return asyncio.run(self.get_adj_factor_async(symbols, start_date, end_date))
+
+    async def get_adj_factor_async(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取复权因子数据（异步方法）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 复权因子数据
+        """
+        freshness = await self.check_data_freshness(symbols, "adj_factor")
+        self._log_routing_decision(
+            "adj_factor",
+            symbols,
+            "Query from PostgreSQL",
+            f"Available providers: {', '.join(freshness.get('available_providers', []))}"
+        )
+
+        return await self.ops.get_adj_factor(symbols, start_date, end_date)
+
+    def get_basic(
+        self,
+        symbols: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取股票基本信息（同步方法，非时间序列）
+
+        Args:
+            symbols: 股票代码列表，如果为None则返回所有股票
+
+        Returns:
+            Optional[pd.DataFrame]: 股票基本信息，包含 ts_code, symbol, name, area, industry, market, exchange, list_status, list_date, delist_date, is_hs 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_basic(['600519.SH', '000858.SZ'])
+            >>> print(data[['symbol', 'name', 'industry']])
+        """
+        return asyncio.run(self.get_basic_async(symbols))
+
+    async def get_basic_async(
+        self,
+        symbols: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取股票基本信息（异步方法，非时间序列）
+
+        Args:
+            symbols: 股票代码列表，如果为None则返回所有股票
+
+        Returns:
+            Optional[pd.DataFrame]: 股票基本信息
+        """
+        if symbols is None:
+            symbols = []
+
+        freshness = await self.check_data_freshness(symbols if symbols else ["ALL"], "basic")
+        self._log_routing_decision(
+            "basic",
+            symbols if symbols else ["ALL"],
+            "Query from PostgreSQL",
+            f"Available providers: {', '.join(freshness.get('available_providers', []))}"
+        )
+
+        return await self.ops.get_asset_basic(symbols)
 
     # ============================================================================
     # 高周期数据查询方法

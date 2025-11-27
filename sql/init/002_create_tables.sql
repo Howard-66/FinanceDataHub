@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS asset_basic (
     symbol VARCHAR(20) PRIMARY KEY,           -- 股票代码，如 600519.SH
     name VARCHAR(100) NOT NULL,               -- 证券名称
     market VARCHAR(20),                       -- 市场代码：主板、科创板、创业板、北交所等
+    -- exchange VARCHAR(20),                     -- 交易所代码
     area VARCHAR(50),                         -- 地区
     industry VARCHAR(50),                     -- 行业
     list_status VARCHAR(10) NOT NULL,         -- 上市状态：L-上市，D-退市，P-暂停上市

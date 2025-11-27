@@ -409,6 +409,197 @@ class DataOperations:
 
         return [row.symbol for row in rows]
 
+
+    async def get_symbol_daily(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取日线 OHLCV 数据
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 日线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
+        """
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        start_dt = _normalize_datetime_for_db(start_date, "daily")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+
+        query = text("""
+            SELECT time, symbol, open, high, low, close, volume, amount, adj_factor
+            FROM symbol_daily
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            ORDER BY symbol, time
+        """)
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(
+                query,
+                {
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
+                },
+            )
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_symbol_minute(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str,
+        frequency: str = "minute_1"
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取分钟级 OHLCV 数据
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            frequency: 数据频率，支持 minute_1, minute_5, minute_15, minute_30, minute_60
+
+        Returns:
+            Optional[pd.DataFrame]: 分钟数据，包含 time, symbol, open, high, low, close, volume, amount, frequency 列
+        """
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        start_dt = _normalize_datetime_for_db(start_date, "minute")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "minute")
+
+        query = text("""
+            SELECT time, symbol, open, high, low, close, volume, amount, frequency
+            FROM symbol_minute
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            AND frequency = :frequency
+            ORDER BY symbol, time
+        """)
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(
+                query,
+                {
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
+                    "frequency": frequency,
+                },
+            )
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_daily_basic(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取每日基本面指标数据
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+
+        Returns:
+            Optional[pd.DataFrame]: 每日基本面数据，包含 time, symbol, turnover_rate, volume_ratio, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share, free_share, total_mv, circ_mv 列
+        """
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        start_dt = _normalize_datetime_for_db(start_date, "daily_basic")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily_basic")
+
+        query = text("""
+            SELECT time, symbol, turnover_rate, volume_ratio, pe, pe_ttm,
+                   pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share,
+                   float_share, free_share, total_mv, circ_mv
+            FROM daily_basic
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            ORDER BY symbol, time
+        """)
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(
+                query,
+                {
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
+                },
+            )
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_asset_basic(
+        self,
+        symbols: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取股票基本信息
+
+        Args:
+            symbols: 股票代码列表，如果为 None 则获取所有股票
+
+        Returns:
+            Optional[pd.DataFrame]: 股票基本信息，包含 symbol, name, area, industry, market, exchange, list_status, list_date, delist_date, is_hs 列
+        """
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        params = {}
+        query = "SELECT symbol, name, area, industry, market, list_status, list_date, delist_date, is_hs FROM asset_basic WHERE 1=1"
+
+        if symbols:
+            query += " AND symbol = ANY(:symbols)"
+            params["symbols"] = symbols
+
+        query += " ORDER BY symbol"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+
     async def check_table_exists(self, table_name: str) -> bool:
         """
         检查表是否存在
@@ -490,36 +681,41 @@ class DataOperations:
         return total_inserted
 
     async def get_adj_factor(
-        self, symbol: str, start_date: str, end_date: str
+        self, symbols: List[str], start_date: str, end_date: str
     ) -> Optional[pd.DataFrame]:
         """
         获取指定时间范围内的复权因子
 
         Args:
-            symbol: 股票代码
-            start_date: 开始日期
-            end_date: 结束日期
+            symbols: 股票代码列表
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
 
         Returns:
-            Optional[pd.DataFrame]: 复权因子数据
+            Optional[pd.DataFrame]: 复权因子数据，包含 time, symbol, adj_factor 列
         """
-        query = text(
-            """
-            SELECT symbol, trade_date, adj_factor
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        start_dt = _normalize_datetime_for_db(start_date, "adj_factor")
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "adj_factor")
+
+        query = text("""
+            SELECT time, symbol, adj_factor
             FROM adj_factor
-            WHERE symbol = :symbol
-            AND trade_date BETWEEN :start_date AND :end_date
-            ORDER BY trade_date
-        """
-        )
+            WHERE symbol = ANY(:symbols)
+            AND time BETWEEN :start_date AND :end_date
+            ORDER BY symbol, time
+        """)
 
         async with self.db_manager._engine.begin() as conn:
             result = await conn.execute(
                 query,
                 {
-                    "symbol": symbol,
-                    "start_date": start_date,
-                    "end_date": end_date,
+                    "symbols": symbols,
+                    "start_date": start_dt,
+                    "end_date": end_dt,
                 },
             )
             rows = result.fetchall()
@@ -548,6 +744,10 @@ class DataOperations:
         Returns:
             Optional[pd.DataFrame]: 周线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
         """
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
         # 将字符串日期转换为带时区的datetime对象
         start_dt = _normalize_datetime_for_db(start_date, "daily")
         end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
@@ -595,6 +795,10 @@ class DataOperations:
         Returns:
             Optional[pd.DataFrame]: 月线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
         """
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
         # 将字符串日期转换为带时区的datetime对象
         start_dt = _normalize_datetime_for_db(start_date, "daily")
         end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
