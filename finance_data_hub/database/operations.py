@@ -331,6 +331,9 @@ class DataOperations:
 
         total_inserted = 0
 
+        # 移除重复列名，避免 to_dict 警告
+        data = data.loc[:, ~data.columns.duplicated()]
+
         for i in range(0, len(data), batch_size):
             batch = data.iloc[i : i + batch_size]
             records = batch.to_dict("records")

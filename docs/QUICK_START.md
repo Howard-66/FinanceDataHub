@@ -142,35 +142,35 @@ fdh-cli update --frequency basic
 #### 2. 更新日线数据
 ```bash
 # 增量更新最近30天数据（自动检测最新数据）
-fdh-cli update --frequency daily
+fdh-cli update --dataset daily
 
 # 更新指定股票
-fdh-cli update --frequency daily --symbols 600519.SH,000858.SZ
+fdh-cli update --dataset daily --symbols 600519.SH,000858.SZ
 
 # 获取前复权数据
-fdh-cli update --frequency daily --symbols 600519.SH --adj qfq
+fdh-cli update --dataset daily --symbols 600519.SH --adj qfq
 
 # 指定日期范围
-fdh-cli update --frequency daily --symbols 600519.SH \
+fdh-cli update --dataset daily --symbols 600519.SH \
     --start-date 2024-01-01 --end-date 2024-12-31
 ```
 
 #### 3. 更新分钟数据
 ```bash
 # 1分钟数据（最近1天）
-fdh-cli update --frequency minute_1 --symbols 600519.SH
+fdh-cli update --dataset minute_1 --symbols 600519.SH
 
 # 5分钟数据
-fdh-cli update --frequency minute_5 --symbols 600519.SH
+fdh-cli update --dataset minute_5 --symbols 600519.SH
 
 # 查看详细日志
-fdh-cli update --frequency minute_1 --symbols 600519.SH --verbose
+fdh-cli update --dataset minute_1 --symbols 600519.SH --verbose
 ```
 
 #### 4. 更新每日指标
 ```bash
 # 获取PE、PB等指标数据
-fdh-cli update --frequency daily_basic --symbols 600519.SH
+fdh-cli update --dataset daily_basic --symbols 600519.SH
 ```
 
 ### 查看状态
@@ -198,7 +198,7 @@ fdh-cli config --reload
 ### 场景1：获取股票基本信息
 ```bash
 # Step 1: 获取所有股票列表
-fdh-cli update --frequency basic
+fdh-cli update --dataset basic
 
 # Step 2: 查看数据库中的股票数量
 psql postgresql://fdh_user:fdh_password@localhost:5432/financedatahub \
@@ -209,16 +209,16 @@ psql postgresql://fdh_user:fdh_password@localhost:5432/financedatahub \
 ```bash
 # 创建定时任务（每天收盘后执行）
 # 使用cron或其他调度器
-0 18 * * 1-5 fdh-cli update --frequency daily --verbose
+0 18 * * 1-5 fdh-cli update --dataset daily --verbose
 
 # 或手动执行
-fdh-cli update --frequency daily
+fdh-cli update --dataset daily
 ```
 
 ### 场景3：批量获取多只股票数据
 ```bash
 # 更新多个股票（逗号分隔）
-fdh-cli update --frequency daily \
+fdh-cli update --dataset daily \
     --symbols 600519.SH,000858.SZ,000001.SZ,600036.SH \
     --start-date 2024-01-01 --end-date 2024-12-31
 ```
@@ -226,7 +226,7 @@ fdh-cli update --frequency daily \
 ### 场景4：获取分钟数据进行分析
 ```bash
 # 获取1分钟数据
-fdh-cli update --frequency minute_1 \
+fdh-cli update --dataset minute_1 \
     --symbols 600519.SH \
     --start-date 2024-12-01 \
     --end-date 2024-12-02
@@ -490,5 +490,5 @@ A: 使用PostgreSQL的pg_dump工具，或配置定时备份脚本。
 fdh-cli init
 
 # 2. 更新股票基本信息
-fdh-cli update --frequency basic
+fdh-cli update --dataset basic
 ```
