@@ -147,6 +147,25 @@ AdjFactorSchema = DataFrameSchema(
 )
 
 
+# GDP数据 Schema
+CNGDPSchema = DataFrameSchema(
+    name="cn_gdp",
+    description="中国国民经济GDP数据",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "季度末日期（如2025-03-31表示2025Q1）"),
+        ColumnSchema("quarter", "object", True, "季度（如2019Q1）"),
+        ColumnSchema("gdp", "float64", True, "GDP累计值（亿元）"),
+        ColumnSchema("gdp_yoy", "float64", True, "当季同比增速（%）"),
+        ColumnSchema("pi", "float64", True, "第一产业累计值（亿元）"),
+        ColumnSchema("pi_yoy", "float64", True, "第一产业同比增速（%）"),
+        ColumnSchema("si", "float64", True, "第二产业累计值（亿元）"),
+        ColumnSchema("si_yoy", "float64", True, "第二产业同比增速（%）"),
+        ColumnSchema("ti", "float64", True, "第三产业累计值（亿元）"),
+        ColumnSchema("ti_yoy", "float64", True, "第三产业同比增速（%）"),
+    ],
+)
+
+
 # ===========================
 # 验证函数
 # ===========================

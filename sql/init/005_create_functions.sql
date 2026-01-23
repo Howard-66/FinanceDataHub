@@ -71,29 +71,30 @@ BEGIN
     FROM asset_basic
     UNION ALL
     -- 对于超表，使用 TimescaleDB 的近似值函数（读取元数据，速度快）
+    -- 如果 TimescaleDB 不可用，使用 COUNT(*)
     SELECT
         'symbol_daily'::TEXT,
-        (SELECT approximate_row_count('symbol_daily'))::BIGINT,
+        COALESCE((SELECT approximate_row_count('symbol_daily')), (SELECT COUNT(*) FROM symbol_daily))::BIGINT,
         (SELECT MAX(time) FROM symbol_daily)::TIMESTAMPTZ
     UNION ALL
     SELECT
         'symbol_minute'::TEXT,
-        (SELECT approximate_row_count('symbol_minute'))::BIGINT,
+        COALESCE((SELECT approximate_row_count('symbol_minute')), (SELECT COUNT(*) FROM symbol_minute))::BIGINT,
         (SELECT MAX(time) FROM symbol_minute)::TIMESTAMPTZ
     UNION ALL
     SELECT
         'symbol_tick'::TEXT,
-        (SELECT approximate_row_count('symbol_tick'))::BIGINT,
+        COALESCE((SELECT approximate_row_count('symbol_tick')), (SELECT COUNT(*) FROM symbol_tick))::BIGINT,
         (SELECT MAX(time) FROM symbol_tick)::TIMESTAMPTZ
     UNION ALL
     SELECT
         'daily_basic'::TEXT,
-        (SELECT approximate_row_count('daily_basic'))::BIGINT,
+        COALESCE((SELECT approximate_row_count('daily_basic')), (SELECT COUNT(*) FROM daily_basic))::BIGINT,
         (SELECT MAX(time) FROM daily_basic)::TIMESTAMPTZ
     UNION ALL
     SELECT
         'adj_factor'::TEXT,
-        (SELECT approximate_row_count('adj_factor'))::BIGINT,
+        COALESCE((SELECT approximate_row_count('adj_factor')), (SELECT COUNT(*) FROM adj_factor))::BIGINT,
         (SELECT MAX(time) FROM adj_factor)::TIMESTAMPTZ;
 END;
 $$ LANGUAGE plpgsql;

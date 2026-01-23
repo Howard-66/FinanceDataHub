@@ -53,3 +53,34 @@ CREATE TABLE IF NOT EXISTS daily_basic (
 );
 
 COMMENT ON TABLE daily_basic IS '每日指标表 - 存储PE、PB、换手率等每日计算指标';
+
+-- 中国GDP数据表
+CREATE TABLE IF NOT EXISTS cn_gdp (
+    time TIMESTAMPTZ NOT NULL,                    -- 季度末日期，如 2025-03-31 表示 2025Q1
+    quarter VARCHAR(10) NOT NULL,                 -- 季度，如 2024Q1
+    gdp DECIMAL(20,2),                            -- GDP累计值（亿元）
+    gdp_yoy DECIMAL(10,4),                        -- 当季同比增速（%）
+    pi DECIMAL(20,2),                             -- 第一产业累计值（亿元）
+    pi_yoy DECIMAL(10,4),                         -- 第一产业同比增速（%）
+    si DECIMAL(20,2),                             -- 第二产业累计值（亿元）
+    si_yoy DECIMAL(10,4),                         -- 第二产业同比增速（%）
+    ti DECIMAL(20,2),                             -- 第三产业累计值（亿元）
+    ti_yoy DECIMAL(10,4),                         -- 第三产业同比增速（%）
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (time)                            -- 使用时间作为主键，支持增量更新
+);
+
+CREATE INDEX IF NOT EXISTS idx_cn_gdp_quarter ON cn_gdp(quarter);
+
+COMMENT ON TABLE cn_gdp IS '中国国民经济GDP数据表 - 存储季度GDP及三次产业数据';
+COMMENT ON COLUMN cn_gdp.time IS '季度末日期，格式如2025-03-31表示2025年第一季度末';
+COMMENT ON COLUMN cn_gdp.quarter IS '季度，格式如2024Q1表示2024年第一季度';
+COMMENT ON COLUMN cn_gdp.gdp IS 'GDP累计值（亿元）';
+COMMENT ON COLUMN cn_gdp.gdp_yoy IS '当季同比增速（%）';
+COMMENT ON COLUMN cn_gdp.pi IS '第一产业累计值（亿元）';
+COMMENT ON COLUMN cn_gdp.pi_yoy IS '第一产业同比增速（%）';
+COMMENT ON COLUMN cn_gdp.si IS '第二产业累计值（亿元）';
+COMMENT ON COLUMN cn_gdp.si_yoy IS '第二产业同比增速（%）';
+COMMENT ON COLUMN cn_gdp.ti IS '第三产业累计值（亿元）';
+COMMENT ON COLUMN cn_gdp.ti_yoy IS '第三产业同比增速（%）';

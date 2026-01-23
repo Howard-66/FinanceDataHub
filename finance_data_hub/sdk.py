@@ -750,6 +750,49 @@ class FinanceDataHub:
         return await self.ops.get_adj_factor_monthly(symbols, start_date, end_date)
 
     # ============================================================================
+    # 宏观经济数据查询方法
+    # ============================================================================
+
+    def get_cn_gdp(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国GDP宏观经济数据（同步方法）
+
+        Args:
+            start_date: 开始日期（季度末日期格式，如 '2020-03-31' 表示2020Q1），None表示从最早开始
+            end_date: 结束日期（季度末日期格式，如 '2024-12-31' 表示2024Q4），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: GDP数据，包含 time, quarter, gdp, gdp_yoy, pi, pi_yoy, si, si_yoy, ti, ti_yoy 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_cn_gdp('2020-03-31', '2024-12-31')
+            >>> print(data)
+        """
+        return asyncio.run(self.get_cn_gdp_async(start_date, end_date))
+
+    async def get_cn_gdp_async(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国GDP宏观经济数据（异步方法）
+
+        Args:
+            start_date: 开始日期（季度末日期格式，如 '2020-03-31'），None表示从最早开始
+            end_date: 结束日期（季度末日期格式，如 '2024-12-31'），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: GDP数据
+        """
+        return await self.ops.get_cn_gdp(start_date, end_date)
+
+    # ============================================================================
     # 资源管理
     # ============================================================================
 

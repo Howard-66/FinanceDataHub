@@ -33,7 +33,10 @@
       "Bash(chmod +x:*)",
       "Bash(find:*)",
       "Bash(cat:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(docker exec financedatahub-postgres-1 psql:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker exec:*)"
     ],
     "deny": [],
     "ask": []

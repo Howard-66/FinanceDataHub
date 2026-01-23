@@ -474,6 +474,75 @@ class DataUpdater:
         logger.info(f"Updated total {total_records} adj_factor records")
         return total_records
 
+    async def update_gdp(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+    ) -> int:
+        """
+        更新中国GDP数据
+
+        Args:
+            start_date: 开始日期（季度末日期格式，如2020-03-31表示2020Q1），None表示智能下载
+            end_date: 结束日期，None表示到最新
+            force_update: 是否强制更新（忽略数据库状态）
+
+        Returns:
+            int: 更新的记录数
+        """
+        # 确定日期范围
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+        logger.info(
+            f"Updating GDP data from {start_date or 'smart'} to {end_date} (force={force_update})"
+        )
+
+        try:
+            # 智能下载逻辑：确定实际起始日期
+            actual_start_date = start_date
+
+            if not force_update and not start_date:
+                # 查询数据库最新记录（cn_gdp表没有symbol列，使用专用方法）
+                latest_date = await self.data_ops.get_latest_data_date_no_symbol("cn_gdp")
+
+                if latest_date:
+                    # 有记录，计算下一个季度第一天
+                    next_quarter = latest_date + timedelta(days=1)
+                    actual_start_date = next_quarter.strftime("%Y-%m-%d")
+                    if actual_start_date > end_date:
+                        logger.info("GDP data is already up to date")
+                        return 0
+                    logger.debug(f"Smart incremental: GDP from {actual_start_date}")
+                else:
+                    # 没有记录，智能下载模式：传None让API获取全量数据
+                    actual_start_date = None
+                    logger.info("Smart download: fetching full GDP history")
+
+            # 从路由器获取GDP数据
+            data = self.router.route(
+                asset_class="macro",  # GDP属于宏观经济数据
+                data_type="gdp",
+                method_name="get_gdp_data",
+                start_q=actual_start_date,
+                end_q=end_date,
+            )
+
+            if data is None or data.empty:
+                logger.warning("No GDP data received")
+                return 0
+
+            # 插入数据库
+            inserted_count = await self.data_ops.insert_cn_gdp_batch(data)
+
+            logger.info(f"Updated {inserted_count} GDP records")
+            return inserted_count
+
+        except Exception as e:
+            logger.exception("Failed to update GDP data")
+            raise
+
     async def close(self) -> None:
         """关闭资源"""
         if self.db_manager:

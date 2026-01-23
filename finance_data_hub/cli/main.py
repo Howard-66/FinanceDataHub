@@ -80,7 +80,7 @@ def update(
         None,
         "--dataset",
         "-d",
-        help="数据类型 (daily, minute_1, minute_5, daily_basic, adj_factor, basic)。"
+        help="数据类型 (daily, minute_1, minute_5, daily_basic, adj_factor, basic, gdp)。"
              "取代 --frequency 参数，提供更准确的描述。"
     ),
     frequency: Optional[str] = typer.Option(
@@ -151,6 +151,7 @@ def update(
       - daily_basic: 每日基本面数据
       - adj_factor: 复权因子数据
       - basic: 股票基本信息（非时间序列，强制全量更新）
+      - gdp: 中国GDP宏观经济数据
 
     更新策略:
       默认采用智能下载模式，系统会自动:
@@ -312,6 +313,30 @@ async def _run_smart_download(
     quiet: bool = False,
 ):
     """智能下载模式：自动检测数据库状态，智能选择全量或增量下载"""
+    # GDP 数据不需要 symbol，单独处理
+    if data_type == "gdp":
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - GDP是宏观经济数据，无需symbol")
+            console.print("  - 自动获取最新季度数据")
+            console.print("")
+
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            try:
+                count = await updater.update_gdp(
+                    start_date=None,  # 智能下载
+                    end_date=end_date,
+                    force_update=False,
+                )
+                if not quiet:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
+                else:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
+                return count
+            except Exception as e:
+                console.print(f"[bold red]ERROR:[/bold red] 更新GDP数据失败: {str(e)}")
+                raise
+
     if not quiet:
         console.print("[bold]智能下载策略:[/bold]")
         console.print("  - 自动检测symbol是否存在于数据库")
@@ -449,6 +474,31 @@ async def _run_force_update(
     quiet: bool = False,
 ):
     """强制更新模式：忽略数据库状态，使用指定日期范围"""
+
+    # GDP 数据不需要 symbol，单独处理
+    if data_type == "gdp":
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - GDP是宏观经济数据，无需symbol")
+            console.print("  - 使用指定的日期范围")
+            console.print("")
+
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            try:
+                count = await updater.update_gdp(
+                    start_date=start_date,
+                    end_date=end_date,
+                    force_update=True,
+                )
+                if not quiet:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
+                else:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
+                return count
+            except Exception as e:
+                console.print(f"[bold red]ERROR:[/bold red] 更新GDP数据失败: {str(e)}")
+                raise
+
     if not quiet:
         console.print("[bold]强制更新策略:[/bold]")
         console.print("  - 忽略数据库现有状态")

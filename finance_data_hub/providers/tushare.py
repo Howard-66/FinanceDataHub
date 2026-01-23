@@ -25,6 +25,7 @@ from finance_data_hub.providers.schema import (
     DailyDataSchema,
     MinuteDataSchema,
     DailyBasicSchema,
+    CNGDPSchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -1310,3 +1311,97 @@ class TushareProvider(BaseDataProvider):
             start_date=start_date,
             end_date=end_date,
         )
+
+    def _convert_quarter_to_date(self, quarter: str) -> pd.Timestamp:
+        """
+        将季度格式转换为季度末日期
+
+        Args:
+            quarter: 季度字符串，如 "2025Q1", "2024Q4"
+
+        Returns:
+            pd.Timestamp: 季度末日期
+        """
+        # 解析季度格式 (YYYYQX)
+        year = int(quarter[:4])
+        q = int(quarter[5])
+
+        # 计算季度末月份和日期
+        if q == 1:
+            month, day = 3, 31  # Q1 -> 3月31日
+        elif q == 2:
+            month, day = 6, 30  # Q2 -> 6月30日
+        elif q == 3:
+            month, day = 9, 30  # Q3 -> 9月30日
+        else:  # q == 4
+            month, day = 12, 31  # Q4 -> 12月31日
+
+        return pd.Timestamp(year, month, day)
+
+    def get_gdp_data(
+        self,
+        q: Optional[str] = None,
+        start_q: Optional[str] = None,
+        end_q: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取中国国民经济GDP数据
+
+        Args:
+            q: 季度（2019Q1表示2019年第一季度）
+            start_q: 开始季度
+            end_q: 结束季度
+
+        Returns:
+            pd.DataFrame: 标准格式的GDP数据，包含time（季度末日期）和quarter字段
+        """
+        logger.info(
+            f"Fetching GDP data (q={q}, start_q={start_q}, end_q={end_q})"
+        )
+
+        # 构建参数
+        kwargs = {}
+        if q:
+            kwargs["q"] = q
+        if start_q:
+            kwargs["start_q"] = start_q
+        if end_q:
+            kwargs["end_q"] = end_q
+
+        # 调用Tushare API
+        df = self._call_api(
+            "cn_gdp",
+            fields="quarter,gdp,gdp_yoy,pi,pi_yoy,si,si_yoy,ti,ti_yoy",
+            **kwargs
+        )
+
+        if df.empty:
+            logger.warning("No GDP data returned from Tushare")
+            return pd.DataFrame(columns=CNGDPSchema.get_required_columns())
+
+        # 将quarter转换为季度末日期（time字段）
+        df["time"] = df["quarter"].apply(self._convert_quarter_to_date)
+
+        # 列名映射
+        column_mapping = {
+            "quarter": "quarter",
+            "gdp": "gdp",
+            "gdp_yoy": "gdp_yoy",
+            "pi": "pi",
+            "pi_yoy": "pi_yoy",
+            "si": "si",
+            "si_yoy": "si_yoy",
+            "ti": "ti",
+            "ti_yoy": "ti_yoy",
+        }
+
+        df = convert_to_standard_columns(df, column_mapping)
+
+        # 验证数据格式
+        df = validate_dataframe(df, CNGDPSchema, provider_name=self.name)
+
+        # 按时间排序
+        df = df.sort_values("time").reset_index(drop=True)
+
+        logger.info(f"Fetched {len(df)} GDP records")
+        return df
