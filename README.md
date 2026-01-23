@@ -391,6 +391,12 @@ psql "$DATABASE_URL" -f sql/init/006_create_continuous_aggregates.sql
 
 # 5. 获取数据
 
+```bash
+# 控制台输出级别（默认 ERROR 级别，减少刷屏）
+fdh-cli update --dataset daily              # 默认安静模式，只显示必要信息
+fdh-cli update --dataset daily -v           # 详细模式，显示 INFO 日志
+fdh-cli update --dataset daily -q           # 安静模式（默认），日志级别 ERROR
+
 # 智能下载模式（默认）- 自动检测数据库状态
 fdh-cli update --dataset daily              # 自动增量更新所有股票
 fdh-cli update --dataset daily_basic        # 自动增量更新每日指标
@@ -469,11 +475,25 @@ EOF
 
 | 命令 | 功能 | 示例 |
 |------|------|------|
-| `basic` | 股票基本信息 | `fdh-cli update --frequency basic` |
-| `daily` | 日线行情 | `fdh-cli update --frequency daily --symbols 600519.SH` |
-| `minute_1` | 1分钟数据 | `fdh-cli update --frequency minute_1 --symbols 600519.SH` |
-| `minute_5` | 5分钟数据 | `fdh-cli update --frequency minute_5 --symbols 600519.SH` |
-| `adj_factor` | 复权因子 | `fdh-cli update --frequency adj_factor` |
+| `basic` | 股票基本信息 | `fdh-cli update --dataset basic` |
+| `daily` | 日线行情 | `fdh-cli update --dataset daily --symbols 600519.SH` |
+| `minute_1` | 1分钟数据 | `fdh-cli update --dataset minute_1 --symbols 600519.SH` |
+| `minute_5` | 5分钟数据 | `fdh-cli update --dataset minute_5 --symbols 600519.SH` |
+| `adj_factor` | 复权因子 | `fdh-cli update --dataset adj_factor` |
+
+### 输出控制参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-v` / `--verbose` | 显示详细输出 (INFO级别日志) | False |
+| `-q` / `--quiet` | 安静模式 (ERROR级别日志) | False |
+
+```bash
+# 输出控制示例
+fdh-cli update --dataset daily              # 默认 ERROR 级别
+fdh-cli update --dataset daily -v           # INFO 级别，显示详细日志
+fdh-cli update --dataset daily -q           # ERROR 级别，安静模式
+```
 
 ### 项目结构
 

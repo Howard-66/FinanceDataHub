@@ -7,6 +7,19 @@ CLI 主入口模块
 from typing import Optional, List
 from datetime import datetime, timedelta
 import asyncio
+import sys
+
+# 必须在任何其他模块导入之前配置日志
+from loguru import logger
+
+# 默认日志配置 - 在命令执行前设置
+logger.remove()
+logger.add(
+    sys.stderr,
+    level="ERROR",  # 默认只显示 ERROR 及以上，避免INFO日志刷屏
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    colorize=True,
+)
 
 import typer
 from rich.console import Console
@@ -29,6 +42,23 @@ app = typer.Typer(
 )
 
 console = Console()
+
+
+def _setup_logging(verbose: bool = False):
+    """配置日志级别
+
+    默认使用 ERROR 级别，verbose 模式使用 INFO 级别。
+    """
+    log_level = "INFO" if verbose else "ERROR"
+
+    # 更新现有处理器的级别
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level=log_level,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        colorize=True,
+    )
 
 
 def version_callback(value: bool):
@@ -101,6 +131,12 @@ def update(
         "-v",
         help="显示详细输出"
     ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="安静模式，减少日志输出"
+    ),
 ):
     """
     从数据源更新数据到数据库
@@ -129,7 +165,12 @@ def update(
       使用 --force 标志可以启用强制更新模式，忽略数据库状态，
       根据用户指定的日期范围进行更新。
     """
-    console.print("[bold green]开始数据更新流程[/bold green]\n")
+    # 配置日志级别（默认 ERROR，verbose 时使用 INFO）
+    _setup_logging(verbose=verbose)
+
+    # 安静模式下只显示简洁信息
+    if not quiet:
+        console.print("[bold green]开始数据更新流程[/bold green]\n")
 
     try:
         # 加载配置
@@ -151,33 +192,37 @@ def update(
             console.print("[yellow]⚠️  警告: --frequency 参数已废弃，请使用 --dataset 替代[/yellow]")
             console.print("[yellow]  例: --dataset daily 替代 --frequency daily[/yellow]\n")
 
-        # 显示更新参数
-        console.print(f"[cyan]资产类别:[/cyan] {asset_class}")
-        console.print(f"[cyan]数据类型:[/cyan] {data_type}")
-        if force:
-            console.print(f"[cyan]更新模式:[/cyan] 强制更新")
-        else:
-            console.print(f"[cyan]更新模式:[/cyan] 智能下载")
+        # 显示更新参数（非安静模式）
+        if not quiet:
+            console.print(f"[cyan]资产类别:[/cyan] {asset_class}")
+            console.print(f"[cyan]数据类型:[/cyan] {data_type}")
+            if force:
+                console.print(f"[cyan]更新模式:[/cyan] 强制更新")
+            else:
+                console.print(f"[cyan]更新模式:[/cyan] 智能下载")
 
-        if symbols:
-            console.print(f"[cyan]股票代码:[/cyan] {symbols}")
+            if symbols:
+                console.print(f"[cyan]股票代码:[/cyan] {symbols}")
 
-        if start_date:
-            console.print(f"[cyan]开始日期:[/cyan] {start_date}")
-        if end_date:
-            console.print(f"[cyan]结束日期:[/cyan] {end_date}")
-        if adj:
-            console.print(f"[cyan]复权类型:[/cyan] {adj}")
-        if trade_date:
-            console.print(f"[cyan]交易日:[/cyan] {trade_date}")
+            if start_date:
+                console.print(f"[cyan]开始日期:[/cyan] {start_date}")
+            if end_date:
+                console.print(f"[cyan]结束日期:[/cyan] {end_date}")
+            if adj:
+                console.print(f"[cyan]复权类型:[/cyan] {adj}")
+            if trade_date:
+                console.print(f"[cyan]交易日:[/cyan] {trade_date}")
 
         # 执行更新流程
         asyncio.run(_run_update(
             settings, asset_class, data_type, symbols,
-            start_date, end_date, adj, force, trade_date, verbose
+            start_date, end_date, adj, force, trade_date, verbose, quiet
         ))
 
-        console.print("\n[bold green][OK][/bold green] 数据更新完成")
+        if not quiet:
+            console.print("\n[bold green][OK][/bold green] 数据更新完成")
+        else:
+            console.print("[bold green][OK][/bold green] 数据更新完成")
 
     except Exception as e:
         console.print(f"[bold red]ERROR:[/bold red] {str(e)}")
@@ -215,6 +260,7 @@ async def _run_update(
     force: bool,
     trade_date: Optional[str],
     verbose: bool,
+    quiet: bool = False,
 ):
     """执行实际的数据更新"""
     # 解析股票代码列表
@@ -231,26 +277,27 @@ async def _run_update(
         # 策略 1: trade_date 批量更新（Tushare专用）
         console.print("\n[bold yellow]使用交易日批量更新模式[/bold yellow]")
         await _run_trade_date_update(
-            settings, asset_class, data_type, trade_date, verbose
+            settings, asset_class, data_type, trade_date, verbose, quiet
         )
     elif force or start_date or not _is_timeseries_data(data_type):
         # 策略 2: 强制更新模式
         # 注意：非时间序列数据（如asset_basic）自动使用强制更新模式
-        if not _is_timeseries_data(data_type):
-            console.print("\n[bold yellow]使用强制更新模式[/bold yellow]")
-            console.print("[dim]  非时间序列数据，自动使用强制全量更新[/dim]")
-        else:
-            console.print("\n[bold yellow]使用强制更新模式[/bold yellow]")
+        if not quiet:
+            if not _is_timeseries_data(data_type):
+                console.print("\n[bold yellow]使用强制更新模式[/bold yellow]")
+                console.print("[dim]  非时间序列数据，自动使用强制全量更新[/dim]")
+            else:
+                console.print("\n[bold yellow]使用强制更新模式[/bold yellow]")
         await _run_force_update(
             settings, asset_class, data_type, symbol_list,
-            start_date, end_date, adj, verbose
+            start_date, end_date, adj, verbose, quiet
         )
     else:
         # 策略 3: 智能下载模式（默认）
         console.print("\n[bold yellow]使用智能下载模式[/bold yellow]")
         await _run_smart_download(
             settings, asset_class, data_type, symbol_list,
-            end_date, adj, verbose
+            end_date, adj, verbose, quiet
         )
 
 
@@ -262,14 +309,16 @@ async def _run_smart_download(
     end_date: Optional[str],
     adj: Optional[str],
     verbose: bool,
+    quiet: bool = False,
 ):
     """智能下载模式：自动检测数据库状态，智能选择全量或增量下载"""
-    console.print("[bold]智能下载策略:[/bold]")
-    console.print("  - 自动检测symbol是否存在于数据库")
-    console.print("  - 新symbol：获取全量历史数据")
-    console.print("  - 已有symbol：获取增量数据（从最后记录+1天开始）")
-    console.print("  - 智能判断是否覆盖盘中数据")
-    console.print("")
+    if not quiet:
+        console.print("[bold]智能下载策略:[/bold]")
+        console.print("  - 自动检测symbol是否存在于数据库")
+        console.print("  - 新symbol：获取全量历史数据")
+        console.print("  - 已有symbol：获取增量数据（从最后记录+1天开始）")
+        console.print("  - 智能判断是否覆盖盘中数据")
+        console.print("")
 
     # 初始化更新器
     async with DataUpdater(settings, config_path="sources.yml") as updater:
@@ -285,13 +334,16 @@ async def _run_smart_download(
             try:
                 # 如果没有指定symbol，先更新股票列表
                 if not symbol_list:
-                    console.print("[yellow]先更新股票列表...[/yellow]")
+                    if not quiet:
+                        console.print("[yellow]先更新股票列表...[/yellow]")
                     basic_count = await updater.update_stock_basic()
-                    console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
 
                     symbols_db = await updater.data_ops.get_symbol_list()
                     symbol_list = symbols_db
-                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+                    if not quiet:
+                        console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
 
                 total_updated = 0
                 total_errors = 0
@@ -366,12 +418,16 @@ async def _run_smart_download(
 
                     except Exception as e:
                         total_errors += 1
-                        console.print(f"[red]更新 {symbol} 失败: {str(e)}[/red]")
+                        if not quiet:
+                            console.print(f"[red]更新 {symbol} 失败: {str(e)}[/red]")
                         continue
 
-                console.print(f"\n[bold]智能下载完成:[/bold]")
-                console.print(f"  更新记录: {total_updated}")
-                console.print(f"  失败数量: {total_errors}")
+                if not quiet:
+                    console.print(f"\n[bold]智能下载完成:[/bold]")
+                    console.print(f"  更新记录: {total_updated}")
+                    console.print(f"  失败数量: {total_errors}")
+                else:
+                    console.print(f"[bold]完成:[/bold] 更新 {total_updated} 条记录, 失败 {total_errors}")
 
             except ProviderError as e:
                 console.print(f"\n[bold red]ERROR:[/bold red] 数据源错误: {str(e)}")
@@ -390,13 +446,15 @@ async def _run_force_update(
     end_date: Optional[str],
     adj: Optional[str],
     verbose: bool,
+    quiet: bool = False,
 ):
     """强制更新模式：忽略数据库状态，使用指定日期范围"""
-    console.print("[bold]强制更新策略:[/bold]")
-    console.print("  - 忽略数据库现有状态")
-    console.print("  - 使用用户指定的日期范围")
-    console.print("  - 覆盖现有数据")
-    console.print("")
+    if not quiet:
+        console.print("[bold]强制更新策略:[/bold]")
+        console.print("  - 忽略数据库现有状态")
+        console.print("  - 使用用户指定的日期范围")
+        console.print("  - 覆盖现有数据")
+        console.print("")
 
     # 初始化更新器
     async with DataUpdater(settings, config_path="sources.yml") as updater:
@@ -412,13 +470,16 @@ async def _run_force_update(
             try:
                 # 如果没有指定symbol，先更新股票列表
                 if not symbol_list:
-                    console.print("[yellow]先更新股票列表...[/yellow]")
+                    if not quiet:
+                        console.print("[yellow]先更新股票列表...[/yellow]")
                     basic_count = await updater.update_stock_basic()
-                    console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
 
                     symbols_db = await updater.data_ops.get_symbol_list()
                     symbol_list = symbols_db
-                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+                    if not quiet:
+                        console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
 
                 total_updated = 0
                 total_errors = 0
@@ -481,8 +542,11 @@ async def _run_force_update(
                             count = await updater.update_stock_basic(market=None)
 
                             # 一次性更新所有股票基本信息后，跳出循环
-                            console.print(f"[green][OK][/green] 已更新 {count} 条股票基本信息")
-                            console.print("[yellow]股票基本信息为全量数据，无需按symbol逐一更新[/yellow]\n")
+                            if not quiet:
+                                console.print(f"[green][OK][/green] 已更新 {count} 条股票基本信息")
+                                console.print("[yellow]股票基本信息为全量数据，无需按symbol逐一更新[/yellow]\n")
+                            else:
+                                console.print(f"[green][OK][/green] 已更新 {count} 条股票基本信息")
 
                             # 记录总更新数并跳出 symbol 循环
                             total_updated += count
@@ -501,12 +565,16 @@ async def _run_force_update(
 
                     except Exception as e:
                         total_errors += 1
-                        console.print(f"[red]更新 {symbol} 失败: {str(e)}[/red]")
+                        if not quiet:
+                            console.print(f"[red]更新 {symbol} 失败: {str(e)}[/red]")
                         continue
 
-                console.print(f"\n[bold]强制更新完成:[/bold]")
-                console.print(f"  更新记录: {total_updated}")
-                console.print(f"  失败数量: {total_errors}")
+                if not quiet:
+                    console.print(f"\n[bold]强制更新完成:[/bold]")
+                    console.print(f"  更新记录: {total_updated}")
+                    console.print(f"  失败数量: {total_errors}")
+                else:
+                    console.print(f"[bold]完成:[/bold] 更新 {total_updated} 条记录, 失败 {total_errors}")
 
             except ProviderError as e:
                 console.print(f"\n[bold red]ERROR:[/bold red] 数据源错误: {str(e)}")
@@ -522,13 +590,15 @@ async def _run_trade_date_update(
     data_type: str,
     trade_date: str,
     verbose: bool,
+    quiet: bool = False,
 ):
     """交易日批量更新模式：使用Tushare的trade_date参数批量更新当日所有股票"""
-    console.print("[bold]交易日批量更新策略:[/bold]")
-    console.print(f"  - 使用交易日: {trade_date}")
-    console.print("  - 批量更新当日所有股票数据")
-    console.print("  - 适用于Tushare数据源")
-    console.print("")
+    if not quiet:
+        console.print("[bold]交易日批量更新策略:[/bold]")
+        console.print(f"  - 使用交易日: {trade_date}")
+        console.print("  - 批量更新当日所有股票数据")
+        console.print("  - 适用于Tushare数据源")
+        console.print("")
 
     try:
         from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
@@ -582,8 +652,9 @@ async def _run_trade_date_update(
             total_inserted = 0
             total_errors = 0
 
-            console.print(f"\n[bold]开始批量插入 {trade_date} 的 {len(symbols)} 只股票数据[/bold]")
-            console.print(f"总记录数: {total_records}\n")
+            if not quiet:
+                console.print(f"\n[bold]开始批量插入 {trade_date} 的 {len(symbols)} 只股票数据[/bold]")
+                console.print(f"总记录数: {total_records}\n")
 
             # 分批插入，每批1000条记录
             batch_size = 1000
@@ -604,25 +675,30 @@ async def _run_trade_date_update(
                         completed=((i + len(batch_df)) / total_records) * 100
                     )
 
-                    # 显示进度
-                    current_symbol = batch_df["symbol"].iloc[0] if len(batch_df) > 0 else "unknown"
-                    console.print(
-                        f"[green]✓[/green] 批次 {i // batch_size + 1}: "
-                        f"插入 {count} 条记录 ({current_symbol} 等)"
-                    )
+                    # 显示进度（非安静模式）
+                    if not quiet:
+                        current_symbol = batch_df["symbol"].iloc[0] if len(batch_df) > 0 else "unknown"
+                        console.print(
+                            f"[green]✓[/green] 批次 {i // batch_size + 1}: "
+                            f"插入 {count} 条记录 ({current_symbol} 等)"
+                        )
 
                 except Exception as e:
                     total_errors += 1
-                    console.print(f"[red]✗[/red] 批次 {i // batch_size + 1} 失败: {str(e)}")
+                    if not quiet:
+                        console.print(f"[red]✗[/red] 批次 {i // batch_size + 1} 失败: {str(e)}")
                     logger.error(f"Batch insert failed: {str(e)}", exc_info=True)
                     continue
 
-            console.print(f"\n[bold]交易日批量更新完成:[/bold]")
-            console.print(f"  交易日: {trade_date}")
-            console.print(f"  股票数量: {len(symbols)}")
-            console.print(f"  总记录数: {total_records}")
-            console.print(f"  插入记录: {total_inserted}")
-            console.print(f"  失败数量: {total_errors}")
+            if not quiet:
+                console.print(f"\n[bold]交易日批量更新完成:[/bold]")
+                console.print(f"  交易日: {trade_date}")
+                console.print(f"  股票数量: {len(symbols)}")
+                console.print(f"  总记录数: {total_records}")
+                console.print(f"  插入记录: {total_inserted}")
+                console.print(f"  失败数量: {total_errors}")
+            else:
+                console.print(f"[bold]完成:[/bold] 插入 {total_inserted}/{total_records} 条记录, 失败 {total_errors}")
 
             return total_inserted
 

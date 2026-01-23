@@ -17,6 +17,12 @@
 # 启动PostgreSQL和Redis
 docker-compose up -d
 
+> 如果提示类似信息：An attempt was made to access a socket in a way forbidden by its access permissions.
+> 尝试以下操作：
+> net stop winnat
+> # 等待停止后运行
+> net start winnat
+
 # 检查服务状态
 docker-compose ps
 ```
