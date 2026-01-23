@@ -426,3 +426,24 @@ fdh-cli config show
 # 测试配置
 fdh-cli config test
 ```
+
+### 数据库清理
+
+```bash
+# 完全清理数据库（删除所有表、视图、函数、连续聚合）- 需确认
+fdh-cli cleanup --mode all
+
+# 完全清理并跳过确认
+fdh-cli cleanup --mode all --yes
+
+# 只清空数据，保留表结构
+fdh-cli cleanup --mode data_only
+
+# 只删除连续聚合视图
+fdh-cli cleanup --mode aggregates
+
+# 显示详细信息
+fdh-cli cleanup --mode all --verbose
+```
+
+**注意**: 数据库清理操作不可逆，请谨慎使用！

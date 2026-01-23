@@ -33,6 +33,7 @@ from finance_data_hub.config import get_settings, reload_settings
 from finance_data_hub.update.updater import DataUpdater
 from finance_data_hub.providers.base import ProviderError
 from finance_data_hub.database.init_db import init_database
+from finance_data_hub.database.cleanup_db import cleanup_database
 
 # 创建 Typer 应用
 app = typer.Typer(
@@ -195,7 +196,11 @@ def update(
 
         # 显示更新参数（非安静模式）
         if not quiet:
-            console.print(f"[cyan]资产类别:[/cyan] {asset_class}")
+            # 根据数据类型自动推断正确的资产类别
+            display_asset_class = asset_class
+            if data_type == "gdp":
+                display_asset_class = "macro"
+            console.print(f"[cyan]资产类别:[/cyan] {display_asset_class}")
             console.print(f"[cyan]数据类型:[/cyan] {data_type}")
             if force:
                 console.print(f"[cyan]更新模式:[/cyan] 强制更新")
@@ -945,6 +950,108 @@ def init_db(
 
     except Exception as e:
         console.print(f"[bold red]ERROR:[/bold red] {str(e)}")
+        if verbose:
+            import traceback
+            console.print(traceback.format_exc())
+        raise typer.Exit(1)
+
+
+@app.command("cleanup")
+def cleanup_db(
+    mode: str = typer.Option(
+        "all",
+        "--mode",
+        "-m",
+        help="清理模式: all-删除所有对象, data_only-只清空数据, aggregates-只删除连续聚合"
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="跳过确认直接执行"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="显示详细信息"
+    ),
+):
+    """
+    清理数据库
+
+    删除或清空数据库对象。注意：此操作不可逆！
+
+    清理模式:
+      - all: 删除所有数据对象（表、视图、函数、连续聚合），完全重置数据库
+      - data_only: 只清空数据，保留表结构和函数
+      - aggregates: 只删除连续聚合视图
+    """
+    console.print("[bold red]警告：数据库清理操作不可逆！[/bold red]\n")
+
+    # 模式说明
+    mode_descriptions = {
+        "all": "删除所有数据对象（表、视图、函数、连续聚合），完全重置数据库",
+        "data_only": "只清空数据（TRUNCATE），保留表结构和函数",
+        "aggregates": "只删除连续聚合视图，保留基表"
+    }
+
+    console.print(f"[bold]清理模式:[/bold] {mode}")
+    console.print(f"[bold]说明:[/bold] {mode_descriptions.get(mode, '未知模式')}\n")
+
+    if not yes:
+        # 确认提示
+        console.print("[bold yellow]请确认是否继续？[/bold yellow]")
+        console.print("  输入 [bold]y[/bold] 继续，任意键取消: ", end="")
+        try:
+            import sys
+            confirm = sys.stdin.readline().strip().lower()
+        except KeyboardInterrupt:
+            console.print("\n[yellow]已取消[/yellow]")
+            raise typer.Exit(0)
+
+        if confirm != 'y':
+            console.print("[yellow]已取消[/yellow]")
+            raise typer.Exit(0)
+
+    try:
+        settings = get_settings()
+
+        if verbose:
+            console.print("[yellow]显示详细信息[/yellow]\n")
+            console.print(f"[cyan]数据库URL:[/cyan] {settings.database.url}")
+
+        console.print("[bold]开始清理数据库...[/bold]\n")
+
+        # 执行清理
+        result = asyncio.run(cleanup_database(settings, mode=mode, verbose=verbose))
+
+        # 显示结果
+        console.print("\n[bold]清理结果:[/bold]")
+
+        if mode in ("all", "data_only"):
+            if result.get("continuous_aggregates"):
+                console.print(f"  删除连续聚合: {', '.join(result['continuous_aggregates'])}")
+            if result.get("functions"):
+                console.print(f"  删除函数: {', '.join(result['functions'])}")
+            if result.get("views"):
+                console.print(f"  删除视图: {', '.join(result['views'])}")
+            if result.get("truncated"):
+                console.print(f"  清空表数据: {', '.join(result['truncated'])}")
+            if result.get("tables"):
+                console.print(f"  删除表: {', '.join(result['tables'])}")
+        elif mode == "aggregates":
+            console.print(f"  删除连续聚合: {', '.join(result.get('continuous_aggregates', []))}")
+
+        if result.get("errors"):
+            console.print("\n[bold yellow]警告:[/bold yellow]")
+            for error in result["errors"]:
+                console.print(f"  - {error}")
+
+        console.print("\n[bold green][OK][/bold green] 数据库清理完成")
+
+    except Exception as e:
+        console.print(f"\n[bold red]ERROR:[/bold red] {str(e)}")
         if verbose:
             import traceback
             console.print(traceback.format_exc())
