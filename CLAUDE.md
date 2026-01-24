@@ -299,6 +299,11 @@ gdp_data = await fdh.get_cn_gdp_async('2020-03-31', '2024-12-31')
 print(f"GDP数据: {len(gdp_data)} 条记录")
 print(gdp_data.head())
 
+# PPI宏观经济数据查询（使用月份末日期，如 2024-01-31 表示 2024年1月）
+ppi_data = await fdh.get_cn_ppi_async('2020-01-31', '2024-12-31')
+print(f"PPI数据: {len(ppi_data)} 条记录")
+print(ppi_data.head())
+
 # 关闭连接
 await fdh.close()
 ```
@@ -350,10 +355,15 @@ print(f"建议: {freshness['recommendation']}")
 | 周线 | `get_weekly()` / `get_weekly_async()` | symbols, start_date, end_date |
 | 月线 | `get_monthly()` / `get_monthly_async()` | symbols, start_date, end_date |
 | GDP | `get_cn_gdp()` / `get_cn_gdp_async()` | start_date, end_date (季度末日期) |
+| PPI | `get_cn_ppi()` / `get_cn_ppi_async()` | start_date, end_date (月份末日期) |
 
 **GDP数据说明**:
 - 日期格式使用季度末日期，如 `2024-03-31` 表示 2024Q1，`2024-06-30` 表示 2024Q2
 - 返回字段: `time`, `quarter`, `gdp`, `gdp_yoy`, `pi`, `pi_yoy`, `si`, `si_yoy`, `ti`, `ti_yoy`
+
+**PPI数据说明**:
+- 日期格式使用月份末日期，如 `2024-01-31` 表示 2024年1月，`2024-12-31` 表示 2024年12月
+- 返回字段: `time`, `month`, `ppi_yoy`, `ppi_mp_yoy`, `ppi_cg_yoy` 等33个指标
 
 **频率选项** (用于 `get_minute`):
 - `minute_1` - 1分钟线
@@ -393,6 +403,11 @@ fdh-cli update --dataset adj_factor       # 复权因子
 fdh-cli update --dataset gdp                # 智能增量更新
 fdh-cli update --dataset gdp --force        # 强制全量更新
 fdh-cli update --dataset gdp --start-date 2020-03-31 --end-date 2024-12-31  # 指定日期范围
+
+# 更新PPI宏观经济数据
+fdh-cli update --dataset ppi                # 智能增量更新
+fdh-cli update --dataset ppi --force        # 强制全量更新
+fdh-cli update --dataset ppi --start-date 2020-01-31 --end-date 2024-12-31  # 指定日期范围
 ```
 
 ### 高周期聚合管理

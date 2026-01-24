@@ -37,7 +37,8 @@
       "Bash(docker exec financedatahub-postgres-1 psql:*)",
       "Bash(docker ps:*)",
       "Bash(docker exec:*)",
-      "Bash(source:*)"
+      "Bash(source:*)",
+      "Bash(uv run python:*)"
     ],
     "deny": [],
     "ask": []

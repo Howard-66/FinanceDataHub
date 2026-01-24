@@ -84,3 +84,53 @@ COMMENT ON COLUMN cn_gdp.si IS '第二产业累计值（亿元）';
 COMMENT ON COLUMN cn_gdp.si_yoy IS '第二产业同比增速（%）';
 COMMENT ON COLUMN cn_gdp.ti IS '第三产业累计值（亿元）';
 COMMENT ON COLUMN cn_gdp.ti_yoy IS '第三产业同比增速（%）';
+
+-- 中国PPI数据表
+CREATE TABLE IF NOT EXISTS cn_ppi (
+    time TIMESTAMPTZ NOT NULL,                    -- 月末日期，如 2024-01-31
+    month VARCHAR(10) NOT NULL,                   -- 月份（YYYYMM格式）
+    ppi_yoy DECIMAL(10,4),                        -- PPI：全部工业品：当月同比
+    ppi_mp_yoy DECIMAL(10,4),                     -- PPI：生产资料：当月同比
+    ppi_mp_qm_yoy DECIMAL(10,4),                  -- PPI：生产资料：采掘业：当月同比
+    ppi_mp_rm_yoy DECIMAL(10,4),                  -- PPI：生产资料：原料业：当月同比
+    ppi_mp_p_yoy DECIMAL(10,4),                   -- PPI：生产资料：加工业：当月同比
+    ppi_cg_yoy DECIMAL(10,4),                     -- PPI：生活资料：当月同比
+    ppi_cg_f_yoy DECIMAL(10,4),                   -- PPI：生活资料：食品类：当月同比
+    ppi_cg_c_yoy DECIMAL(10,4),                   -- PPI：生活资料：衣着类：当月同比
+    ppi_cg_adu_yoy DECIMAL(10,4),                 -- PPI：生活资料：一般日用品类：当月同比
+    ppi_cg_dcg_yoy DECIMAL(10,4),                 -- PPI：生活资料：耐用消费品类：当月同比
+    ppi_mom DECIMAL(10,4),                        -- PPI：全部工业品：环比
+    ppi_mp_mom DECIMAL(10,4),                     -- PPI：生产资料：环比
+    ppi_mp_qm_mom DECIMAL(10,4),                  -- PPI：生产资料：采掘业：环比
+    ppi_mp_rm_mom DECIMAL(10,4),                  -- PPI：生产资料：原料业：环比
+    ppi_mp_p_mom DECIMAL(10,4),                   -- PPI：生产资料：加工业：环比
+    ppi_cg_mom DECIMAL(10,4),                     -- PPI：生活资料：环比
+    ppi_cg_f_mom DECIMAL(10,4),                   -- PPI：生活资料：食品类：环比
+    ppi_cg_c_mom DECIMAL(10,4),                   -- PPI：生活资料：衣着类：环比
+    ppi_cg_adu_mom DECIMAL(10,4),                 -- PPI：生活资料：一般日用品类：环比
+    ppi_cg_dcg_mom DECIMAL(10,4),                 -- PPI：生活资料：耐用消费品类：环比
+    ppi_accu DECIMAL(10,4),                       -- PPI：全部工业品：累计同比
+    ppi_mp_accu DECIMAL(10,4),                    -- PPI：生产资料：累计同比
+    ppi_mp_qm_accu DECIMAL(10,4),                 -- PPI：生产资料：采掘业：累计同比
+    ppi_mp_rm_accu DECIMAL(10,4),                 -- PPI：生产资料：原料业：累计同比
+    ppi_mp_p_accu DECIMAL(10,4),                  -- PPI：生产资料：加工业：累计同比
+    ppi_cg_accu DECIMAL(10,4),                    -- PPI：生活资料：累计同比
+    ppi_cg_f_accu DECIMAL(10,4),                  -- PPI：生活资料：食品类：累计同比
+    ppi_cg_c_accu DECIMAL(10,4),                  -- PPI：生活资料：衣着类：累计同比
+    ppi_cg_adu_accu DECIMAL(10,4),                -- PPI：生活资料：一般日用品类：累计同比
+    ppi_cg_dcg_accu DECIMAL(10,4),                -- PPI：生活资料：耐用消费品类：累计同比
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cn_ppi_month ON cn_ppi(month);
+
+COMMENT ON TABLE cn_ppi IS '中国PPI工业生产者出厂价格指数数据表';
+COMMENT ON COLUMN cn_ppi.time IS '月份末日期，格式如2024-01-31表示2024年1月末';
+COMMENT ON COLUMN cn_ppi.month IS '月份，格式如202401表示2024年1月';
+COMMENT ON COLUMN cn_ppi.ppi_yoy IS 'PPI：全部工业品：当月同比（%）';
+COMMENT ON COLUMN cn_ppi.ppi_mp_yoy IS 'PPI：生产资料：当月同比（%）';
+COMMENT ON COLUMN cn_ppi.ppi_cg_yoy IS 'PPI：生活资料：当月同比（%）';
+COMMENT ON COLUMN cn_ppi.ppi_mom IS 'PPI：全部工业品：环比（%）';
+COMMENT ON COLUMN cn_ppi.ppi_accu IS 'PPI：全部工业品：累计同比（%）';

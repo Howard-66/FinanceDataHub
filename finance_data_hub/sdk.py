@@ -792,6 +792,45 @@ class FinanceDataHub:
         """
         return await self.ops.get_cn_gdp(start_date, end_date)
 
+    def get_cn_ppi(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国PPI工业生产者出厂价格指数数据（同步方法）
+
+        Args:
+            start_date: 开始日期（月份末日期格式，如 '2020-01-31' 表示2020年1月），None表示从最早开始
+            end_date: 结束日期（月份末日期格式，如 '2024-12-31' 表示2024年12月），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: PPI数据，包含 time, month 及所有PPI指标字段
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_cn_ppi('2020-01-31', '2024-12-31')
+            >>> print(data)
+        """
+        return asyncio.run(self.get_cn_ppi_async(start_date, end_date))
+
+    async def get_cn_ppi_async(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国PPI工业生产者出厂价格指数数据（异步方法）
+
+        Args:
+            start_date: 开始日期（月份末日期格式，如 '2020-01-31'），None表示从最早开始
+            end_date: 结束日期（月份末日期格式，如 '2024-12-31'），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: PPI数据
+        """
+        return await self.ops.get_cn_ppi(start_date, end_date)
+
     # ============================================================================
     # 资源管理
     # ============================================================================

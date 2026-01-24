@@ -26,6 +26,7 @@ from finance_data_hub.providers.schema import (
     MinuteDataSchema,
     DailyBasicSchema,
     CNGDPSchema,
+    CNPPISchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -1404,4 +1405,119 @@ class TushareProvider(BaseDataProvider):
         df = df.sort_values("time").reset_index(drop=True)
 
         logger.info(f"Fetched {len(df)} GDP records")
+        return df
+
+    def _convert_month_to_date(self, month: str) -> pd.Timestamp:
+        """
+        将YYYYMM格式转换为月份末日期
+
+        Args:
+            month: 月份字符串，如 "202401", "202412"
+
+        Returns:
+            pd.Timestamp: 月份末日期
+        """
+        # 解析月份格式 (YYYYMM)
+        year = int(month[:4])
+        m = int(month[4:6])
+
+        # 计算该月最后一天
+        if m == 12:
+            return pd.Timestamp(year, 12, 31)
+        else:
+            return pd.Timestamp(year, m + 1, 1) - pd.Timedelta(days=1)
+
+    def get_ppi_data(
+        self,
+        m: Optional[str] = None,
+        start_m: Optional[str] = None,
+        end_m: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取中国PPI工业生产者出厂价格指数数据
+
+        Args:
+            m: 月份（YYYYMM格式），支持多个月份逗号分隔
+            start_m: 开始月份
+            end_m: 结束月份
+
+        Returns:
+            pd.DataFrame: 标准格式的PPI数据，包含time（月份末日期）和month字段
+        """
+        logger.info(
+            f"Fetching PPI data (m={m}, start_m={start_m}, end_m={end_m})"
+        )
+
+        # 构建参数
+        kwargs = {}
+        if m:
+            kwargs["m"] = m
+        if start_m:
+            kwargs["start_m"] = start_m
+        if end_m:
+            kwargs["end_m"] = end_m
+
+        # 调用Tushare API
+        df = self._call_api(
+            "cn_ppi",
+            fields="month,ppi_yoy,ppi_mp_yoy,ppi_mp_qm_yoy,ppi_mp_rm_yoy,ppi_mp_p_yoy,"
+                   "ppi_cg_yoy,ppi_cg_f_yoy,ppi_cg_c_yoy,ppi_cg_adu_yoy,ppi_cg_dcg_yoy,"
+                   "ppi_mom,ppi_mp_mom,ppi_mp_qm_mom,ppi_mp_rm_mom,ppi_mp_p_mom,"
+                   "ppi_cg_mom,ppi_cg_f_mom,ppi_cg_c_mom,ppi_cg_adu_mom,ppi_cg_dcg_mom,"
+                   "ppi_accu,ppi_mp_accu,ppi_mp_qm_accu,ppi_mp_rm_accu,ppi_mp_p_accu,"
+                   "ppi_cg_accu,ppi_cg_f_accu,ppi_cg_c_accu,ppi_cg_adu_accu,ppi_cg_dcg_accu",
+            **kwargs
+        )
+
+        if df.empty:
+            logger.warning("No PPI data returned from Tushare")
+            return pd.DataFrame(columns=CNPPISchema.get_required_columns())
+
+        # 将month转换为月份末日期（time字段）
+        df["time"] = df["month"].apply(self._convert_month_to_date)
+
+        # 列名映射
+        column_mapping = {
+            "month": "month",
+            "ppi_yoy": "ppi_yoy",
+            "ppi_mp_yoy": "ppi_mp_yoy",
+            "ppi_mp_qm_yoy": "ppi_mp_qm_yoy",
+            "ppi_mp_rm_yoy": "ppi_mp_rm_yoy",
+            "ppi_mp_p_yoy": "ppi_mp_p_yoy",
+            "ppi_cg_yoy": "ppi_cg_yoy",
+            "ppi_cg_f_yoy": "ppi_cg_f_yoy",
+            "ppi_cg_c_yoy": "ppi_cg_c_yoy",
+            "ppi_cg_adu_yoy": "ppi_cg_adu_yoy",
+            "ppi_cg_dcg_yoy": "ppi_cg_dcg_yoy",
+            "ppi_mom": "ppi_mom",
+            "ppi_mp_mom": "ppi_mp_mom",
+            "ppi_mp_qm_mom": "ppi_mp_qm_mom",
+            "ppi_mp_rm_mom": "ppi_mp_rm_mom",
+            "ppi_mp_p_mom": "ppi_mp_p_mom",
+            "ppi_cg_mom": "ppi_cg_mom",
+            "ppi_cg_f_mom": "ppi_cg_f_mom",
+            "ppi_cg_c_mom": "ppi_cg_c_mom",
+            "ppi_cg_adu_mom": "ppi_cg_adu_mom",
+            "ppi_cg_dcg_mom": "ppi_cg_dcg_mom",
+            "ppi_accu": "ppi_accu",
+            "ppi_mp_accu": "ppi_mp_accu",
+            "ppi_mp_qm_accu": "ppi_mp_qm_accu",
+            "ppi_mp_rm_accu": "ppi_mp_rm_accu",
+            "ppi_mp_p_accu": "ppi_mp_p_accu",
+            "ppi_cg_accu": "ppi_cg_accu",
+            "ppi_cg_f_accu": "ppi_cg_f_accu",
+            "ppi_cg_c_accu": "ppi_cg_c_accu",
+            "ppi_cg_adu_accu": "ppi_cg_adu_accu",
+            "ppi_cg_dcg_accu": "ppi_cg_dcg_accu",
+        }
+
+        df = convert_to_standard_columns(df, column_mapping)
+
+        # 验证数据格式
+        df = validate_dataframe(df, CNPPISchema, provider_name=self.name)
+
+        # 按时间排序
+        df = df.sort_values("time").reset_index(drop=True)
+
+        logger.info(f"Fetched {len(df)} PPI records")
         return df
