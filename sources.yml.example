@@ -79,6 +79,21 @@ routing_strategy:
       providers: [xtquant]
       fallback: false
 
+  # 宏观经济数据路由
+  macro:
+    gdp:
+      providers: [tushare]
+      fallback: false
+    ppi:
+      providers: [tushare]
+      fallback: false
+    m:
+      providers: [tushare]
+      fallback: false
+    pmi:
+      providers: [tushare]
+      fallback: false
+
 # 故障转移配置
 failover:
   enabled: true

@@ -28,6 +28,7 @@ from finance_data_hub.providers.schema import (
     CNGDPSchema,
     CNPPISchema,
     CNMSchema,
+    CNPMISchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -1590,4 +1591,101 @@ class TushareProvider(BaseDataProvider):
         df = df.sort_values("time").reset_index(drop=True)
 
         logger.info(f"Fetched {len(df)} M records")
+        return df
+
+    def get_pmi_data(
+        self,
+        m: Optional[str] = None,
+        start_m: Optional[str] = None,
+        end_m: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取中国PMI采购经理人指数数据
+
+        Args:
+            m: 月份（YYYYMM格式），支持多个月份逗号分隔
+            start_m: 开始月份
+            end_m: 结束月份
+
+        Returns:
+            pd.DataFrame: 标准格式的PMI数据，包含time（月份末日期）和month字段
+        """
+        logger.info(
+            f"Fetching PMI data (m={m}, start_m={start_m}, end_m={end_m})"
+        )
+
+        # 构建参数
+        kwargs = {}
+        if m:
+            kwargs["m"] = m
+        if start_m:
+            kwargs["start_m"] = start_m
+        if end_m:
+            kwargs["end_m"] = end_m
+
+        # 调用Tushare API
+        df = self._call_api(
+            "cn_pmi",
+            fields="month,pmi010000,pmi010100,pmi010200,pmi010300,pmi010400,pmi010500,"
+                   "pmi010600,pmi010700,pmi010800,pmi010900,pmi011000,pmi011100,"
+                   "pmi011200,pmi011300,pmi011400,pmi011500,pmi011600,pmi011700,"
+                   "pmi011800,pmi011900,pmi012000,pmi020100,pmi020200,pmi020300,"
+                   "pmi020400,pmi020500,pmi020600,pmi020700,pmi020800,pmi020900,"
+                   "pmi021000,pmi030000",
+            **kwargs
+        )
+
+        if df.empty:
+            logger.warning("No PMI data returned from Tushare")
+            return pd.DataFrame(columns=CNPMISchema.get_required_columns())
+
+        # 将month转换为月份末日期（time字段）- 复用PPI的转换方法
+        df["time"] = df["month"].apply(self._convert_month_to_date)
+
+        # 列名映射（全部字段）
+        column_mapping = {
+            "month": "month",
+            "pmi010000": "pmi010000",
+            "pmi010100": "pmi010100",
+            "pmi010200": "pmi010200",
+            "pmi010300": "pmi010300",
+            "pmi010400": "pmi010400",
+            "pmi010500": "pmi010500",
+            "pmi010600": "pmi010600",
+            "pmi010700": "pmi010700",
+            "pmi010800": "pmi010800",
+            "pmi010900": "pmi010900",
+            "pmi011000": "pmi011000",
+            "pmi011100": "pmi011100",
+            "pmi011200": "pmi011200",
+            "pmi011300": "pmi011300",
+            "pmi011400": "pmi011400",
+            "pmi011500": "pmi011500",
+            "pmi011600": "pmi011600",
+            "pmi011700": "pmi011700",
+            "pmi011800": "pmi011800",
+            "pmi011900": "pmi011900",
+            "pmi012000": "pmi012000",
+            "pmi020100": "pmi020100",
+            "pmi020200": "pmi020200",
+            "pmi020300": "pmi020300",
+            "pmi020400": "pmi020400",
+            "pmi020500": "pmi020500",
+            "pmi020600": "pmi020600",
+            "pmi020700": "pmi020700",
+            "pmi020800": "pmi020800",
+            "pmi020900": "pmi020900",
+            "pmi021000": "pmi021000",
+            "pmi030000": "pmi030000",
+        }
+
+        df = convert_to_standard_columns(df, column_mapping)
+
+        # 验证数据格式
+        df = validate_dataframe(df, CNPMISchema, provider_name=self.name)
+
+        # 按时间排序
+        df = df.sort_values("time").reset_index(drop=True)
+
+        logger.info(f"Fetched {len(df)} PMI records")
         return df

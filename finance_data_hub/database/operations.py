@@ -1413,3 +1413,152 @@ class DataOperations:
 
         data = pd.DataFrame([row._asdict() for row in rows])
         return data
+
+    async def insert_cn_pmi_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入中国PMI数据
+
+        Args:
+            data: 包含PMI数据的DataFrame，包含time（月份末日期）和month字段
+            batch_size: 批处理大小
+
+        Returns:
+            int: 插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        insert_sql = """
+            INSERT INTO cn_pmi (
+                time, month, pmi010000, pmi010100, pmi010200, pmi010300, pmi010400,
+                pmi010500, pmi010600, pmi010700, pmi010800, pmi010900, pmi011000,
+                pmi011100, pmi011200, pmi011300, pmi011400, pmi011500, pmi011600,
+                pmi011700, pmi011800, pmi011900, pmi012000, pmi020100, pmi020200,
+                pmi020300, pmi020400, pmi020500, pmi020600, pmi020700, pmi020800,
+                pmi020900, pmi021000, pmi030000
+            )
+            VALUES (
+                :time, :month, :pmi010000, :pmi010100, :pmi010200, :pmi010300, :pmi010400,
+                :pmi010500, :pmi010600, :pmi010700, :pmi010800, :pmi010900, :pmi011000,
+                :pmi011100, :pmi011200, :pmi011300, :pmi011400, :pmi011500, :pmi011600,
+                :pmi011700, :pmi011800, :pmi011900, :pmi012000, :pmi020100, :pmi020200,
+                :pmi020300, :pmi020400, :pmi020500, :pmi020600, :pmi020700, :pmi020800,
+                :pmi020900, :pmi021000, :pmi030000
+            )
+            ON CONFLICT (time) DO UPDATE SET
+                month = EXCLUDED.month,
+                pmi010000 = EXCLUDED.pmi010000,
+                pmi010100 = EXCLUDED.pmi010100,
+                pmi010200 = EXCLUDED.pmi010200,
+                pmi010300 = EXCLUDED.pmi010300,
+                pmi010400 = EXCLUDED.pmi010400,
+                pmi010500 = EXCLUDED.pmi010500,
+                pmi010600 = EXCLUDED.pmi010600,
+                pmi010700 = EXCLUDED.pmi010700,
+                pmi010800 = EXCLUDED.pmi010800,
+                pmi010900 = EXCLUDED.pmi010900,
+                pmi011000 = EXCLUDED.pmi011000,
+                pmi011100 = EXCLUDED.pmi011100,
+                pmi011200 = EXCLUDED.pmi011200,
+                pmi011300 = EXCLUDED.pmi011300,
+                pmi011400 = EXCLUDED.pmi011400,
+                pmi011500 = EXCLUDED.pmi011500,
+                pmi011600 = EXCLUDED.pmi011600,
+                pmi011700 = EXCLUDED.pmi011700,
+                pmi011800 = EXCLUDED.pmi011800,
+                pmi011900 = EXCLUDED.pmi011900,
+                pmi012000 = EXCLUDED.pmi012000,
+                pmi020100 = EXCLUDED.pmi020100,
+                pmi020200 = EXCLUDED.pmi020200,
+                pmi020300 = EXCLUDED.pmi020300,
+                pmi020400 = EXCLUDED.pmi020400,
+                pmi020500 = EXCLUDED.pmi020500,
+                pmi020600 = EXCLUDED.pmi020600,
+                pmi020700 = EXCLUDED.pmi020700,
+                pmi020800 = EXCLUDED.pmi020800,
+                pmi020900 = EXCLUDED.pmi020900,
+                pmi021000 = EXCLUDED.pmi021000,
+                pmi030000 = EXCLUDED.pmi030000,
+                updated_at = NOW()
+        """
+
+        total_inserted = 0
+
+        for i in range(0, len(data), batch_size):
+            batch = data.iloc[i : i + batch_size]
+            records = batch.to_dict("records")
+
+            # 处理NaN值，转换为None；处理time字段为带时区的datetime
+            for record in records:
+                for key, value in record.items():
+                    if pd.isna(value):
+                        record[key] = None
+                    elif key == "time" or isinstance(value, pd.Timestamp):
+                        # 转换时间戳为带时区的Python datetime
+                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+
+            async with self.db_manager._engine.begin() as conn:
+                result = await conn.execute(text(insert_sql), records)
+                total_inserted += result.rowcount
+
+            logger.info(
+                f"Inserted batch {i // batch_size + 1}: "
+                f"{len(batch)} records (total: {total_inserted})"
+            )
+
+        logger.info(f"Total inserted {total_inserted} cn_pmi records")
+        return total_inserted
+
+    async def get_cn_pmi(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国PMI数据
+
+        Args:
+            start_date: 开始日期（月份末日期格式，如2020-01-31表示2020年1月）
+            end_date: 结束日期（月份末日期格式，如2024-12-31表示2024年12月）
+
+        Returns:
+            Optional[pd.DataFrame]: PMI数据，包含time, month及所有指标字段
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
+        # 构建查询条件
+        query = """
+            SELECT time, month, pmi010000, pmi010100, pmi010200, pmi010300, pmi010400,
+                   pmi010500, pmi010600, pmi010700, pmi010800, pmi010900, pmi011000,
+                   pmi011100, pmi011200, pmi011300, pmi011400, pmi011500, pmi011600,
+                   pmi011700, pmi011800, pmi011900, pmi012000, pmi020100, pmi020200,
+                   pmi020300, pmi020400, pmi020500, pmi020600, pmi020700, pmi020800,
+                   pmi020900, pmi021000, pmi030000
+            FROM cn_pmi
+            WHERE 1=1
+        """
+        params = {}
+
+        if start_dt:
+            query += " AND time >= :start_date"
+            params["start_date"] = start_dt
+
+        if end_dt:
+            query += " AND time <= :end_date"
+            params["end_date"] = end_dt
+
+        query += " ORDER BY time"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data

@@ -870,6 +870,45 @@ class FinanceDataHub:
         """
         return await self.ops.get_cn_m(start_date, end_date)
 
+    def get_cn_pmi(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国PMI采购经理人指数数据（同步方法）
+
+        Args:
+            start_date: 开始日期（月份末日期格式，如 '2020-01-31' 表示2020年1月），None表示从最早开始
+            end_date: 结束日期（月份末日期格式，如 '2024-12-31' 表示2024年12月），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: PMI数据，包含 time, month 及所有PMI指标字段（制造业PMI、非制造业PMI、综合PMI等32个指标）
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_cn_pmi('2020-01-31', '2024-12-31')
+            >>> print(data)
+        """
+        return asyncio.run(self.get_cn_pmi_async(start_date, end_date))
+
+    async def get_cn_pmi_async(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国PMI采购经理人指数数据（异步方法）
+
+        Args:
+            start_date: 开始日期（月份末日期格式，如 '2020-01-31'），None表示从最早开始
+            end_date: 结束日期（月份末日期格式，如 '2024-12-31'），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: PMI数据，包含32个PMI指标字段
+        """
+        return await self.ops.get_cn_pmi(start_date, end_date)
+
     # ============================================================================
     # 资源管理
     # ============================================================================

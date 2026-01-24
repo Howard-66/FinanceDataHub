@@ -155,6 +155,7 @@ def update(
       - gdp: 中国GDP宏观经济数据
       - ppi: 中国PPI工业生产者出厂价格指数数据
       - m: 中国货币供应量数据（M0、M1、M2）
+      - pmi: 中国PMI采购经理人指数数据
 
     更新策略:
       默认采用智能下载模式，系统会自动:
@@ -392,6 +393,30 @@ async def _run_smart_download(
                 console.print(f"[bold red]ERROR:[/bold red] 更新货币供应量数据失败: {str(e)}")
                 raise
 
+    # PMI 数据不需要 symbol，单独处理
+    if data_type == "pmi":
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - PMI是宏观经济数据，无需symbol")
+            console.print("  - 自动获取最新月份数据")
+            console.print("")
+
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            try:
+                count = await updater.update_pmi(
+                    start_date=None,  # 智能下载
+                    end_date=end_date,
+                    force_update=False,
+                )
+                if not quiet:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
+                else:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
+                return count
+            except Exception as e:
+                console.print(f"[bold red]ERROR:[/bold red] 更新PMI数据失败: {str(e)}")
+                raise
+
     if not quiet:
         console.print("[bold]智能下载策略:[/bold]")
         console.print("  - 自动检测symbol是否存在于数据库")
@@ -600,6 +625,30 @@ async def _run_force_update(
                 return count
             except Exception as e:
                 console.print(f"[bold red]ERROR:[/bold red] 更新货币供应量数据失败: {str(e)}")
+                raise
+
+    # PMI 数据不需要 symbol，单独处理
+    if data_type == "pmi":
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - PMI是宏观经济数据，无需symbol")
+            console.print("  - 使用指定的日期范围")
+            console.print("")
+
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            try:
+                count = await updater.update_pmi(
+                    start_date=start_date,
+                    end_date=end_date,
+                    force_update=True,
+                )
+                if not quiet:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
+                else:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
+                return count
+            except Exception as e:
+                console.print(f"[bold red]ERROR:[/bold red] 更新PMI数据失败: {str(e)}")
                 raise
 
     if not quiet:

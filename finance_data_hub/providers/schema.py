@@ -227,6 +227,49 @@ CNMSchema = DataFrameSchema(
 )
 
 
+# PMI数据 Schema
+CNPMISchema = DataFrameSchema(
+    name="cn_pmi",
+    description="中国PMI采购经理人指数数据",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "月份末日期"),
+        ColumnSchema("month", "object", True, "月份YYYYMM格式"),
+        ColumnSchema("pmi010000", "float64", True, "制造业PMI"),
+        ColumnSchema("pmi010100", "float64", True, "制造业PMI:大型企业"),
+        ColumnSchema("pmi010200", "float64", True, "制造业PMI:中型企业"),
+        ColumnSchema("pmi010300", "float64", True, "制造业PMI:小型企业"),
+        ColumnSchema("pmi010400", "float64", True, "制造业PMI:生产指数"),
+        ColumnSchema("pmi010500", "float64", True, "制造业PMI:新订单指数"),
+        ColumnSchema("pmi010600", "float64", True, "制造业PMI:供应商配送时间指数"),
+        ColumnSchema("pmi010700", "float64", True, "制造业PMI:原材料库存指数"),
+        ColumnSchema("pmi010800", "float64", True, "制造业PMI:从业人员指数"),
+        ColumnSchema("pmi010900", "float64", True, "制造业PMI:新出口订单"),
+        ColumnSchema("pmi011000", "float64", True, "制造业PMI:进口"),
+        ColumnSchema("pmi011100", "float64", True, "制造业PMI:采购量"),
+        ColumnSchema("pmi011200", "float64", True, "制造业PMI:主要原材料购进价格"),
+        ColumnSchema("pmi011300", "float64", True, "制造业PMI:出厂价格"),
+        ColumnSchema("pmi011400", "float64", True, "制造业PMI:产成品库存"),
+        ColumnSchema("pmi011500", "float64", True, "制造业PMI:在手订单"),
+        ColumnSchema("pmi011600", "float64", True, "制造业PMI:生产经营活动预期"),
+        ColumnSchema("pmi011700", "float64", True, "制造业PMI:装备制造业"),
+        ColumnSchema("pmi011800", "float64", True, "制造业PMI:高技术制造业"),
+        ColumnSchema("pmi011900", "float64", True, "制造业PMI:基础原材料制造业"),
+        ColumnSchema("pmi012000", "float64", True, "制造业PMI:消费品制造业"),
+        ColumnSchema("pmi020100", "float64", True, "非制造业PMI:商务活动"),
+        ColumnSchema("pmi020200", "float64", True, "非制造业PMI:新订单指数"),
+        ColumnSchema("pmi020300", "float64", True, "非制造业PMI:投入品价格指数"),
+        ColumnSchema("pmi020400", "float64", True, "非制造业PMI:销售价格指数"),
+        ColumnSchema("pmi020500", "float64", True, "非制造业PMI:从业人员指数"),
+        ColumnSchema("pmi020600", "float64", True, "非制造业PMI:业务活动预期指数"),
+        ColumnSchema("pmi020700", "float64", True, "非制造业PMI:新出口订单"),
+        ColumnSchema("pmi020800", "float64", True, "非制造业PMI:在手订单"),
+        ColumnSchema("pmi020900", "float64", True, "非制造业PMI:存货"),
+        ColumnSchema("pmi021000", "float64", True, "非制造业PMI:供应商配送时间"),
+        ColumnSchema("pmi030000", "float64", True, "中国综合PMI:产出指数"),
+    ],
+)
+
+
 # ===========================
 # 验证函数
 # ===========================

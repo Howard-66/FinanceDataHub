@@ -167,3 +167,78 @@ COMMENT ON COLUMN cn_m.m1_mom IS 'M1环比增速（%）';
 COMMENT ON COLUMN cn_m.m2 IS 'M2货币供应量（亿元）';
 COMMENT ON COLUMN cn_m.m2_yoy IS 'M2同比增速（%）';
 COMMENT ON COLUMN cn_m.m2_mom IS 'M2环比增速（%）';
+
+-- 中国PMI数据表
+CREATE TABLE IF NOT EXISTS cn_pmi (
+    time TIMESTAMPTZ NOT NULL,                    -- 月末日期，如 2024-01-31
+    month VARCHAR(10) NOT NULL,                   -- 月份（YYYYMM格式）
+    pmi010000 DECIMAL(10,4),                      -- 制造业PMI
+    pmi010100 DECIMAL(10,4),                      -- 制造业PMI:企业规模/大型企业
+    pmi010200 DECIMAL(10,4),                      -- 制造业PMI:企业规模/中型企业
+    pmi010300 DECIMAL(10,4),                      -- 制造业PMI:企业规模/小型企业
+    pmi010400 DECIMAL(10,4),                      -- 制造业PMI:构成指数/生产指数
+    pmi010401 DECIMAL(10,4),                      -- 制造业PMI:生产指数:大型企业
+    pmi010402 DECIMAL(10,4),                      -- 制造业PMI:生产指数:中型企业
+    pmi010403 DECIMAL(10,4),                      -- 制造业PMI:生产指数:小型企业
+    pmi010500 DECIMAL(10,4),                      -- 制造业PMI:新订单指数
+    pmi010501 DECIMAL(10,4),                      -- 制造业PMI:新订单指数:大型企业
+    pmi010502 DECIMAL(10,4),                      -- 制造业PMI:新订单指数:中型企业
+    pmi010503 DECIMAL(10,4),                      -- 制造业PMI:新订单指数:小型企业
+    pmi010600 DECIMAL(10,4),                      -- 制造业PMI:供应商配送时间指数
+    pmi010601 DECIMAL(10,4),                      -- 制造业PMI:供应商配送时间指数:大型企业
+    pmi010602 DECIMAL(10,4),                      -- 制造业PMI:供应商配送时间指数:中型企业
+    pmi010603 DECIMAL(10,4),                      -- 制造业PMI:供应商配送时间指数:小型企业
+    pmi010700 DECIMAL(10,4),                      -- 制造业PMI:原材料库存指数
+    pmi010701 DECIMAL(10,4),                      -- 制造业PMI:原材料库存指数:大型企业
+    pmi010702 DECIMAL(10,4),                      -- 制造业PMI:原材料库存指数:中型企业
+    pmi010703 DECIMAL(10,4),                      -- 制造业PMI:原材料库存指数:小型企业
+    pmi010800 DECIMAL(10,4),                      -- 制造业PMI:从业人员指数
+    pmi010801 DECIMAL(10,4),                      -- 制造业PMI:从业人员指数:大型企业
+    pmi010802 DECIMAL(10,4),                      -- 制造业PMI:从业人员指数:中型企业
+    pmi010803 DECIMAL(10,4),                      -- 制造业PMI:从业人员指数:小型企业
+    pmi010900 DECIMAL(10,4),                      -- 制造业PMI:新出口订单
+    pmi011000 DECIMAL(10,4),                      -- 制造业PMI:进口
+    pmi011100 DECIMAL(10,4),                      -- 制造业PMI:采购量
+    pmi011200 DECIMAL(10,4),                      -- 制造业PMI:主要原材料购进价格
+    pmi011300 DECIMAL(10,4),                      -- 制造业PMI:出厂价格
+    pmi011400 DECIMAL(10,4),                      -- 制造业PMI:产成品库存
+    pmi011500 DECIMAL(10,4),                      -- 制造业PMI:在手订单
+    pmi011600 DECIMAL(10,4),                      -- 制造业PMI:生产经营活动预期
+    pmi011700 DECIMAL(10,4),                      -- 制造业PMI:分行业/装备制造业
+    pmi011800 DECIMAL(10,4),                      -- 制造业PMI:分行业/高技术制造业
+    pmi011900 DECIMAL(10,4),                      -- 制造业PMI:分行业/基础原材料制造业
+    pmi012000 DECIMAL(10,4),                      -- 制造业PMI:分行业/消费品制造业
+    pmi020100 DECIMAL(10,4),                      -- 非制造业PMI:商务活动
+    pmi020101 DECIMAL(10,4),                      -- 非制造业PMI:商务活动:建筑业
+    pmi020102 DECIMAL(10,4),                      -- 非制造业PMI:商务活动:服务业
+    pmi020200 DECIMAL(10,4),                      -- 非制造业PMI:新订单指数
+    pmi020201 DECIMAL(10,4),                      -- 非制造业PMI:新订单指数:建筑业
+    pmi020202 DECIMAL(10,4),                      -- 非制造业PMI:新订单指数:服务业
+    pmi020300 DECIMAL(10,4),                      -- 非制造业PMI:投入品价格指数
+    pmi020301 DECIMAL(10,4),                      -- 非制造业PMI:投入品价格指数:建筑业
+    pmi020302 DECIMAL(10,4),                      -- 非制造业PMI:投入品价格指数:服务业
+    pmi020400 DECIMAL(10,4),                      -- 非制造业PMI:销售价格指数
+    pmi020401 DECIMAL(10,4),                      -- 非制造业PMI:销售价格指数:建筑业
+    pmi020402 DECIMAL(10,4),                      -- 非制造业PMI:销售价格指数:服务业
+    pmi020500 DECIMAL(10,4),                      -- 非制造业PMI:从业人员指数
+    pmi020501 DECIMAL(10,4),                      -- 非制造业PMI:从业人员指数:建筑业
+    pmi020502 DECIMAL(10,4),                      -- 非制造业PMI:从业人员指数:服务业
+    pmi020600 DECIMAL(10,4),                      -- 非制造业PMI:业务活动预期指数
+    pmi020601 DECIMAL(10,4),                      -- 非制造业PMI:业务活动预期指数:建筑业
+    pmi020602 DECIMAL(10,4),                      -- 非制造业PMI:业务活动预期指数:服务业
+    pmi020700 DECIMAL(10,4),                      -- 非制造业PMI:新出口订单
+    pmi020800 DECIMAL(10,4),                      -- 非制造业PMI:在手订单
+    pmi020900 DECIMAL(10,4),                      -- 非制造业PMI:存货
+    pmi021000 DECIMAL(10,4),                      -- 非制造业PMI:供应商配送时间
+    pmi030000 DECIMAL(10,4),                      -- 中国综合PMI:产出指数
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cn_pmi_month ON cn_pmi(month);
+
+COMMENT ON TABLE cn_pmi IS '中国PMI采购经理人指数数据表';
+COMMENT ON COLUMN cn_pmi.time IS '月份末日期，格式如2024-01-31表示2024年1月末';
+COMMENT ON COLUMN cn_pmi.month IS '月份，格式如202401表示2024年1月';
+COMMENT ON COLUMN cn_pmi.pmi010000 IS '制造业PMI';
