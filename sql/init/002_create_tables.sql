@@ -134,3 +134,36 @@ COMMENT ON COLUMN cn_ppi.ppi_mp_yoy IS 'PPI：生产资料：当月同比（%）
 COMMENT ON COLUMN cn_ppi.ppi_cg_yoy IS 'PPI：生活资料：当月同比（%）';
 COMMENT ON COLUMN cn_ppi.ppi_mom IS 'PPI：全部工业品：环比（%）';
 COMMENT ON COLUMN cn_ppi.ppi_accu IS 'PPI：全部工业品：累计同比（%）';
+
+-- 中国货币供应量数据表
+CREATE TABLE IF NOT EXISTS cn_m (
+    time TIMESTAMPTZ NOT NULL,                    -- 月末日期，如 2024-01-31
+    month VARCHAR(10) NOT NULL,                   -- 月份（YYYYMM格式）
+    m0 DECIMAL(20,2),                             -- M0（亿元）
+    m0_yoy DECIMAL(10,4),                         -- M0同比（%）
+    m0_mom DECIMAL(10,4),                         -- M0环比（%）
+    m1 DECIMAL(20,2),                             -- M1（亿元）
+    m1_yoy DECIMAL(10,4),                         -- M1同比（%）
+    m1_mom DECIMAL(10,4),                         -- M1环比（%）
+    m2 DECIMAL(20,2),                             -- M2（亿元）
+    m2_yoy DECIMAL(10,4),                         -- M2同比（%）
+    m2_mom DECIMAL(10,4),                         -- M2环比（%）
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cn_m_month ON cn_m(month);
+
+COMMENT ON TABLE cn_m IS '中国货币供应量数据表 - 存储M0、M1、M2月度数据';
+COMMENT ON COLUMN cn_m.time IS '月份末日期，格式如2024-01-31表示2024年1月末';
+COMMENT ON COLUMN cn_m.month IS '月份，格式如202401表示2024年1月';
+COMMENT ON COLUMN cn_m.m0 IS 'M0货币供应量（亿元）';
+COMMENT ON COLUMN cn_m.m0_yoy IS 'M0同比增速（%）';
+COMMENT ON COLUMN cn_m.m0_mom IS 'M0环比增速（%）';
+COMMENT ON COLUMN cn_m.m1 IS 'M1货币供应量（亿元）';
+COMMENT ON COLUMN cn_m.m1_yoy IS 'M1同比增速（%）';
+COMMENT ON COLUMN cn_m.m1_mom IS 'M1环比增速（%）';
+COMMENT ON COLUMN cn_m.m2 IS 'M2货币供应量（亿元）';
+COMMENT ON COLUMN cn_m.m2_yoy IS 'M2同比增速（%）';
+COMMENT ON COLUMN cn_m.m2_mom IS 'M2环比增速（%）';

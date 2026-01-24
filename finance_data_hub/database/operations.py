@@ -1302,3 +1302,114 @@ class DataOperations:
 
         data = pd.DataFrame([row._asdict() for row in rows])
         return data
+
+    async def insert_cn_m_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入中国货币供应量数据
+
+        Args:
+            data: 包含货币供应量数据的DataFrame，包含time（月份末日期）和month字段
+            batch_size: 批处理大小
+
+        Returns:
+            int: 插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        insert_sql = """
+            INSERT INTO cn_m (
+                time, month, m0, m0_yoy, m0_mom, m1, m1_yoy, m1_mom, m2, m2_yoy, m2_mom
+            )
+            VALUES (
+                :time, :month, :m0, :m0_yoy, :m0_mom, :m1, :m1_yoy, :m1_mom, :m2, :m2_yoy, :m2_mom
+            )
+            ON CONFLICT (time) DO UPDATE SET
+                month = EXCLUDED.month,
+                m0 = EXCLUDED.m0,
+                m0_yoy = EXCLUDED.m0_yoy,
+                m0_mom = EXCLUDED.m0_mom,
+                m1 = EXCLUDED.m1,
+                m1_yoy = EXCLUDED.m1_yoy,
+                m1_mom = EXCLUDED.m1_mom,
+                m2 = EXCLUDED.m2,
+                m2_yoy = EXCLUDED.m2_yoy,
+                m2_mom = EXCLUDED.m2_mom,
+                updated_at = NOW()
+        """
+
+        total_inserted = 0
+
+        for i in range(0, len(data), batch_size):
+            batch = data.iloc[i : i + batch_size]
+            records = batch.to_dict("records")
+
+            # 处理NaN值，转换为None；处理time字段为带时区的datetime
+            for record in records:
+                for key, value in record.items():
+                    if pd.isna(value):
+                        record[key] = None
+                    elif key == "time" or isinstance(value, pd.Timestamp):
+                        # 转换时间戳为带时区的Python datetime
+                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+
+            async with self.db_manager._engine.begin() as conn:
+                result = await conn.execute(text(insert_sql), records)
+                total_inserted += result.rowcount
+
+            logger.info(
+                f"Inserted batch {i // batch_size + 1}: "
+                f"{len(batch)} records (total: {total_inserted})"
+            )
+
+        logger.info(f"Total inserted {total_inserted} cn_m records")
+        return total_inserted
+
+    async def get_cn_m(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国货币供应量数据
+
+        Args:
+            start_date: 开始日期（月份末日期格式，如2020-01-31表示2020年1月）
+            end_date: 结束日期（月份末日期格式，如2024-12-31表示2024年12月）
+
+        Returns:
+            Optional[pd.DataFrame]: 货币供应量数据，包含time, month及所有指标字段
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
+        # 构建查询条件
+        query = """
+            SELECT time, month, m0, m0_yoy, m0_mom, m1, m1_yoy, m1_mom, m2, m2_yoy, m2_mom
+            FROM cn_m
+            WHERE 1=1
+        """
+        params = {}
+
+        if start_dt:
+            query += " AND time >= :start_date"
+            params["start_date"] = start_dt
+
+        if end_dt:
+            query += " AND time <= :end_date"
+            params["end_date"] = end_dt
+
+        query += " ORDER BY time"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data

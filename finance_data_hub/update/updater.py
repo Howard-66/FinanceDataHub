@@ -612,6 +612,75 @@ class DataUpdater:
             logger.exception("Failed to update PPI data")
             raise
 
+    async def update_m(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+    ) -> int:
+        """
+        更新中国货币供应量数据
+
+        Args:
+            start_date: 开始日期（月份末日期格式，如2020-01-31表示2020年1月），None表示智能下载
+            end_date: 结束日期，None表示到最新
+            force_update: 是否强制更新（忽略数据库状态）
+
+        Returns:
+            int: 更新的记录数
+        """
+        # 确定日期范围
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+        logger.info(
+            f"Updating M data from {start_date or 'smart'} to {end_date} (force={force_update})"
+        )
+
+        try:
+            # 智能下载逻辑：确定实际起始日期
+            actual_start_date = start_date
+
+            if not force_update and not start_date:
+                # 查询数据库最新记录（cn_m表没有symbol列，使用专用方法）
+                latest_date = await self.data_ops.get_latest_data_date_no_symbol("cn_m")
+
+                if latest_date:
+                    # 有记录，计算下一个月第一天
+                    next_month = latest_date + timedelta(days=1)
+                    actual_start_date = next_month.strftime("%Y-%m-%d")
+                    if actual_start_date > end_date:
+                        logger.info("M data is already up to date")
+                        return 0
+                    logger.debug(f"Smart incremental: M from {actual_start_date}")
+                else:
+                    # 没有记录，智能下载模式：传None让API获取全量数据
+                    actual_start_date = None
+                    logger.info("Smart download: fetching full M history")
+
+            # 从路由器获取M数据
+            data = self.router.route(
+                asset_class="macro",  # M属于宏观经济数据
+                data_type="m",
+                method_name="get_m_data",
+                start_m=actual_start_date,
+                end_m=end_date,
+            )
+
+            if data is None or data.empty:
+                logger.warning("No M data received")
+                return 0
+
+            # 插入数据库
+            inserted_count = await self.data_ops.insert_cn_m_batch(data)
+
+            logger.info(f"Updated {inserted_count} M records")
+            return inserted_count
+
+        except Exception as e:
+            logger.exception("Failed to update M data")
+            raise
+
     async def close(self) -> None:
         """关闭资源"""
         if self.db_manager:

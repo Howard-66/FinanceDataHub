@@ -207,6 +207,26 @@ CNPPISchema = DataFrameSchema(
 )
 
 
+# 货币供应量数据 Schema
+CNMSchema = DataFrameSchema(
+    name="cn_m",
+    description="中国货币供应量数据",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "月份末日期"),
+        ColumnSchema("month", "object", True, "月份YYYYMM格式"),
+        ColumnSchema("m0", "float64", True, "M0货币供应量（亿元）"),
+        ColumnSchema("m0_yoy", "float64", True, "M0同比（%）"),
+        ColumnSchema("m0_mom", "float64", True, "M0环比（%）"),
+        ColumnSchema("m1", "float64", True, "M1货币供应量（亿元）"),
+        ColumnSchema("m1_yoy", "float64", True, "M1同比（%）"),
+        ColumnSchema("m1_mom", "float64", True, "M1环比（%）"),
+        ColumnSchema("m2", "float64", True, "M2货币供应量（亿元）"),
+        ColumnSchema("m2_yoy", "float64", True, "M2同比（%）"),
+        ColumnSchema("m2_mom", "float64", True, "M2环比（%）"),
+    ],
+)
+
+
 # ===========================
 # 验证函数
 # ===========================

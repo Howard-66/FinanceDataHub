@@ -831,6 +831,45 @@ class FinanceDataHub:
         """
         return await self.ops.get_cn_ppi(start_date, end_date)
 
+    def get_cn_m(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国货币供应量数据M0、M1、M2（同步方法）
+
+        Args:
+            start_date: 开始日期（月份末日期格式，如 '2020-01-31' 表示2020年1月），None表示从最早开始
+            end_date: 结束日期（月份末日期格式，如 '2024-12-31' 表示2024年12月），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 货币供应量数据，包含 time, month 及所有指标字段
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_cn_m('2020-01-31', '2024-12-31')
+            >>> print(data)
+        """
+        return asyncio.run(self.get_cn_m_async(start_date, end_date))
+
+    async def get_cn_m_async(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取中国货币供应量数据M0、M1、M2（异步方法）
+
+        Args:
+            start_date: 开始日期（月份末日期格式，如 '2020-01-31'），None表示从最早开始
+            end_date: 结束日期（月份末日期格式，如 '2024-12-31'），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 货币供应量数据
+        """
+        return await self.ops.get_cn_m(start_date, end_date)
+
     # ============================================================================
     # 资源管理
     # ============================================================================
