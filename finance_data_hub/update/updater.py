@@ -750,6 +750,85 @@ class DataUpdater:
             logger.exception("Failed to update PMI data")
             raise
 
+    async def update_index_dailybasic(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+    ) -> int:
+        """
+        更新大盘指数每日指标数据
+
+        支持的指数：上证综指（000001.SH）、深证成指（399001.SZ）、上证50（000016.SH）、
+        中证500（000905.SH）、中小板指（399005.SZ）、创业板指（399006.SZ）
+
+        Args:
+            ts_code: 指数代码，None表示所有支持的指数
+            start_date: 开始日期（YYYY-MM-DD格式），None表示智能下载
+            end_date: 结束日期，None表示到最新
+            force_update: 是否强制更新（忽略数据库状态）
+
+        Returns:
+            int: 更新的记录数
+        """
+        # 确定日期范围
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+        logger.info(
+            f"Updating index_dailybasic for {ts_code or 'all indexes'} from {start_date or 'smart'} to {end_date} (force={force_update})"
+        )
+
+        try:
+            # 智能下载逻辑：确定实际起始日期
+            actual_start_date = start_date
+
+            if not force_update and not start_date:
+                # 查询数据库最新记录
+                latest_date = await self.data_ops.get_latest_index_dailybasic_date(ts_code)
+
+                if latest_date:
+                    # 有记录，计算下一天
+                    next_day = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
+                    actual_start_date = next_day.strftime("%Y%m%d")  # API需要YYYYMMDD格式
+                    if actual_start_date > end_date.replace("-", ""):
+                        logger.info("Index dailybasic data is already up to date")
+                        return 0
+                    logger.debug(f"Smart incremental: index_dailybasic from {actual_start_date}")
+                else:
+                    # 没有记录，智能下载模式：传None让API获取全量数据
+                    actual_start_date = None
+                    logger.info("Smart download: fetching full index_dailybasic history")
+
+            # 准备API参数（日期格式需要YYYYMMDD）
+            api_start = actual_start_date.replace("-", "") if actual_start_date else None
+            api_end = end_date.replace("-", "") if end_date else None
+
+            # 从路由器获取数据
+            data = self.router.route(
+                asset_class="index",
+                data_type="dailybasic",
+                method_name="get_index_dailybasic",
+                ts_code=ts_code,
+                start_date=api_start,
+                end_date=api_end,
+            )
+
+            if data is None or data.empty:
+                logger.warning("No index_dailybasic data received")
+                return 0
+
+            # 插入数据库
+            inserted_count = await self.data_ops.insert_index_dailybasic_batch(data)
+
+            logger.info(f"Updated {inserted_count} index_dailybasic records")
+            return inserted_count
+
+        except Exception as e:
+            logger.exception("Failed to update index_dailybasic data")
+            raise
+
     async def close(self) -> None:
         """关闭资源"""
         if self.db_manager:

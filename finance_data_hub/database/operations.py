@@ -1562,3 +1562,191 @@ class DataOperations:
 
         data = pd.DataFrame([row._asdict() for row in rows])
         return data
+
+    async def insert_index_dailybasic_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入大盘指数每日指标数据
+
+        Args:
+            data: 包含指数每日指标数据的DataFrame
+            batch_size: 每批插入的记录数
+
+        Returns:
+            int: 成功插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        # 确保数据按日期排序
+        data = data.sort_values(["trade_date", "ts_code"]).reset_index(drop=True)
+
+        # 准备列名和占位符
+        columns = [
+            "ts_code",
+            "trade_date",
+            "total_mv",
+            "float_mv",
+            "total_share",
+            "float_share",
+            "free_share",
+            "turnover_rate",
+            "turnover_rate_f",
+            "pe",
+            "pe_ttm",
+            "pb",
+        ]
+
+        total_inserted = 0
+        n_batches = (len(data) + batch_size - 1) // batch_size
+
+        for i in range(n_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, len(data))
+            batch_df = data.iloc[start_idx:end_idx]
+
+            # 构建插入语句（使用ON CONFLICT处理重复数据）
+            placeholders = ", ".join([f":{col}" for col in columns])
+            insert_sql = f"""
+                INSERT INTO index_dailybasic (
+                    {", ".join(columns)},
+                    updated_at,
+                    created_at
+                ) VALUES (
+                    {placeholders},
+                    NOW(),
+                    NOW()
+                )
+                ON CONFLICT (ts_code, trade_date) DO UPDATE SET
+                    total_mv = EXCLUDED.total_mv,
+                    float_mv = EXCLUDED.float_mv,
+                    total_share = EXCLUDED.total_share,
+                    float_share = EXCLUDED.float_share,
+                    free_share = EXCLUDED.free_share,
+                    turnover_rate = EXCLUDED.turnover_rate,
+                    turnover_rate_f = EXCLUDED.turnover_rate_f,
+                    pe = EXCLUDED.pe,
+                    pe_ttm = EXCLUDED.pe_ttm,
+                    pb = EXCLUDED.pb,
+                    updated_at = NOW()
+            """
+
+            # 转换为字典列表
+            records = batch_df[columns].to_dict(orient="records")
+
+            # 转换日期为datetime对象（PostgreSQL TIMESTAMPTZ格式）
+            for record in records:
+                if isinstance(record["trade_date"], pd.Timestamp):
+                    record["trade_date"] = record["trade_date"].to_pydatetime()
+                elif isinstance(record["trade_date"], str):
+                    record["trade_date"] = pd.to_datetime(record["trade_date"]).to_pydatetime()
+
+            async with self.db_manager._engine.begin() as conn:
+                await conn.execute(text(insert_sql), records)
+
+            batch_inserted = len(batch_df)
+            total_inserted += batch_inserted
+
+        logger.info(f"Total inserted {total_inserted} index_dailybasic records")
+        return total_inserted
+
+    async def get_index_dailybasic(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取大盘指数每日指标数据
+
+        Args:
+            ts_code: 指数代码（如000001.SH），None表示所有指数
+            start_date: 开始日期（YYYY-MM-DD格式）
+            end_date: 结束日期（YYYY-MM-DD格式）
+
+        Returns:
+            Optional[pd.DataFrame]: 指数每日指标数据
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
+        # 构建查询条件
+        query = """
+            SELECT ts_code, trade_date, total_mv, float_mv, total_share,
+                   float_share, free_share, turnover_rate, turnover_rate_f,
+                   pe, pe_ttm, pb
+            FROM index_dailybasic
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        if start_dt:
+            query += " AND trade_date >= :start_date"
+            params["start_date"] = start_dt
+
+        if end_dt:
+            query += " AND trade_date <= :end_date"
+            params["end_date"] = end_dt
+
+        query += " ORDER BY trade_date, ts_code"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_latest_index_dailybasic_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+        """
+        获取最新的大盘指数每日指标数据日期
+
+        Args:
+            ts_code: 指数代码（如000001.SH），None表示任意指数
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(trade_date) as latest_date
+            FROM index_dailybasic
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None
+
+    async def get_index_dailybasic_ts_codes(self) -> list:
+        """
+        获取所有已存储的指数代码列表
+
+        Returns:
+            list: 指数代码列表
+        """
+        query = "SELECT DISTINCT ts_code FROM index_dailybasic ORDER BY ts_code"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query))
+            rows = result.fetchall()
+
+        return [row.ts_code for row in rows]

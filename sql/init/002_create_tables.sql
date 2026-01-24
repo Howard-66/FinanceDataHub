@@ -242,3 +242,38 @@ COMMENT ON TABLE cn_pmi IS '中国PMI采购经理人指数数据表';
 COMMENT ON COLUMN cn_pmi.time IS '月份末日期，格式如2024-01-31表示2024年1月末';
 COMMENT ON COLUMN cn_pmi.month IS '月份，格式如202401表示2024年1月';
 COMMENT ON COLUMN cn_pmi.pmi010000 IS '制造业PMI';
+
+-- 大盘指数每日指标数据表
+CREATE TABLE IF NOT EXISTS index_dailybasic (
+    ts_code VARCHAR(20) NOT NULL,                   -- 指数代码，如 000001.SH（上证综指）
+    trade_date TIMESTAMPTZ NOT NULL,                -- 交易日期
+    total_mv DECIMAL(20,2),                         -- 当日总市值（元）
+    float_mv DECIMAL(20,2),                         -- 当日流通市值（元）
+    total_share DECIMAL(20,2),                      -- 当日总股本（股）
+    float_share DECIMAL(20,2),                      -- 当日流通股本（股）
+    free_share DECIMAL(20,2),                       -- 当日自由流通股本（股）
+    turnover_rate DECIMAL(10,4),                    -- 换手率
+    turnover_rate_f DECIMAL(10,4),                  -- 换手率(基于自由流通股本)
+    pe DECIMAL(10,4),                               -- 市盈率
+    pe_ttm DECIMAL(10,4),                           -- 市盈率TTM
+    pb DECIMAL(10,4),                               -- 市净率
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts_code, trade_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_index_dailybasic_trade_date ON index_dailybasic(trade_date);
+
+COMMENT ON TABLE index_dailybasic IS '大盘指数每日指标数据表 - 上证综指、深证成指、上证50、中证500、中小板指、创业板指';
+COMMENT ON COLUMN index_dailybasic.ts_code IS '指数代码，如 000001.SH（上证综指）';
+COMMENT ON COLUMN index_dailybasic.trade_date IS '交易日期';
+COMMENT ON COLUMN index_dailybasic.total_mv IS '当日总市值（元）';
+COMMENT ON COLUMN index_dailybasic.float_mv IS '当日流通市值（元）';
+COMMENT ON COLUMN index_dailybasic.total_share IS '当日总股本（股）';
+COMMENT ON COLUMN index_dailybasic.float_share IS '当日流通股本（股）';
+COMMENT ON COLUMN index_dailybasic.free_share IS '当日自由流通股本（股）';
+COMMENT ON COLUMN index_dailybasic.turnover_rate IS '换手率';
+COMMENT ON COLUMN index_dailybasic.turnover_rate_f IS '换手率(基于自由流通股本)';
+COMMENT ON COLUMN index_dailybasic.pe IS '市盈率';
+COMMENT ON COLUMN index_dailybasic.pe_ttm IS '市盈率TTM';
+COMMENT ON COLUMN index_dailybasic.pb IS '市净率';

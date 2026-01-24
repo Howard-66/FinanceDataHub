@@ -29,6 +29,7 @@ from finance_data_hub.providers.schema import (
     CNPPISchema,
     CNMSchema,
     CNPMISchema,
+    IndexDailybasicSchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -1689,3 +1690,189 @@ class TushareProvider(BaseDataProvider):
 
         logger.info(f"Fetched {len(df)} PMI records")
         return df
+
+    def get_index_dailybasic(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取大盘指数每日指标数据（自动处理Tushare 3000条记录限制）
+
+        当返回记录数等于3000时，自动继续获取更早的数据，确保获取完整历史数据。
+
+        目前只提供上证综指，深证成指，上证50，中证500，中小板指，创业板指的每日指标数据。
+
+        Args:
+            ts_code: 指数代码（如000001.SH上证综指），支持多值
+            trade_date: 交易日期（YYYY-MM-DD 或 YYYYMMDD格式），与start_date/end_date互斥
+            start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD格式）
+            end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD格式）
+
+        Returns:
+            pd.DataFrame: 标准格式的指数每日指标数据
+        """
+        logger.info(
+            f"Fetching index dailybasic data (ts_code={ts_code}, trade_date={trade_date}, "
+            f"start_date={start_date}, end_date={end_date})"
+        )
+
+        # 处理 trade_date 批量模式
+        if trade_date:
+            logger.info(f"Using trade_date batch mode for {trade_date}")
+            trade_date_clean = trade_date.replace("-", "")
+
+            df = self._call_api(
+                "index_dailybasic",
+                fields="ts_code,trade_date,total_mv,float_mv,total_share,"
+                       "float_share,free_share,turnover_rate,turnover_rate_f,"
+                       "pe,pe_ttm,pb",
+                trade_date=trade_date_clean,
+            )
+
+            if df.empty:
+                logger.warning(f"No data returned for trade_date={trade_date}")
+                return pd.DataFrame(columns=IndexDailybasicSchema.get_required_columns())
+
+            # 列名映射
+            column_mapping = {
+                "ts_code": "ts_code",
+                "trade_date": "trade_date",
+                "total_mv": "total_mv",
+                "float_mv": "float_mv",
+                "total_share": "total_share",
+                "float_share": "float_share",
+                "free_share": "free_share",
+                "turnover_rate": "turnover_rate",
+                "turnover_rate_f": "turnover_rate_f",
+                "pe": "pe",
+                "pe_ttm": "pe_ttm",
+                "pb": "pb",
+            }
+
+            df = convert_to_standard_columns(df, column_mapping)
+
+            # 转换时间格式
+            df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
+
+            # 验证数据格式
+            df = validate_dataframe(df, IndexDailybasicSchema, provider_name=self.name)
+
+            # 按时间和代码排序
+            df = df.sort_values(["trade_date", "ts_code"]).reset_index(drop=True)
+
+            logger.info(f"Fetched {len(df)} index dailybasic records for trade_date={trade_date}")
+            return df
+
+        # 日期范围模式：需要处理3000条记录限制
+        # 转换日期格式
+        if start_date:
+            start_date = start_date.replace("-", "")
+        if end_date:
+            end_date = end_date.replace("-", "")
+
+        # 构建参数
+        kwargs = {}
+        if ts_code:
+            kwargs["ts_code"] = ts_code
+
+        # Tushare API 记录限制常量
+        TUSHARE_MAX_RECORDS = 3000
+
+        # 记录所有批次的数据
+        all_dataframes = []
+        current_end_date = end_date
+        batch_count = 0
+        total_records = 0
+
+        while True:
+            batch_count += 1
+            logger.info(f"Batch {batch_count}: fetching data up to {current_end_date or 'latest'}")
+
+            # 构建当前批次的参数
+            batch_kwargs = kwargs.copy()
+            if start_date:
+                batch_kwargs["start_date"] = start_date
+            if current_end_date:
+                batch_kwargs["end_date"] = current_end_date.replace("-", "")
+
+            df = self._call_api(
+                "index_dailybasic",
+                fields="ts_code,trade_date,total_mv,float_mv,total_share,"
+                       "float_share,free_share,turnover_rate,turnover_rate_f,"
+                       "pe,pe_ttm,pb",
+                **batch_kwargs
+            )
+
+            if df.empty:
+                logger.info(f"Batch {batch_count}: No data returned, stopping")
+                break
+
+            # 列名映射
+            column_mapping = {
+                "ts_code": "ts_code",
+                "trade_date": "trade_date",
+                "total_mv": "total_mv",
+                "float_mv": "float_mv",
+                "total_share": "total_share",
+                "float_share": "float_share",
+                "free_share": "free_share",
+                "turnover_rate": "turnover_rate",
+                "turnover_rate_f": "turnover_rate_f",
+                "pe": "pe",
+                "pe_ttm": "pe_ttm",
+                "pb": "pb",
+            }
+
+            df = convert_to_standard_columns(df, column_mapping)
+
+            # 转换时间格式
+            df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
+
+            # 按时间和代码排序
+            df = df.sort_values(["trade_date", "ts_code"]).reset_index(drop=True)
+
+            batch_records = len(df)
+            total_records += batch_records
+            all_dataframes.append(df)
+
+            logger.info(f"Batch {batch_count}: Fetched {batch_records} records (total so far: {total_records})")
+
+            # 检查是否需要继续获取更早的数据
+            if batch_records == TUSHARE_MAX_RECORDS:
+                # 获取当前批次中最早的日期
+                earliest_date = df["trade_date"].min().date()
+                logger.info(f"Batch {batch_count}: Got {batch_records} records (max limit), fetching earlier data...")
+
+                # 计算新的结束日期（向前推1天）
+                from datetime import timedelta
+                new_end_date = earliest_date - timedelta(days=1)
+                current_end_date = new_end_date.strftime("%Y-%m-%d")
+
+                logger.info(f"Next batch will fetch up to {current_end_date}")
+                continue
+            else:
+                # 记录数少于3000，说明已经获取完所有数据
+                logger.info(f"Batch {batch_count}: Got {batch_records} records (< {TUSHARE_MAX_RECORDS}), all data fetched")
+                break
+
+        # 合并所有批次的数据
+        if not all_dataframes:
+            logger.warning("No index dailybasic data returned from Tushare")
+            return pd.DataFrame(columns=IndexDailybasicSchema.get_required_columns())
+
+        # 合并DataFrame
+        final_df = pd.concat(all_dataframes, ignore_index=True)
+
+        # 去重（如果批次间有重叠）
+        final_df = final_df.drop_duplicates(subset=["trade_date", "ts_code"]).sort_values(
+            ["trade_date", "ts_code"]
+        ).reset_index(drop=True)
+
+        # 验证数据格式
+        final_df = validate_dataframe(final_df, IndexDailybasicSchema, provider_name=self.name)
+
+        logger.info(f"Total fetched {len(final_df)} index dailybasic records in {batch_count} batch(es)")
+        return final_df

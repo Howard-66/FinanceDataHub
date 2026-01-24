@@ -270,6 +270,27 @@ CNPMISchema = DataFrameSchema(
 )
 
 
+# 大盘指数每日指标数据 Schema
+IndexDailybasicSchema = DataFrameSchema(
+    name="index_dailybasic",
+    description="大盘指数每日指标数据",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "指数代码，如000001.SH（上证综指）"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("total_mv", "float64", True, "当日总市值（元）"),
+        ColumnSchema("float_mv", "float64", True, "当日流通市值（元）"),
+        ColumnSchema("total_share", "float64", True, "当日总股本（股）"),
+        ColumnSchema("float_share", "float64", True, "当日流通股本（股）"),
+        ColumnSchema("free_share", "float64", True, "当日自由流通股本（股）"),
+        ColumnSchema("turnover_rate", "float64", True, "换手率"),
+        ColumnSchema("turnover_rate_f", "float64", True, "换手率(基于自由流通股本)"),
+        ColumnSchema("pe", "float64", True, "市盈率"),
+        ColumnSchema("pe_ttm", "float64", True, "市盈率TTM"),
+        ColumnSchema("pb", "float64", True, "市净率"),
+    ],
+)
+
+
 # ===========================
 # 验证函数
 # ===========================

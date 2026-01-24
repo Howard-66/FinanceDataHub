@@ -909,6 +909,49 @@ class FinanceDataHub:
         """
         return await self.ops.get_cn_pmi(start_date, end_date)
 
+    def get_index_dailybasic(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取大盘指数每日指标数据（同步方法）
+
+        Args:
+            ts_code: 指数代码（如 '000001.SH' 上证综指，'399001.SZ' 深证成指），None表示所有指数
+            start_date: 开始日期（YYYY-MM-DD格式），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 指数每日指标数据，包含 ts_code, trade_date, total_mv, float_mv, total_share, float_share, free_share, turnover_rate, turnover_rate_f, pe, pe_ttm, pb 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_index_dailybasic('000001.SH', '2024-01-01', '2024-12-31')
+            >>> print(data[['trade_date', 'total_mv', 'pe', 'pb']])
+        """
+        return asyncio.run(self.get_index_dailybasic_async(ts_code, start_date, end_date))
+
+    async def get_index_dailybasic_async(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取大盘指数每日指标数据（异步方法）
+
+        Args:
+            ts_code: 指数代码（如 '000001.SH' 上证综指），None表示所有指数
+            start_date: 开始日期（YYYY-MM-DD格式），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 指数每日指标数据
+        """
+        return await self.ops.get_index_dailybasic(ts_code, start_date, end_date)
+
     # ============================================================================
     # 资源管理
     # ============================================================================
