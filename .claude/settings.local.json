@@ -38,7 +38,11 @@
       "Bash(docker ps:*)",
       "Bash(docker exec:*)",
       "Bash(source:*)",
-      "Bash(uv run python:*)"
+      "Bash(uv run python:*)",
+      "Bash(/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/.venv/bin/python -m finance_data_hub.cli.main:*)",
+      "Bash(/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/.venv/bin/python:*)",
+      "Bash(pip install:*)",
+      "Bash(uv pip install:*)"
     ],
     "deny": [],
     "ask": []

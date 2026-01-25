@@ -765,14 +765,14 @@ class DataUpdater:
 
         Args:
             ts_code: 指数代码，None表示所有支持的指数
-            start_date: 开始日期（YYYY-MM-DD格式），None表示智能下载
+            start_date: 开始日期（YYYY-MM-DD格式），仅当指定ts_code时有效
             end_date: 结束日期，None表示到最新
             force_update: 是否强制更新（忽略数据库状态）
 
         Returns:
             int: 更新的记录数
         """
-        # 确定日期范围
+        # 确定日期
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
@@ -781,39 +781,70 @@ class DataUpdater:
         )
 
         try:
-            # 智能下载逻辑：确定实际起始日期
-            actual_start_date = start_date
+            # 判断使用哪种模式
+            if ts_code:
+                # 指定了指数代码，使用历史数据模式
+                if not start_date:
+                    start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+                    logger.info(f"No start_date specified, defaulting to {start_date}")
 
-            if not force_update and not start_date:
-                # 查询数据库最新记录
-                latest_date = await self.data_ops.get_latest_index_dailybasic_date(ts_code)
+                logger.info(f"Historical mode: fetching {ts_code} data from {start_date} to {end_date}")
 
-                if latest_date:
-                    # 有记录，计算下一天
-                    next_day = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
-                    actual_start_date = next_day.strftime("%Y%m%d")  # API需要YYYYMMDD格式
-                    if actual_start_date > end_date.replace("-", ""):
-                        logger.info("Index dailybasic data is already up to date")
-                        return 0
-                    logger.debug(f"Smart incremental: index_dailybasic from {actual_start_date}")
+                api_start = start_date.replace("-", "") if start_date else None
+                api_end = end_date.replace("-", "") if end_date else None
+
+                data = self.router.route(
+                    asset_class="index",
+                    data_type="dailybasic",
+                    method_name="get_index_dailybasic",
+                    ts_code=ts_code,
+                    start_date=api_start,
+                    end_date=api_end,
+                )
+            else:
+                # 未指定指数代码，智能下载模式
+                if force_update:
+                    # 强制更新：获取全量历史数据（从最早到最新）
+                    logger.info("Force update: fetching full history")
+                    api_start = start_date.replace("-", "") if start_date else None
+                    api_end = end_date.replace("-", "") if end_date else None
+                    data = self.router.route(
+                        asset_class="index",
+                        data_type="dailybasic",
+                        method_name="get_index_dailybasic",
+                        start_date=api_start,
+                        end_date=api_end,
+                    )
                 else:
-                    # 没有记录，智能下载模式：传None让API获取全量数据
-                    actual_start_date = None
-                    logger.info("Smart download: fetching full index_dailybasic history")
+                    # 智能下载：检查数据库状态
+                    latest_date = await self.data_ops.get_latest_index_dailybasic_date(None)
 
-            # 准备API参数（日期格式需要YYYYMMDD）
-            api_start = actual_start_date.replace("-", "") if actual_start_date else None
-            api_end = end_date.replace("-", "") if end_date else None
-
-            # 从路由器获取数据
-            data = self.router.route(
-                asset_class="index",
-                data_type="dailybasic",
-                method_name="get_index_dailybasic",
-                ts_code=ts_code,
-                start_date=api_start,
-                end_date=api_end,
-            )
+                    if latest_date:
+                        # 有记录，增量更新：从最新日期的下一天到最新
+                        next_day = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
+                        if next_day.strftime("%Y-%m-%d") > end_date:
+                            logger.info("Index dailybasic data is already up to date")
+                            return 0
+                        api_start = next_day.strftime("%Y%m%d")
+                        api_end = end_date.replace("-", "")
+                        logger.info(f"Smart incremental: fetching from {next_day} to {end_date}")
+                        data = self.router.route(
+                            asset_class="index",
+                            data_type="dailybasic",
+                            method_name="get_index_dailybasic",
+                            start_date=api_start,
+                            end_date=api_end,
+                        )
+                    else:
+                        # 数据库为空，获取全量历史数据
+                        logger.info("Smart download: database empty, fetching full history")
+                        api_end = end_date.replace("-", "") if end_date else None
+                        data = self.router.route(
+                            asset_class="index",
+                            data_type="dailybasic",
+                            method_name="get_index_dailybasic",
+                            end_date=api_end,
+                        )
 
             if data is None or data.empty:
                 logger.warning("No index_dailybasic data received")

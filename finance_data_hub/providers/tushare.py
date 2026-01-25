@@ -1691,6 +1691,16 @@ class TushareProvider(BaseDataProvider):
         logger.info(f"Fetched {len(df)} PMI records")
         return df
 
+    # 支持的指数代码列表
+    SUPPORTED_INDEX_CODES = [
+        "000001.SH",  # 上证综指
+        "399001.SZ",  # 深证成指
+        "000016.SH",  # 上证50
+        "000905.SH",  # 中证500
+        "399005.SZ",  # 中小板指
+        "399006.SZ",  # 创业板指
+    ]
+
     def get_index_dailybasic(
         self,
         ts_code: Optional[str] = None,
@@ -1706,7 +1716,7 @@ class TushareProvider(BaseDataProvider):
         目前只提供上证综指，深证成指，上证50，中证500，中小板指，创业板指的每日指标数据。
 
         Args:
-            ts_code: 指数代码（如000001.SH上证综指），支持多值
+            ts_code: 指数代码（如000001.SH上证综指），支持多值，None表示所有支持的指数
             trade_date: 交易日期（YYYY-MM-DD 或 YYYYMMDD格式），与start_date/end_date互斥
             start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD格式）
             end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD格式）
@@ -1766,99 +1776,105 @@ class TushareProvider(BaseDataProvider):
             logger.info(f"Fetched {len(df)} index dailybasic records for trade_date={trade_date}")
             return df
 
-        # 日期范围模式：需要处理3000条记录限制
+        # 日期范围模式
         # 转换日期格式
         if start_date:
             start_date = start_date.replace("-", "")
         if end_date:
             end_date = end_date.replace("-", "")
 
-        # 构建参数
-        kwargs = {}
-        if ts_code:
-            kwargs["ts_code"] = ts_code
-
         # Tushare API 记录限制常量
         TUSHARE_MAX_RECORDS = 3000
 
         # 记录所有批次的数据
         all_dataframes = []
-        current_end_date = end_date
-        batch_count = 0
         total_records = 0
 
-        while True:
-            batch_count += 1
-            logger.info(f"Batch {batch_count}: fetching data up to {current_end_date or 'latest'}")
+        # 确定要查询的指数代码列表
+        if ts_code:
+            index_codes = [c.strip() for c in ts_code.split(",") if c.strip()]
+        else:
+            # 没有指定ts_code时，使用所有支持的指数
+            index_codes = self.SUPPORTED_INDEX_CODES
+            logger.info(f"No ts_code specified, using supported indexes: {index_codes}")
 
-            # 构建当前批次的参数
-            batch_kwargs = kwargs.copy()
-            if start_date:
-                batch_kwargs["start_date"] = start_date
-            if current_end_date:
-                batch_kwargs["end_date"] = current_end_date.replace("-", "")
+        # 对每个指数代码查询数据
+        for code in index_codes:
+            logger.info(f"Fetching index_dailybasic for {code}")
+            code_dataframes = []
+            current_end_date = end_date
+            batch_count = 0
 
-            df = self._call_api(
-                "index_dailybasic",
-                fields="ts_code,trade_date,total_mv,float_mv,total_share,"
-                       "float_share,free_share,turnover_rate,turnover_rate_f,"
-                       "pe,pe_ttm,pb",
-                **batch_kwargs
-            )
+            while True:
+                batch_count += 1
+                # 构建API参数
+                api_params = {
+                    "ts_code": code,
+                    "fields": "ts_code,trade_date,total_mv,float_mv,total_share,"
+                              "float_share,free_share,turnover_rate,turnover_rate_f,"
+                              "pe,pe_ttm,pb",
+                }
+                if start_date:
+                    api_params["start_date"] = start_date
+                if current_end_date:
+                    api_params["end_date"] = current_end_date.replace("-", "") if isinstance(current_end_date, str) else current_end_date
 
-            if df.empty:
-                logger.info(f"Batch {batch_count}: No data returned, stopping")
-                break
+                df = self._call_api("index_dailybasic", **api_params)
 
-            # 列名映射
-            column_mapping = {
-                "ts_code": "ts_code",
-                "trade_date": "trade_date",
-                "total_mv": "total_mv",
-                "float_mv": "float_mv",
-                "total_share": "total_share",
-                "float_share": "float_share",
-                "free_share": "free_share",
-                "turnover_rate": "turnover_rate",
-                "turnover_rate_f": "turnover_rate_f",
-                "pe": "pe",
-                "pe_ttm": "pe_ttm",
-                "pb": "pb",
-            }
+                if df.empty:
+                    logger.info(f"  Batch {batch_count}: No data returned, stopping")
+                    break
 
-            df = convert_to_standard_columns(df, column_mapping)
+                # 列名映射
+                column_mapping = {
+                    "ts_code": "ts_code",
+                    "trade_date": "trade_date",
+                    "total_mv": "total_mv",
+                    "float_mv": "float_mv",
+                    "total_share": "total_share",
+                    "float_share": "float_share",
+                    "free_share": "free_share",
+                    "turnover_rate": "turnover_rate",
+                    "turnover_rate_f": "turnover_rate_f",
+                    "pe": "pe",
+                    "pe_ttm": "pe_ttm",
+                    "pb": "pb",
+                }
 
-            # 转换时间格式
-            df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
+                df = convert_to_standard_columns(df, column_mapping)
 
-            # 按时间和代码排序
-            df = df.sort_values(["trade_date", "ts_code"]).reset_index(drop=True)
+                # 转换时间格式
+                df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
 
-            batch_records = len(df)
-            total_records += batch_records
-            all_dataframes.append(df)
+                # 按时间排序
+                df = df.sort_values("trade_date").reset_index(drop=True)
 
-            logger.info(f"Batch {batch_count}: Fetched {batch_records} records (total so far: {total_records})")
+                batch_records = len(df)
+                code_dataframes.append(df)
 
-            # 检查是否需要继续获取更早的数据
-            if batch_records == TUSHARE_MAX_RECORDS:
-                # 获取当前批次中最早的日期
-                earliest_date = df["trade_date"].min().date()
-                logger.info(f"Batch {batch_count}: Got {batch_records} records (max limit), fetching earlier data...")
+                logger.info(f"  Batch {batch_count}: Fetched {batch_records} records")
 
-                # 计算新的结束日期（向前推1天）
-                from datetime import timedelta
-                new_end_date = earliest_date - timedelta(days=1)
-                current_end_date = new_end_date.strftime("%Y-%m-%d")
+                # 检查是否需要继续获取更早的数据
+                if batch_records == TUSHARE_MAX_RECORDS and start_date is None:
+                    # 获取当前批次中最早的日期
+                    earliest_date = df["trade_date"].min().date()
+                    # 计算新的结束日期（向前推1天）
+                    from datetime import timedelta
+                    new_end_date = earliest_date - timedelta(days=1)
+                    current_end_date = new_end_date.strftime("%Y-%m-%d")
+                    logger.info(f"  Batch {batch_count}: Max limit reached, fetching earlier data up to {current_end_date}")
+                    continue
+                else:
+                    break
 
-                logger.info(f"Next batch will fetch up to {current_end_date}")
-                continue
-            else:
-                # 记录数少于3000，说明已经获取完所有数据
-                logger.info(f"Batch {batch_count}: Got {batch_records} records (< {TUSHARE_MAX_RECORDS}), all data fetched")
-                break
+            # 合并该指数的数据
+            if code_dataframes:
+                code_df = pd.concat(code_df for code_df in code_dataframes)
+                all_dataframes.append(code_df)
+                total_records += len(code_df)
+                logger.info(f"  {code}: Total {len(code_df)} records")
 
-        # 合并所有批次的数据
+        # 合并所有指数的数据
         if not all_dataframes:
             logger.warning("No index dailybasic data returned from Tushare")
             return pd.DataFrame(columns=IndexDailybasicSchema.get_required_columns())
@@ -1874,5 +1890,5 @@ class TushareProvider(BaseDataProvider):
         # 验证数据格式
         final_df = validate_dataframe(final_df, IndexDailybasicSchema, provider_name=self.name)
 
-        logger.info(f"Total fetched {len(final_df)} index dailybasic records in {batch_count} batch(es)")
+        logger.info(f"Total fetched {len(final_df)} index dailybasic records")
         return final_df

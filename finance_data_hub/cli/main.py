@@ -158,6 +158,10 @@ def update(
       - pmi: 中国PMI采购经理人指数数据
       - index_dailybasic: 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）
 
+        index_dailybasic使用说明:
+        - 不指定--symbols时：获取当日所有指数数据（增量更新）
+        - 指定--symbols时：获取该指数的历史数据（如 --symbols 000001.SH --start-date 2024-01-01 --end-date 2024-12-31）
+
     更新策略:
       默认采用智能下载模式，系统会自动:
       - 对新symbol获取全量历史数据
@@ -886,15 +890,24 @@ async def _run_trade_date_update(
             elif data_type == "daily_basic":
                 # 每日指标数据
                 method_name = "get_daily_basic"
+            elif data_type == "index_dailybasic":
+                # 大盘指数每日指标数据
+                method_name = "get_index_dailybasic"
             else:
                 console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                 raise typer.Exit(1)
 
-            # 通过路由器获取指定交易日所有股票数据
-            # 注意：这里不指定symbol，API会获取所有股票
+            # 通过路由器获取数据
+            # 注意：index_dailybasic使用asset_class="index"和data_type="dailybasic"，其他使用"stock"
+            if data_type == "index_dailybasic":
+                asset_class = "index"
+                router_data_type = "dailybasic"  # 路由配置中的key
+            else:
+                asset_class = "stock"
+                router_data_type = data_type
             df = updater.router.route(
-                asset_class="stock",
-                data_type=data_type,
+                asset_class=asset_class,
+                data_type=router_data_type,
                 method_name=method_name,
                 trade_date=trade_date,
             )
@@ -905,14 +918,21 @@ async def _run_trade_date_update(
 
             progress.update(task, description="正在插入数据库...", total=100)
 
-            # 按symbol分组批量插入
-            symbols = df["symbol"].unique()
+            # 判断是股票还是指数数据
+            is_index = (data_type == "index_dailybasic")
+            if is_index:
+                unique_codes = df["ts_code"].unique()
+                code_label = "指数"
+            else:
+                unique_codes = df["symbol"].unique()
+                code_label = "股票"
+
             total_records = len(df)
             total_inserted = 0
             total_errors = 0
 
             if not quiet:
-                console.print(f"\n[bold]开始批量插入 {trade_date} 的 {len(symbols)} 只股票数据[/bold]")
+                console.print(f"\n[bold]开始批量插入 {trade_date} 的 {len(unique_codes)} 只{code_label}数据[/bold]")
                 console.print(f"总记录数: {total_records}\n")
 
             # 分批插入，每批1000条记录
@@ -924,6 +944,8 @@ async def _run_trade_date_update(
                         count = await updater.data_ops.insert_symbol_daily_batch(batch_df)
                     elif data_type == "daily_basic":
                         count = await updater.data_ops.insert_daily_basic_batch(batch_df)
+                    elif data_type == "index_dailybasic":
+                        count = await updater.data_ops.insert_index_dailybasic_batch(batch_df)
                     else:
                         console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                         raise typer.Exit(1)
@@ -936,10 +958,13 @@ async def _run_trade_date_update(
 
                     # 显示进度（非安静模式）
                     if not quiet:
-                        current_symbol = batch_df["symbol"].iloc[0] if len(batch_df) > 0 else "unknown"
+                        if is_index:
+                            current_code = batch_df["ts_code"].iloc[0] if len(batch_df) > 0 else "unknown"
+                        else:
+                            current_code = batch_df["symbol"].iloc[0] if len(batch_df) > 0 else "unknown"
                         console.print(
                             f"[green]✓[/green] 批次 {i // batch_size + 1}: "
-                            f"插入 {count} 条记录 ({current_symbol} 等)"
+                            f"插入 {count} 条记录 ({current_code} 等)"
                         )
 
                 except Exception as e:
@@ -952,7 +977,7 @@ async def _run_trade_date_update(
             if not quiet:
                 console.print(f"\n[bold]交易日批量更新完成:[/bold]")
                 console.print(f"  交易日: {trade_date}")
-                console.print(f"  股票数量: {len(symbols)}")
+                console.print(f"  {code_label}数量: {len(unique_codes)}")
                 console.print(f"  总记录数: {total_records}")
                 console.print(f"  插入记录: {total_inserted}")
                 console.print(f"  失败数量: {total_errors}")
