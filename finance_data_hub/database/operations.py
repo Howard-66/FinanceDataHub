@@ -1946,3 +1946,210 @@ class DataOperations:
             return row.latest_date.strftime("%Y-%m-%d")
 
         return None
+
+    # ============================================================================
+    # 现金流量表数据操作
+    # ============================================================================
+
+    async def insert_cashflow_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入现金流量表数据
+
+        Args:
+            data: 包含现金流量表数据的DataFrame
+            batch_size: 批处理大小
+
+        Returns:
+            int: 插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        # 现金流量表字段列表（除了ts_code, ann_date, f_ann_date, end_date, end_date_time）
+        cashflow_columns = [
+            "comp_type", "report_type", "end_type", "net_profit", "finan_exp",
+            "c_fr_sale_sg", "recp_tax_rends", "n_depos_incr_fi", "n_incr_loans_cb",
+            "n_inc_borr_oth_fi", "prem_fr_orig_contr", "n_incr_insured_dep", "n_reinsur_prem",
+            "n_incr_disp_tfa", "ifc_cash_incr", "n_incr_disp_faas", "n_incr_loans_oth_bank",
+            "n_cap_incr_repur", "c_fr_oth_operate_a", "c_inf_fr_operate_a", "c_paid_goods_s",
+            "c_paid_to_for_empl", "c_paid_for_taxes", "n_incr_clt_loan_adv", "n_incr_dep_cbob",
+            "c_pay_claims_orig_inco", "pay_handling_chrg", "pay_comm_insur_plcy",
+            "oth_cash_pay_oper_act", "st_cash_out_act", "n_cashflow_act", "oth_recp_ral_inv_act",
+            "c_disp_withdrwl_invest", "c_recp_return_invest", "n_recp_disp_fiolta",
+            "n_recp_disp_sobu", "stot_inflows_inv_act", "c_pay_acq_const_fiolta",
+            "c_paid_invest", "n_disp_subs_oth_biz", "oth_pay_ral_inv_act", "n_incr_pledge_loan",
+            "stot_out_inv_act", "n_cashflow_inv_act", "c_recp_borrow", "proc_issue_bonds",
+            "oth_cash_recp_ral_fnc_act", "stot_cash_in_fnc_act", "free_cashflow",
+            "c_prepay_amt_borr", "c_pay_dist_dpcp_int_exp", "incl_dvd_profit_paid_sc_ms",
+            "oth_cashpay_ral_fnc_act", "stot_cashout_fnc_act", "n_cash_flows_fnc_act",
+            "eff_fx_flu_cash", "n_incr_cash_cash_equ", "c_cash_equ_beg_period",
+            "c_cash_equ_end_period", "c_recp_cap_contrib", "incl_cash_rec_saims",
+            "uncon_invest_loss", "prov_depr_assets", "depr_fa_coga_dpba", "amort_intang_assets",
+            "lt_amort_deferred_exp", "decr_deferred_exp", "incr_acc_exp", "loss_disp_fiolta",
+            "loss_scr_fa", "loss_fv_chg", "invest_loss", "decr_def_inc_tax_assets",
+            "incr_def_inc_tax_liab", "decr_inventories", "decr_oper_payable", "incr_oper_payable",
+            "others", "im_net_cashflow_oper_act", "conv_debt_into_cap", "conv_copbonds_due_within_1y",
+            "fa_fnc_leases", "im_n_incr_cash_equ", "net_dism_capital_add", "net_cash_rece_sec",
+            "credit_impa_loss", "use_right_asset_dep", "oth_loss_asset", "end_bal_cash",
+            "beg_bal_cash", "end_bal_cash_equ", "beg_bal_cash_equ", "update_flag"
+        ]
+
+        # 构建INSERT语句
+        columns_str = ", ".join([
+            "ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"
+        ] + cashflow_columns)
+        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"] + cashflow_columns])
+
+        # ON CONFLICT部分
+        update_parts = []
+        for col in ["ann_date", "f_ann_date", "end_date"] + cashflow_columns:
+            update_parts.append(f"{col} = EXCLUDED.{col}")
+        update_str = ", ".join(update_parts)
+
+        insert_sql = f"""
+            INSERT INTO cashflow ({columns_str})
+            VALUES ({values_str})
+            ON CONFLICT (ts_code, end_date_time) DO UPDATE SET
+                {update_str},
+                updated_at = NOW()
+        """
+
+        total_inserted = 0
+
+        # 所有需要插入的列名
+        all_columns = ["ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"] + cashflow_columns
+
+        # 可能包含大数值的字段（需要clip到安全范围）
+        large_value_columns = {
+            "net_profit", "finan_exp", "c_fr_sale_sg", "recp_tax_rends", "c_inf_fr_operate_a",
+            "c_paid_goods_s", "c_paid_to_for_empl", "c_paid_for_taxes", "st_cash_out_act",
+            "n_cashflow_act", "c_disp_withdrwl_invest", "c_recp_return_invest",
+            "stot_inflows_inv_act", "c_pay_acq_const_fiolta", "c_paid_invest",
+            "stot_out_inv_act", "n_cashflow_inv_act", "c_recp_borrow", "proc_issue_bonds",
+            "stot_cash_in_fnc_act", "free_cashflow", "c_prepay_amt_borr",
+            "c_pay_dist_dpcp_int_exp", "stot_cashout_fnc_act", "n_cash_flows_fnc_act",
+            "n_incr_cash_cash_equ", "c_cash_equ_beg_period", "c_cash_equ_end_period",
+            "c_recp_cap_contrib", "prov_depr_assets", "depr_fa_coga_dpba", "amort_intang_assets",
+            "end_bal_cash", "beg_bal_cash", "end_bal_cash_equ", "beg_bal_cash_equ"
+        }
+
+        for i in range(0, len(data), batch_size):
+            batch = data.iloc[i : i + batch_size].copy()
+            records = batch.to_dict("records")
+
+            # 处理NaN值和datetime，并确保所有列都存在
+            for record in records:
+                # 确保所有必需列都存在
+                for col in all_columns:
+                    if col not in record:
+                        record[col] = None
+
+                # 处理值，clip大数值字段到安全范围
+                for key, value in record.items():
+                    if pd.isna(value):
+                        record[key] = None
+                    elif key == "end_date_time" or isinstance(value, pd.Timestamp):
+                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+                    elif key in large_value_columns and isinstance(value, (int, float)):
+                        # Clip大数值到DECIMAL(20,4)的安全范围
+                        max_val = 9_999_999_999_999_999
+                        min_val = -9_999_999_999_999_999
+                        if value > max_val:
+                            logger.warning(f"Clipping {key} value {value} to max {max_val}")
+                            record[key] = max_val
+                        elif value < min_val:
+                            logger.warning(f"Clipping {key} value {value} to min {min_val}")
+                            record[key] = min_val
+
+            async with self.db_manager._engine.begin() as conn:
+                result = await conn.execute(text(insert_sql), records)
+                total_inserted += result.rowcount
+
+            logger.info(
+                f"Inserted batch {i // batch_size + 1}: "
+                f"{len(batch)} records (total: {total_inserted})"
+            )
+
+        logger.info(f"Total inserted {total_inserted} cashflow records")
+        return total_inserted
+
+    async def get_cashflow(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取现金流量表数据
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期）
+            end_date: 结束日期（YYYY-MM-DD格式，报告期）
+
+        Returns:
+            Optional[pd.DataFrame]: 现金流量表数据
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
+        # 构建查询条件
+        query = "SELECT * FROM cashflow WHERE 1=1"
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        if start_dt:
+            query += " AND end_date_time >= :start_date"
+            params["start_date"] = start_dt
+
+        if end_dt:
+            query += " AND end_date_time <= :end_date"
+            params["end_date"] = end_dt
+
+        query += " ORDER BY ts_code, end_date_time"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_latest_cashflow_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+        """
+        获取最新的现金流量表数据日期
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示任意股票
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(end_date_time) as latest_date
+            FROM cashflow
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None

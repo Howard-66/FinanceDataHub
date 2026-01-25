@@ -65,6 +65,16 @@ routing_strategy:
       providers: [tushare]
       fallback: false
 
+    # 财务指标
+    fina_indicator:
+      providers: [tushare]
+      fallback: false
+
+    # 现金流量表
+    cashflow:
+      providers: [tushare]
+      fallback: false
+
     # Tick数据
     tick:
       providers: [xtquant]
@@ -91,6 +101,12 @@ routing_strategy:
       providers: [tushare]
       fallback: false
     pmi:
+      providers: [tushare]
+      fallback: false
+
+  # 指数数据路由
+  index:
+    dailybasic:
       providers: [tushare]
       fallback: false
 

@@ -23,6 +23,7 @@ from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.router.smart_router import SmartRouter
 
 
+
 class FinanceDataHub:
     """
     FinanceDataHub SDK - 金融数据服务中心
@@ -994,6 +995,49 @@ class FinanceDataHub:
             Optional[pd.DataFrame]: 财务指标数据
         """
         return await self.ops.get_fina_indicator(ts_code, start_date, end_date)
+
+    def get_cashflow(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取上市公司现金流量表数据（同步方法）
+
+        Args:
+            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 现金流量表数据，包含 ts_code, end_date_time 及所有现金流量指标字段
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_cashflow('600519.SH', '2020-03-31', '2024-12-31')
+            >>> print(data[['ts_code', 'end_date', 'net_profit', 'n_cashflow_act']])
+        """
+        return asyncio.run(self.get_cashflow_async(ts_code, start_date, end_date))
+
+    async def get_cashflow_async(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取上市公司现金流量表数据（异步方法）
+
+        Args:
+            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 现金流量表数据
+        """
+        return await self.ops.get_cashflow(ts_code, start_date, end_date)
 
     # ============================================================================
     # 资源管理

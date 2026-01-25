@@ -42,7 +42,8 @@
       "Bash(/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/.venv/bin/python -m finance_data_hub.cli.main:*)",
       "Bash(/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/.venv/bin/python:*)",
       "Bash(pip install:*)",
-      "Bash(uv pip install:*)"
+      "Bash(uv pip install:*)",
+      "Bash(docker compose ps)"
     ],
     "deny": [],
     "ask": []

@@ -969,6 +969,115 @@ class DataUpdater:
             logger.exception("Failed to update fina_indicator data")
             raise
 
+    async def update_cashflow(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """
+        更新现金流量表数据
+
+        Args:
+            symbols: 股票代码列表，None表示从数据库获取所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示智能下载
+            end_date: 结束日期，None表示到最新
+            force_update: 是否强制更新（忽略数据库状态）
+            progress_callback: 进度回调函数，接收 (current, total) 参数
+
+        Returns:
+            int: 更新的记录数
+        """
+        # 确定日期
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+        logger.info(
+            f"Updating cashflow for {len(symbols) if symbols else 'all symbols'} symbols "
+            f"from {start_date or 'smart'} to {end_date} (force={force_update})"
+        )
+
+        # 如果没有指定股票，从数据库获取所有股票
+        if not symbols:
+            symbols = await self.data_ops.get_symbol_list()
+
+        if not symbols:
+            logger.warning("No symbols to update")
+            return 0
+
+        total_symbols = len(symbols)
+
+        try:
+            total_records = 0
+
+            for idx, symbol in enumerate(symbols):
+                # 调用进度回调
+                if progress_callback:
+                    progress_callback(idx + 1, total_symbols)
+
+                try:
+                    # 智能下载逻辑：确定该symbol的实际起始日期
+                    symbol_start_date = start_date
+
+                    if not force_update and not start_date:
+                        # 查询数据库最新记录
+                        latest_date = await self.data_ops.get_latest_cashflow_date(symbol)
+
+                        if latest_date:
+                            # 有记录，计算下一个报告期
+                            # 财务数据通常是季度数据，报告期为季度末（3/31, 6/30, 9/30, 12/31）
+                            # 获取下一个季度末
+                            next_quarter = self._get_next_quarter_end(latest_date)
+                            symbol_start_date = next_quarter
+                            if symbol_start_date > end_date:
+                                logger.debug(f"Skipping {symbol} - already up to date")
+                                continue
+                            logger.debug(f"Smart incremental: {symbol} from {symbol_start_date}")
+                        else:
+                            # 新股票，智能下载模式：传None让API获取全量数据
+                            symbol_start_date = None
+                            logger.info(f"Smart download: {symbol} - fetching full history")
+                    elif force_update:
+                        # 强制更新模式
+                        logger.debug(f"Force update: {symbol} from {symbol_start_date or 'beginning'}")
+
+                    # 从路由器获取数据
+                    data = self.router.route(
+                        asset_class="stock",
+                        data_type="cashflow",
+                        method_name="get_cashflow",
+                        ts_code=symbol,
+                        start_date=symbol_start_date,
+                        end_date=end_date,
+                    )
+
+                    if data is not None and not data.empty:
+                        # 插入数据库
+                        inserted = await self.data_ops.insert_cashflow_batch(
+                            data, batch_size=1000
+                        )
+                        total_records += inserted
+                        logger.info(f"Updated {inserted} cashflow records for {symbol}")
+                    else:
+                        logger.debug(f"No cashflow data for {symbol}")
+
+                except Exception as e:
+                    logger.error(f"Failed to update cashflow for {symbol}: {str(e)}")
+                    continue
+
+            # 调用最终进度回调
+            if progress_callback:
+                progress_callback(total_symbols, total_symbols)
+
+            logger.info(f"Updated total {total_records} cashflow records")
+            return total_records
+
+        except Exception as e:
+            logger.exception("Failed to update cashflow data")
+            raise
+
     def _get_next_quarter_end(self, current_date: str) -> str:
         """
         获取下一个季度末日期

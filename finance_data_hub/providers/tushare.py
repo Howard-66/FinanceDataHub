@@ -31,6 +31,7 @@ from finance_data_hub.providers.schema import (
     CNPMISchema,
     IndexDailybasicSchema,
     FinaIndicatorSchema,
+    CashflowSchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -2052,4 +2053,166 @@ class TushareProvider(BaseDataProvider):
         final_df = validate_dataframe(final_df, FinaIndicatorSchema, provider_name=self.name)
 
         logger.info(f"Total fetched {len(final_df)} fina_indicator records")
+        return final_df
+
+    def get_cashflow(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取上市公司现金流量表数据（自动处理Tushare 100条记录限制）
+
+        当返回记录数等于100时，自动继续获取更早的数据，确保获取完整历史数据。
+
+        Args:
+            ts_code: TS股票代码（如600001.SH/000001.SZ），支持多值（逗号分隔）
+            start_date: 报告期开始日期（YYYYMMDD格式）
+            end_date: 报告期结束日期（YYYYMMDD格式）
+
+        Returns:
+            pd.DataFrame: 标准格式的现金流量表数据
+        """
+        logger.info(
+            f"Fetching cashflow data (ts_code={ts_code}, start_date={start_date}, end_date={end_date})"
+        )
+
+        # 转换日期格式
+        if start_date:
+            start_date = start_date.replace("-", "")
+        if end_date:
+            end_date = end_date.replace("-", "")
+
+        # Tushare API 记录限制常量
+        TUSHARE_MAX_RECORDS = 100
+
+        # 解析 ts_code 列表
+        ts_code_list = [c.strip() for c in ts_code.split(",") if c.strip()]
+
+        # 记录所有股票的数据
+        all_dataframes = []
+        total_records = 0
+
+        for code in ts_code_list:
+            logger.info(f"Fetching cashflow for {code}")
+            code_dataframes = []
+            current_end_date = end_date
+            batch_count = 0
+
+            while True:
+                batch_count += 1
+                # 构建API参数
+                api_params = {
+                    "ts_code": code,
+                    "fields": "ts_code,ann_date,f_ann_date,end_date,comp_type,report_type,end_type,"
+                              "net_profit,finan_exp,c_fr_sale_sg,recp_tax_rends,n_depos_incr_fi,"
+                              "n_incr_loans_cb,n_inc_borr_oth_fi,prem_fr_orig_contr,n_incr_insured_dep,"
+                              "n_reinsur_prem,n_incr_disp_tfa,ifc_cash_incr,n_incr_disp_faas,"
+                              "n_incr_loans_oth_bank,n_cap_incr_repur,c_fr_oth_operate_a,"
+                              "c_inf_fr_operate_a,c_paid_goods_s,c_paid_to_for_empl,c_paid_for_taxes,"
+                              "n_incr_clt_loan_adv,n_incr_dep_cbob,c_pay_claims_orig_inco,"
+                              "pay_handling_chrg,pay_comm_insur_plcy,oth_cash_pay_oper_act,"
+                              "st_cash_out_act,n_cashflow_act,oth_recp_ral_inv_act,"
+                              "c_disp_withdrwl_invest,c_recp_return_invest,n_recp_disp_fiolta,"
+                              "n_recp_disp_sobu,stot_inflows_inv_act,c_pay_acq_const_fiolta,"
+                              "c_paid_invest,n_disp_subs_oth_biz,oth_pay_ral_inv_act,"
+                              "n_incr_pledge_loan,stot_out_inv_act,n_cashflow_inv_act,"
+                              "c_recp_borrow,proc_issue_bonds,oth_cash_recp_ral_fnc_act,"
+                              "stot_cash_in_fnc_act,free_cashflow,c_prepay_amt_borr,"
+                              "c_pay_dist_dpcp_int_exp,incl_dvd_profit_paid_sc_ms,"
+                              "oth_cashpay_ral_fnc_act,stot_cashout_fnc_act,n_cash_flows_fnc_act,"
+                              "eff_fx_flu_cash,n_incr_cash_cash_equ,c_cash_equ_beg_period,"
+                              "c_cash_equ_end_period,c_recp_cap_contrib,incl_cash_rec_saims,"
+                              "uncon_invest_loss,prov_depr_assets,depr_fa_coga_dpba,"
+                              "amort_intang_assets,lt_amort_deferred_exp,decr_deferred_exp,"
+                              "incr_acc_exp,loss_disp_fiolta,loss_scr_fa,loss_fv_chg,invest_loss,"
+                              "decr_def_inc_tax_assets,incr_def_inc_tax_liab,decr_inventories,"
+                              "decr_oper_payable,incr_oper_payable,others,im_net_cashflow_oper_act,"
+                              "conv_debt_into_cap,conv_copbonds_due_within_1y,fa_fnc_leases,"
+                              "im_n_incr_cash_equ,net_dism_capital_add,net_cash_rece_sec,"
+                              "credit_impa_loss,use_right_asset_dep,oth_loss_asset,"
+                              "end_bal_cash,beg_bal_cash,end_bal_cash_equ,beg_bal_cash_equ,update_flag",
+                }
+                if start_date:
+                    api_params["start_date"] = start_date
+                if current_end_date:
+                    api_params["end_date"] = current_end_date.replace("-", "") if isinstance(current_end_date, str) else current_end_date
+
+                df = self._call_api("cashflow", **api_params)
+
+                if df.empty:
+                    logger.info(f"  Batch {batch_count}: No data returned, stopping")
+                    break
+
+                # 记录原始数据条数
+                batch_records = len(df)
+                logger.info(f"  Batch {batch_count}: Fetched {batch_records} records")
+
+                # 将 end_date 转换为时间序列格式 end_date_time
+                df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+
+                # 列名映射（现金流量表字段保持原名，只需处理时间字段）
+                column_mapping = {
+                    "ts_code": "ts_code",
+                    "ann_date": "ann_date",
+                    "f_ann_date": "f_ann_date",
+                    "end_date": "end_date",
+                    "end_date_time": "end_date_time",
+                }
+
+                df = convert_to_standard_columns(df, column_mapping)
+
+                code_dataframes.append(df)
+
+                # 检查是否需要继续获取更早的数据
+                if batch_records == TUSHARE_MAX_RECORDS and start_date is None:
+                    # 获取当前批次中最早的报告期
+                    earliest_date = df["end_date"].min()
+                    logger.info(f"  Batch {batch_count}: Max limit reached, fetching earlier data before {earliest_date}")
+                    current_end_date = earliest_date
+                    continue
+                else:
+                    break
+
+            # 合并该股票的数据
+            if code_dataframes:
+                # 过滤掉空DataFrame和全NA的DataFrame，并删除每个DataFrame中的全NA列
+                valid_dataframes = []
+                for df in code_dataframes:
+                    if df.empty:
+                        continue
+                    # 检查是否有至少一个非NA值
+                    if df.dropna(how='all').empty:
+                        continue
+                    # 删除全NA的列
+                    df_clean = df.dropna(axis=1, how='all')
+                    if not df_clean.empty:
+                        valid_dataframes.append(df_clean)
+
+                if valid_dataframes:
+                    code_df = pd.concat(valid_dataframes, ignore_index=True, sort=False)
+                    all_dataframes.append(code_df)
+                    total_records += len(code_df)
+                    logger.info(f"  {code}: Total {len(code_df)} records")
+
+        # 合并所有股票的数据
+        if not all_dataframes:
+            logger.warning("No cashflow data returned from Tushare")
+            return pd.DataFrame(columns=CashflowSchema.get_required_columns())
+
+        # 合并DataFrame
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        # 清理：删除全NA的列
+        final_df = final_df.dropna(axis=1, how='all')
+
+        # 去重（按ts_code和end_date_time）
+        final_df = final_df.drop_duplicates(subset=["ts_code", "end_date"]).sort_values(
+            ["ts_code", "end_date"]
+        ).reset_index(drop=True)
+
+        # 验证数据格式
+        final_df = validate_dataframe(final_df, CashflowSchema, provider_name=self.name)
+
+        logger.info(f"Total fetched {len(final_df)} cashflow records")
         return final_df
