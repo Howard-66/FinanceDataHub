@@ -1695,11 +1695,14 @@ class TushareProvider(BaseDataProvider):
     # 支持的指数代码列表
     SUPPORTED_INDEX_CODES = [
         "000001.SH",  # 上证综指
-        "399001.SZ",  # 深证成指
         "000016.SH",  # 上证50
+        "000300.SH",  # 沪深300
         "000905.SH",  # 中证500
+        "399001.SZ",  # 深证成指
         "399005.SZ",  # 中小板指
         "399006.SZ",  # 创业板指
+        "399300.SZ",  # 沪深300
+        "399905.SZ",  # 中证500
     ]
 
     def get_index_dailybasic(
