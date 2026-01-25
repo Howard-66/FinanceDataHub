@@ -1815,17 +1815,46 @@ class DataOperations:
 
         total_inserted = 0
 
+        # 所有需要插入的列名
+        all_columns = ["ts_code", "ann_date", "end_date", "end_date_time"] + indicator_columns
+
+        # 可能包含大数值的字段（需要clip到安全范围）
+        large_value_columns = {
+            "gross_margin", "extra_item", "profit_dedt", "op_income", "ebit", "ebitda",
+            "fcff", "fcfe", "current_exint", "noncurrent_exint", "interestdebt", "netdebt",
+            "tangible_asset", "working_capital", "networking_capital", "invest_capital",
+            "retained_earnings", "fixed_assets", "profit_prefin_exp", "non_op_profit",
+            "q_opincome", "q_dtprofit", "total_revenue_ps", "revenue_ps"
+        }
+
         for i in range(0, len(data), batch_size):
-            batch = data.iloc[i : i + batch_size]
+            batch = data.iloc[i : i + batch_size].copy()
             records = batch.to_dict("records")
 
-            # 处理NaN值和datetime
+            # 处理NaN值和datetime，并确保所有列都存在
             for record in records:
+                # 确保所有必需列都存在
+                for col in all_columns:
+                    if col not in record:
+                        record[col] = None
+
+                # 处理值，clip大数值字段到安全范围
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
                     elif key == "end_date_time" or isinstance(value, pd.Timestamp):
                         record[key] = _normalize_datetime_for_db(value, data_type="daily")
+                    elif key in large_value_columns and isinstance(value, (int, float)):
+                        # Clip大数值到DECIMAL(20,4)的安全范围
+                        # max = 10^16 - 1 = 9999999999999999
+                        max_val = 9_999_999_999_999_999
+                        min_val = -9_999_999_999_999_999
+                        if value > max_val:
+                            logger.warning(f"Clipping {key} value {value} to max {max_val}")
+                            record[key] = max_val
+                        elif value < min_val:
+                            logger.warning(f"Clipping {key} value {value} to min {min_val}")
+                            record[key] = min_val
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)

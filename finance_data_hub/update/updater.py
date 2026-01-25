@@ -866,6 +866,7 @@ class DataUpdater:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         force_update: bool = False,
+        progress_callback: Optional[callable] = None,
     ) -> int:
         """
         更新财务指标数据
@@ -875,6 +876,7 @@ class DataUpdater:
             start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示智能下载
             end_date: 结束日期，None表示到最新
             force_update: 是否强制更新（忽略数据库状态）
+            progress_callback: 进度回调函数，接收 (current, total) 参数
 
         Returns:
             int: 更新的记录数
@@ -896,10 +898,16 @@ class DataUpdater:
             logger.warning("No symbols to update")
             return 0
 
+        total_symbols = len(symbols)
+
         try:
             total_records = 0
 
-            for symbol in symbols:
+            for idx, symbol in enumerate(symbols):
+                # 调用进度回调
+                if progress_callback:
+                    progress_callback(idx + 1, total_symbols)
+
                 try:
                     # 智能下载逻辑：确定该symbol的实际起始日期
                     symbol_start_date = start_date
@@ -949,6 +957,10 @@ class DataUpdater:
                 except Exception as e:
                     logger.error(f"Failed to update fina_indicator for {symbol}: {str(e)}")
                     continue
+
+            # 调用最终进度回调
+            if progress_callback:
+                progress_callback(total_symbols, total_symbols)
 
             logger.info(f"Updated total {total_records} fina_indicator records")
             return total_records

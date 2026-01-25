@@ -294,13 +294,13 @@ CREATE TABLE IF NOT EXISTS fina_indicator (
     extra_item DECIMAL(20,4),                         -- 非经常性损益
     profit_dedt DECIMAL(20,4),                        -- 扣除非经常性损益后的净利润
     gross_margin DECIMAL(20,4),                       -- 毛利
-    current_ratio DECIMAL(10,4),                      -- 流动比率
-    quick_ratio DECIMAL(10,4),                        -- 速动比率
-    cash_ratio DECIMAL(10,4),                         -- 保守速动比率
-    ar_turn DECIMAL(10,4),                            -- 应收账款周转率
-    ca_turn DECIMAL(10,4),                            -- 流动资产周转率
-    fa_turn DECIMAL(10,4),                            -- 固定资产周转率
-    assets_turn DECIMAL(10,4),                        -- 总资产周转率
+    current_ratio DECIMAL(20,4),                      -- 流动比率
+    quick_ratio DECIMAL(20,4),                        -- 速动比率
+    cash_ratio DECIMAL(20,4),                         -- 保守速动比率
+    ar_turn DECIMAL(20,4),                            -- 应收账款周转率
+    ca_turn DECIMAL(20,4),                            -- 流动资产周转率
+    fa_turn DECIMAL(20,4),                            -- 固定资产周转率
+    assets_turn DECIMAL(20,4),                        -- 总资产周转率
     op_income DECIMAL(20,4),                          -- 经营活动净收益
     ebit DECIMAL(20,4),                               -- 息税前利润
     ebitda DECIMAL(20,4),                             -- 息税折旧摊销前利润
@@ -355,29 +355,29 @@ CREATE TABLE IF NOT EXISTS fina_indicator (
     q_profit_to_gr DECIMAL(10,4),                     -- 净利润／营业总收入(单季度)
     q_salescash_to_or DECIMAL(10,4),                  -- 销售商品提供劳务收到的现金／营业收入(单季度)
     q_ocf_to_sales DECIMAL(10,4),                     -- 经营活动产生的现金流量净额／营业收入(单季度)
-    basic_eps_yoy DECIMAL(10,4),                      -- 基本每股收益同比增长率(%)
-    dt_eps_yoy DECIMAL(10,4),                         -- 稀释每股收益同比增长率(%)
-    cfps_yoy DECIMAL(10,4),                           -- 每股经营活动产生的现金流量净额同比增长率(%)
-    op_yoy DECIMAL(10,4),                             -- 营业利润同比增长率(%)
-    ebt_yoy DECIMAL(10,4),                            -- 利润总额同比增长率(%)
-    netprofit_yoy DECIMAL(10,4),                      -- 归属母公司股东的净利润同比增长率(%)
-    dt_netprofit_yoy DECIMAL(10,4),                   -- 归属母公司股东的净利润-扣除非经常损益同比增长率(%)
-    ocf_yoy DECIMAL(10,4),                            -- 经营活动产生的现金流量净额同比增长率(%)
-    roe_yoy DECIMAL(10,4),                            -- 净资产收益率(摊薄)同比增长率(%)
-    bps_yoy DECIMAL(10,4),                            -- 每股净资产相对年初增长率(%)
-    assets_yoy DECIMAL(10,4),                         -- 资产总计相对年初增长率(%)
-    eqt_yoy DECIMAL(10,4),                            -- 归属母公司的股东权益相对年初增长率(%)
-    tr_yoy DECIMAL(10,4),                             -- 营业总收入同比增长率(%)
-    or_yoy DECIMAL(10,4),                             -- 营业收入同比增长率(%)
-    q_gr_yoy DECIMAL(10,4),                           -- 营业总收入同比增长率(%)(单季度)
-    q_sales_yoy DECIMAL(10,4),                        -- 营业收入同比增长率(%)(单季度)
-    q_op_yoy DECIMAL(10,4),                           -- 营业利润同比增长率(%)(单季度)
-    q_op_qoq DECIMAL(10,4),                           -- 营业利润环比增长率(%)(单季度)
-    q_profit_yoy DECIMAL(10,4),                       -- 净利润同比增长率(%)(单季度)
-    q_profit_qoq DECIMAL(10,4),                       -- 净利润环比增长率(%)(单季度)
-    q_netprofit_yoy DECIMAL(10,4),                    -- 归属母公司股东的净利润同比增长率(%)(单季度)
-    q_netprofit_qoq DECIMAL(10,4),                    -- 归属母公司股东的净利润环比增长率(%)(单季度)
-    equity_yoy DECIMAL(10,4),                         -- 净资产同比增长率
+    basic_eps_yoy DECIMAL(20,4),                      -- 基本每股收益同比增长率(%)
+    dt_eps_yoy DECIMAL(20,4),                         -- 稀释每股收益同比增长率(%)
+    cfps_yoy DECIMAL(20,4),                           -- 每股经营活动产生的现金流量净额同比增长率(%)
+    op_yoy DECIMAL(20,4),                             -- 营业利润同比增长率(%)
+    ebt_yoy DECIMAL(20,4),                            -- 利润总额同比增长率(%)
+    netprofit_yoy DECIMAL(20,4),                      -- 归属母公司股东的净利润同比增长率(%)
+    dt_netprofit_yoy DECIMAL(20,4),                   -- 归属母公司股东的净利润-扣除非经常损益同比增长率(%)
+    ocf_yoy DECIMAL(20,4),                            -- 经营活动产生的现金流量净额同比增长率(%)
+    roe_yoy DECIMAL(20,4),                            -- 净资产收益率(摊薄)同比增长率(%)
+    bps_yoy DECIMAL(20,4),                            -- 每股净资产相对年初增长率(%)
+    assets_yoy DECIMAL(20,4),                         -- 资产总计相对年初增长率(%)
+    eqt_yoy DECIMAL(20,4),                            -- 归属母公司的股东权益相对年初增长率(%)
+    tr_yoy DECIMAL(20,4),                             -- 营业总收入同比增长率(%)
+    or_yoy DECIMAL(20,4),                             -- 营业收入同比增长率(%)
+    q_gr_yoy DECIMAL(20,4),                           -- 营业总收入同比增长率(%)(单季度)
+    q_sales_yoy DECIMAL(20,4),                        -- 营业收入同比增长率(%)(单季度)
+    q_op_yoy DECIMAL(20,4),                           -- 营业利润同比增长率(%)(单季度)
+    q_op_qoq DECIMAL(20,4),                           -- 营业利润环比增长率(%)(单季度)
+    q_profit_yoy DECIMAL(20,4),                       -- 净利润同比增长率(%)(单季度)
+    q_profit_qoq DECIMAL(20,4),                       -- 净利润环比增长率(%)(单季度)
+    q_netprofit_yoy DECIMAL(20,4),                    -- 归属母公司股东的净利润同比增长率(%)(单季度)
+    q_netprofit_qoq DECIMAL(20,4),                    -- 归属母公司股东的净利润环比增长率(%)(单季度)
+    equity_yoy DECIMAL(20,4),                         -- 净资产同比增长率
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (ts_code, end_date_time)

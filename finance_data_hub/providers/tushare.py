@@ -467,7 +467,7 @@ class TushareProvider(BaseDataProvider):
             return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
 
         # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True)
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
 
         # 去重（如果批次间有重叠）
         final_df = final_df.drop_duplicates(subset=["time", "symbol"]).sort_values("time").reset_index(drop=True)
@@ -643,7 +643,7 @@ class TushareProvider(BaseDataProvider):
             return pd.DataFrame(columns=MinuteDataSchema.get_required_columns())
 
         # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True)
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
 
         # 去重（如果批次间有重叠）
         final_df = final_df.drop_duplicates(subset=["time", "symbol"]).sort_values("time").reset_index(drop=True)
@@ -841,7 +841,7 @@ class TushareProvider(BaseDataProvider):
             return pd.DataFrame(columns=DailyBasicSchema.get_required_columns())
 
         # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True)
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
 
         # 去重（如果批次间有重叠）
         final_df = final_df.drop_duplicates(subset=["time", "symbol"]).sort_values("time").reset_index(drop=True)
@@ -968,7 +968,7 @@ class TushareProvider(BaseDataProvider):
             )
 
         # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True)
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
 
         # 去重（如果批次间有重叠）
         final_df = final_df.drop_duplicates(subset=["time", "symbol"]).sort_values("time").reset_index(drop=True)
@@ -1884,7 +1884,7 @@ class TushareProvider(BaseDataProvider):
             return pd.DataFrame(columns=IndexDailybasicSchema.get_required_columns())
 
         # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True)
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
 
         # 去重（如果批次间有重叠）
         final_df = final_df.drop_duplicates(subset=["trade_date", "ts_code"]).sort_values(
@@ -2014,10 +2014,24 @@ class TushareProvider(BaseDataProvider):
 
             # 合并该股票的数据
             if code_dataframes:
-                code_df = pd.concat(code_dataframes, ignore_index=True)
-                all_dataframes.append(code_df)
-                total_records += len(code_df)
-                logger.info(f"  {code}: Total {len(code_df)} records")
+                # 过滤掉空DataFrame和全NA的DataFrame，并删除每个DataFrame中的全NA列
+                valid_dataframes = []
+                for df in code_dataframes:
+                    if df.empty:
+                        continue
+                    # 检查是否有至少一个非NA值
+                    if df.dropna(how='all').empty:
+                        continue
+                    # 删除全NA的列
+                    df_clean = df.dropna(axis=1, how='all')
+                    if not df_clean.empty:
+                        valid_dataframes.append(df_clean)
+
+                if valid_dataframes:
+                    code_df = pd.concat(valid_dataframes, ignore_index=True, sort=False)
+                    all_dataframes.append(code_df)
+                    total_records += len(code_df)
+                    logger.info(f"  {code}: Total {len(code_df)} records")
 
         # 合并所有股票的数据
         if not all_dataframes:
@@ -2025,7 +2039,9 @@ class TushareProvider(BaseDataProvider):
             return pd.DataFrame(columns=FinaIndicatorSchema.get_required_columns())
 
         # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True)
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        # 清理：删除全NA的列
+        final_df = final_df.dropna(axis=1, how='all')
 
         # 去重（按ts_code和end_date_time）
         final_df = final_df.drop_duplicates(subset=["ts_code", "end_date"]).sort_values(

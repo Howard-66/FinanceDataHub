@@ -25,7 +25,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, TaskProgressColumn, ProgressColumn
+from rich.text import Text
 from rich.syntax import Syntax
 from rich import print as rprint
 
@@ -43,6 +44,22 @@ app = typer.Typer(
 )
 
 console = Console()
+
+
+class SymbolCountColumn(ProgressColumn):
+    """自定义进度列：显示已下载/总数"""
+
+    def __init__(self, symbol_type: str = "股票"):
+        super().__init__()
+        self.symbol_type = symbol_type
+
+    def render(self, task: "Task") -> Text:
+        """渲染进度文本"""
+        completed = task.completed
+        total = task.total if task.total > 0 else 1
+        if completed == 0 and total == 100:
+            return Text("—", style="dim")
+        return Text(f"已下载 {completed:.0f}/{total:.0f} {self.symbol_type}", style="bold cyan")
 
 
 def _setup_logging(verbose: bool = False):
@@ -340,21 +357,32 @@ async def _run_smart_download(
             console.print("  - 自动获取最新季度数据")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_gdp(
-                    start_date=None,  # 智能下载
-                    end_date=end_date,
-                    force_update=False,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新GDP数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取GDP数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_gdp(
+                        start_date=None,  # 智能下载
+                        end_date=end_date,
+                        force_update=False,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新GDP数据失败: {str(e)}")
+                    raise
 
     # PPI 数据不需要 symbol，单独处理
     if data_type == "ppi":
@@ -364,21 +392,32 @@ async def _run_smart_download(
             console.print("  - 自动获取最新月份数据")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_ppi(
-                    start_date=None,  # 智能下载
-                    end_date=end_date,
-                    force_update=False,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条PPI数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条PPI数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新PPI数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取PPI数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_ppi(
+                        start_date=None,  # 智能下载
+                        end_date=end_date,
+                        force_update=False,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条PPI数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条PPI数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新PPI数据失败: {str(e)}")
+                    raise
 
     # 货币供应量数据不需要 symbol，单独处理
     if data_type == "m":
@@ -388,21 +427,32 @@ async def _run_smart_download(
             console.print("  - 自动获取最新月份数据")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_m(
-                    start_date=None,  # 智能下载
-                    end_date=end_date,
-                    force_update=False,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条货币供应量数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条货币供应量数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新货币供应量数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取货币供应量数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_m(
+                        start_date=None,  # 智能下载
+                        end_date=end_date,
+                        force_update=False,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条货币供应量数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条货币供应量数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新货币供应量数据失败: {str(e)}")
+                    raise
 
     # PMI 数据不需要 symbol，单独处理
     if data_type == "pmi":
@@ -412,21 +462,32 @@ async def _run_smart_download(
             console.print("  - 自动获取最新月份数据")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_pmi(
-                    start_date=None,  # 智能下载
-                    end_date=end_date,
-                    force_update=False,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新PMI数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取PMI数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_pmi(
+                        start_date=None,  # 智能下载
+                        end_date=end_date,
+                        force_update=False,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新PMI数据失败: {str(e)}")
+                    raise
 
     # 大盘指数每日指标数据处理
     if data_type == "index_dailybasic":
@@ -439,22 +500,33 @@ async def _run_smart_download(
             console.print("  - 自动获取最新数据")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_index_dailybasic(
-                    ts_code=ts_code_list[0] if ts_code_list else None,
-                    start_date=None,  # 智能下载
-                    end_date=end_date,
-                    force_update=False,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取指数每日指标数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_index_dailybasic(
+                        ts_code=ts_code_list[0] if ts_code_list else None,
+                        start_date=None,  # 智能下载
+                        end_date=end_date,
+                        force_update=False,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
+                    raise
 
     # 财务指标数据处理
     if data_type == "fina_indicator":
@@ -464,22 +536,52 @@ async def _run_smart_download(
             console.print("  - 按股票代码获取历史财务数据")
             console.print("")
 
+        # 获取股票列表（不更新，仅查询）
         async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_fina_indicator(
-                    symbols=symbol_list if symbol_list else None,
-                    start_date=None,  # 智能下载
-                    end_date=end_date,
-                    force_update=False,
-                )
+            if not symbol_list:
+                symbols_db = await updater.data_ops.get_symbol_list()
+                symbol_list = symbols_db
+                if not quiet and symbol_list:
+                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+
+            if not symbol_list:
                 if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                    console.print("[yellow]数据库中没有股票信息，请先运行 fdh-cli update --dataset basic[/yellow]")
                 else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新财务指标数据失败: {str(e)}")
-                raise
+                    console.print("[yellow]没有股票可更新[/yellow]")
+                return 0
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("股票"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取财务指标数据...", total=len(symbol_list))
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current)
+
+                try:
+                    count = await updater.update_fina_indicator(
+                        symbols=symbol_list,
+                        start_date=None,  # 智能下载
+                        end_date=end_date,
+                        force_update=False,
+                        progress_callback=progress_callback,
+                    )
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新财务指标数据失败: {str(e)}")
+                    raise
 
     if not quiet:
         console.print("[bold]智能下载策略:[/bold]")
@@ -495,11 +597,10 @@ async def _run_smart_download(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
+            SymbolCountColumn("股票"),
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("正在智能下载...", total=100)
-
             try:
                 # 如果没有指定symbol，先更新股票列表
                 if not symbol_list:
@@ -516,6 +617,8 @@ async def _run_smart_download(
 
                 total_updated = 0
                 total_errors = 0
+
+                task = progress.add_task("正在智能下载...", total=len(symbol_list))
 
                 for idx, symbol in enumerate(symbol_list):
                     try:
@@ -579,11 +682,8 @@ async def _run_smart_download(
 
                         total_updated += count
 
-                        # 更新进度
-                        progress.update(
-                            task,
-                            completed=((idx + 1) / len(symbol_list)) * 100
-                        )
+                        # 更新进度（直接使用计数而非百分比）
+                        progress.update(task, completed=idx + 1)
 
                     except Exception as e:
                         total_errors += 1
@@ -627,21 +727,32 @@ async def _run_force_update(
             console.print("  - 使用指定的日期范围")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_gdp(
-                    start_date=start_date,
-                    end_date=end_date,
-                    force_update=True,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新GDP数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取GDP数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_gdp(
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条GDP数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新GDP数据失败: {str(e)}")
+                    raise
 
     # PPI 数据不需要 symbol，单独处理
     if data_type == "ppi":
@@ -651,21 +762,32 @@ async def _run_force_update(
             console.print("  - 使用指定的日期范围")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_ppi(
-                    start_date=start_date,
-                    end_date=end_date,
-                    force_update=True,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条PPI数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条PPI数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新PPI数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取PPI数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_ppi(
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条PPI数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条PPI数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新PPI数据失败: {str(e)}")
+                    raise
 
     # 货币供应量数据不需要 symbol，单独处理
     if data_type == "m":
@@ -675,21 +797,32 @@ async def _run_force_update(
             console.print("  - 使用指定的日期范围")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_m(
-                    start_date=start_date,
-                    end_date=end_date,
-                    force_update=True,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条货币供应量数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条货币供应量数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新货币供应量数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取货币供应量数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_m(
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条货币供应量数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条货币供应量数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新货币供应量数据失败: {str(e)}")
+                    raise
 
     # PMI 数据不需要 symbol，单独处理
     if data_type == "pmi":
@@ -699,21 +832,32 @@ async def _run_force_update(
             console.print("  - 使用指定的日期范围")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_pmi(
-                    start_date=start_date,
-                    end_date=end_date,
-                    force_update=True,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新PMI数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取PMI数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_pmi(
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条PMI数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新PMI数据失败: {str(e)}")
+                    raise
 
     # 大盘指数每日指标数据处理
     if data_type == "index_dailybasic":
@@ -726,22 +870,33 @@ async def _run_force_update(
             console.print("  - 使用指定的日期范围")
             console.print("")
 
-        async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_index_dailybasic(
-                    ts_code=ts_code_list[0] if ts_code_list else None,
-                    start_date=start_date,
-                    end_date=end_date,
-                    force_update=True,
-                )
-                if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
-                else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
-                raise
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取指数每日指标数据...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_index_dailybasic(
+                        ts_code=ts_code_list[0] if ts_code_list else None,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
+                    raise
 
     # 财务指标数据处理
     if data_type == "fina_indicator":
@@ -751,22 +906,52 @@ async def _run_force_update(
             console.print("  - 使用指定的日期范围")
             console.print("")
 
+        # 获取股票列表（不更新，仅查询）
         async with DataUpdater(settings, config_path="sources.yml") as updater:
-            try:
-                count = await updater.update_fina_indicator(
-                    symbols=symbol_list if symbol_list else None,
-                    start_date=start_date,
-                    end_date=end_date,
-                    force_update=True,
-                )
+            if not symbol_list:
+                symbols_db = await updater.data_ops.get_symbol_list()
+                symbol_list = symbols_db
+                if not quiet and symbol_list:
+                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+
+            if not symbol_list:
                 if not quiet:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                    console.print("[yellow]数据库中没有股票信息，请先运行 fdh-cli update --dataset basic[/yellow]")
                 else:
-                    console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
-                return count
-            except Exception as e:
-                console.print(f"[bold red]ERROR:[/bold red] 更新财务指标数据失败: {str(e)}")
-                raise
+                    console.print("[yellow]没有股票可更新[/yellow]")
+                return 0
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("股票"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取财务指标数据...", total=len(symbol_list))
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current)
+
+                try:
+                    count = await updater.update_fina_indicator(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新财务指标数据失败: {str(e)}")
+                    raise
 
     if not quiet:
         console.print("[bold]强制更新策略:[/bold]")
@@ -781,11 +966,10 @@ async def _run_force_update(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
+            SymbolCountColumn("股票"),
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("正在强制更新...", total=100)
-
             try:
                 # 如果没有指定symbol，先更新股票列表
                 if not symbol_list:
@@ -802,6 +986,8 @@ async def _run_force_update(
 
                 total_updated = 0
                 total_errors = 0
+
+                task = progress.add_task("正在强制更新...", total=len(symbol_list))
 
                 for idx, symbol in enumerate(symbol_list):
                     try:
@@ -876,11 +1062,8 @@ async def _run_force_update(
 
                         total_updated += count
 
-                        # 更新进度
-                        progress.update(
-                            task,
-                            completed=((idx + 1) / len(symbol_list)) * 100
-                        )
+                        # 更新进度（直接使用计数而非百分比）
+                        progress.update(task, completed=idx + 1)
 
                     except Exception as e:
                         total_errors += 1
