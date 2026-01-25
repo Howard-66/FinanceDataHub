@@ -158,6 +158,12 @@ def update(
       - pmi: 中国PMI采购经理人指数数据
       - index_dailybasic: 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）
 
+      - fina_indicator: 上市公司财务指标数据（每股收益、ROE、资产负债率等）
+
+    财务指标使用说明:
+    - 需要指定 --symbols 参数指定股票代码
+    - 支持 --start-date 和 --end-date 指定报告期范围
+
         index_dailybasic使用说明:
         - 不指定--symbols时：获取当日所有指数数据（增量更新）
         - 指定--symbols时：获取该指数的历史数据（如 --symbols 000001.SH --start-date 2024-01-01 --end-date 2024-12-31）
@@ -450,6 +456,31 @@ async def _run_smart_download(
                 console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
                 raise
 
+    # 财务指标数据处理
+    if data_type == "fina_indicator":
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - 财务指标数据（上市公司财务报表关键指标）")
+            console.print("  - 按股票代码获取历史财务数据")
+            console.print("")
+
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            try:
+                count = await updater.update_fina_indicator(
+                    symbols=symbol_list if symbol_list else None,
+                    start_date=None,  # 智能下载
+                    end_date=end_date,
+                    force_update=False,
+                )
+                if not quiet:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                else:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                return count
+            except Exception as e:
+                console.print(f"[bold red]ERROR:[/bold red] 更新财务指标数据失败: {str(e)}")
+                raise
+
     if not quiet:
         console.print("[bold]智能下载策略:[/bold]")
         console.print("  - 自动检测symbol是否存在于数据库")
@@ -710,6 +741,31 @@ async def _run_force_update(
                 return count
             except Exception as e:
                 console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
+                raise
+
+    # 财务指标数据处理
+    if data_type == "fina_indicator":
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 财务指标数据（上市公司财务报表关键指标）")
+            console.print("  - 使用指定的日期范围")
+            console.print("")
+
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            try:
+                count = await updater.update_fina_indicator(
+                    symbols=symbol_list if symbol_list else None,
+                    start_date=start_date,
+                    end_date=end_date,
+                    force_update=True,
+                )
+                if not quiet:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                else:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条财务指标数据")
+                return count
+            except Exception as e:
+                console.print(f"[bold red]ERROR:[/bold red] 更新财务指标数据失败: {str(e)}")
                 raise
 
     if not quiet:

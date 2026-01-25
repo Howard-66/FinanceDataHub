@@ -62,6 +62,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 中国货币供应量M0/M1/M2数据（月度）
 - 中国PMI采购经理人指数数据（月度）
 - 大盘指数每日指标数据（日度，上证综指、深证成指、上证50、中证500等）
+- 上市公司财务指标数据（每股收益、ROE、资产负债率等，季度）
 
 ## 高层架构设计
 
@@ -339,6 +340,11 @@ index_data = await fdh.get_index_dailybasic_async('000001.SH', '2024-01-01', '20
 print(f"上证综指每日指标: {len(index_data)} 条记录")
 print(index_data[['trade_date', 'total_mv', 'pe', 'pb', 'turnover_rate']])
 
+# 上市公司财务指标数据查询（使用报告期日期，如 2024-03-31 表示 2024Q1）
+fina_data = await fdh.get_fina_indicator_async('600519.SH', '2020-03-31', '2024-12-31')
+print(f"贵州茅台财务指标: {len(fina_data)} 条记录")
+print(fina_data[['ts_code', 'end_date', 'eps', 'roe', 'debt_to_assets', 'turn_days']].head())
+
 # 关闭连接
 await fdh.close()
 ```
@@ -394,6 +400,7 @@ print(f"建议: {freshness['recommendation']}")
 | 货币供应量 | `get_cn_m()` / `get_cn_m_async()` | start_date, end_date (月份末日期) |
 | PMI | `get_cn_pmi()` / `get_cn_pmi_async()` | start_date, end_date (月份末日期) |
 | 指数每日指标 | `get_index_dailybasic()` / `get_index_dailybasic_async()` | ts_code, start_date, end_date |
+| 财务指标 | `get_fina_indicator()` / `get_fina_indicator_async()` | ts_code, start_date, end_date (报告期) |
 
 **GDP数据说明**:
 - 日期格式使用季度末日期，如 `2024-03-31` 表示 2024Q1，`2024-06-30` 表示 2024Q2
@@ -426,6 +433,17 @@ print(f"建议: {freshness['recommendation']}")
   - `399005.SZ`: 中小板指
   - `399006.SZ`: 创业板指
 - 返回字段: `ts_code`, `trade_date`, `total_mv`, `float_mv`, `total_share`, `float_share`, `free_share`, `turnover_rate`, `turnover_rate_f`, `pe`, `pe_ttm`, `pb`
+
+**财务指标数据说明**:
+- 日期格式使用报告期日期，如 `2024-03-31` 表示 2024Q1，`2024-06-30` 表示 2024Q2
+- 财务数据为季度数据，通常在财报发布后更新
+- 支持按股票代码查询，如 `get_fina_indicator('600519.SH', '2020-03-31', '2024-12-31')`
+- 返回字段包含90+个财务指标，包括:
+  - 每股收益类: `eps`, `dt_eps`, `diluted2_eps`
+  - 盈利能力: `roe`, `roe_waa`, `roa`, `roic`, `netprofit_margin`, `grossprofit_margin`
+  - 偿债能力: `current_ratio`, `quick_ratio`, `debt_to_assets`
+  - 运营效率: `ar_turn`, `ca_turn`, `assets_turn`, `turn_days`
+  - 同比数据: `basic_eps_yoy`, `roe_yoy`, `netprofit_yoy` 等
 
 **频率选项** (用于 `get_minute`):
 - `minute_1` - 1分钟线
@@ -486,6 +504,12 @@ fdh-cli update --dataset index_dailybasic   # 智能增量更新
 fdh-cli update --dataset index_dailybasic --force  # 强制全量更新
 fdh-cli update --dataset index_dailybasic --start-date 2024-01-01 --end-date 2024-12-31  # 指定日期范围
 fdh-cli update --dataset index_dailybasic --symbols 000001.SH  # 指定指数代码
+
+# 更新财务指标数据
+fdh-cli update --dataset fina_indicator                    # 智能增量更新（需要指定股票）
+fdh-cli update --dataset fina_indicator --force            # 强制全量更新
+fdh-cli update --dataset fina_indicator --symbols 600519.SH,000858.SZ  # 指定股票代码
+fdh-cli update --dataset fina_indicator --symbols 600519.SH --start-date 2020-03-31 --end-date 2024-12-31  # 指定日期范围
 ```
 
 ### 高周期聚合管理

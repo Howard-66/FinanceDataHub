@@ -952,6 +952,49 @@ class FinanceDataHub:
         """
         return await self.ops.get_index_dailybasic(ts_code, start_date, end_date)
 
+    def get_fina_indicator(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取上市公司财务指标数据（同步方法）
+
+        Args:
+            ts_code: 股票代码（如 '600519.SH' 上证综指），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 财务指标数据，包含 ts_code, end_date_time 及所有指标字段
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_fina_indicator('600519.SH', '2020-01-01', '2024-12-31')
+            >>> print(data[['ts_code', 'end_date', 'eps', 'roe', 'debt_to_assets']])
+        """
+        return asyncio.run(self.get_fina_indicator_async(ts_code, start_date, end_date))
+
+    async def get_fina_indicator_async(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取上市公司财务指标数据（异步方法）
+
+        Args:
+            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 财务指标数据
+        """
+        return await self.ops.get_fina_indicator(ts_code, start_date, end_date)
+
     # ============================================================================
     # 资源管理
     # ============================================================================

@@ -860,6 +860,143 @@ class DataUpdater:
             logger.exception("Failed to update index_dailybasic data")
             raise
 
+    async def update_fina_indicator(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+    ) -> int:
+        """
+        更新财务指标数据
+
+        Args:
+            symbols: 股票代码列表，None表示从数据库获取所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示智能下载
+            end_date: 结束日期，None表示到最新
+            force_update: 是否强制更新（忽略数据库状态）
+
+        Returns:
+            int: 更新的记录数
+        """
+        # 确定日期
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+        logger.info(
+            f"Updating fina_indicator for {len(symbols) if symbols else 'all symbols'} symbols "
+            f"from {start_date or 'smart'} to {end_date} (force={force_update})"
+        )
+
+        # 如果没有指定股票，从数据库获取所有股票
+        if not symbols:
+            symbols = await self.data_ops.get_symbol_list()
+
+        if not symbols:
+            logger.warning("No symbols to update")
+            return 0
+
+        try:
+            total_records = 0
+
+            for symbol in symbols:
+                try:
+                    # 智能下载逻辑：确定该symbol的实际起始日期
+                    symbol_start_date = start_date
+
+                    if not force_update and not start_date:
+                        # 查询数据库最新记录
+                        latest_date = await self.data_ops.get_latest_fina_indicator_date(symbol)
+
+                        if latest_date:
+                            # 有记录，计算下一个报告期
+                            # 财务数据通常是季度数据，报告期为季度末（3/31, 6/30, 9/30, 12/31）
+                            # 获取下一个季度末
+                            next_quarter = self._get_next_quarter_end(latest_date)
+                            symbol_start_date = next_quarter
+                            if symbol_start_date > end_date:
+                                logger.debug(f"Skipping {symbol} - already up to date")
+                                continue
+                            logger.debug(f"Smart incremental: {symbol} from {symbol_start_date}")
+                        else:
+                            # 新股票，智能下载模式：传None让API获取全量数据
+                            symbol_start_date = None
+                            logger.info(f"Smart download: {symbol} - fetching full history")
+                    elif force_update:
+                        # 强制更新模式
+                        logger.debug(f"Force update: {symbol} from {symbol_start_date or 'beginning'}")
+
+                    # 从路由器获取数据
+                    data = self.router.route(
+                        asset_class="stock",
+                        data_type="fina_indicator",
+                        method_name="get_fina_indicator",
+                        ts_code=symbol,
+                        start_date=symbol_start_date,
+                        end_date=end_date,
+                    )
+
+                    if data is not None and not data.empty:
+                        # 插入数据库
+                        inserted = await self.data_ops.insert_fina_indicator_batch(
+                            data, batch_size=1000
+                        )
+                        total_records += inserted
+                        logger.info(f"Updated {inserted} fina_indicator records for {symbol}")
+                    else:
+                        logger.debug(f"No fina_indicator data for {symbol}")
+
+                except Exception as e:
+                    logger.error(f"Failed to update fina_indicator for {symbol}: {str(e)}")
+                    continue
+
+            logger.info(f"Updated total {total_records} fina_indicator records")
+            return total_records
+
+        except Exception as e:
+            logger.exception("Failed to update fina_indicator data")
+            raise
+
+    def _get_next_quarter_end(self, current_date: str) -> str:
+        """
+        获取下一个季度末日期
+
+        Args:
+            current_date: 当前日期（YYYY-MM-DD格式）
+
+        Returns:
+            str: 下一个季度末日期（YYYY-MM-DD格式）
+        """
+        from datetime import datetime
+        import calendar
+
+        current = datetime.strptime(current_date, "%Y-%m-%d")
+        year = current.year
+        month = current.month
+
+        # 当前季度：Q1(1-3), Q2(4-6), Q3(7-9), Q4(10-12)
+        # 找到下一个季度末
+        if month <= 3:
+            # Q1结束，下一个季度是Q2
+            next_month = 6
+            next_year = year
+        elif month <= 6:
+            # Q2结束，下一个季度是Q3
+            next_month = 9
+            next_year = year
+        elif month <= 9:
+            # Q3结束，下一个季度是Q4
+            next_month = 12
+            next_year = year
+        else:
+            # Q4结束，下一个季度是次年Q1
+            next_month = 3
+            next_year = year + 1
+
+        # 获取该月最后一天
+        last_day = calendar.monthrange(next_year, next_month)[1]
+        return f"{next_year:04d}-{next_month:02d}-{last_day:02d}"
+
     async def close(self) -> None:
         """关闭资源"""
         if self.db_manager:

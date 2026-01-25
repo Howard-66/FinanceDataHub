@@ -1750,3 +1750,170 @@ class DataOperations:
             rows = result.fetchall()
 
         return [row.ts_code for row in rows]
+
+    # ============================================================================
+    # 财务指标数据操作
+    # ============================================================================
+
+    async def insert_fina_indicator_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入财务指标数据
+
+        Args:
+            data: 包含财务指标数据的DataFrame
+            batch_size: 批处理大小
+
+        Returns:
+            int: 插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        # 财务指标字段列表（除了ts_code, ann_date, end_date, end_date_time）
+        indicator_columns = [
+            "eps", "dt_eps", "total_revenue_ps", "revenue_ps", "capital_rese_ps",
+            "surplus_rese_ps", "undist_profit_ps", "extra_item", "profit_dedt", "gross_margin",
+            "current_ratio", "quick_ratio", "cash_ratio", "ar_turn", "ca_turn", "fa_turn",
+            "assets_turn", "op_income", "ebit", "ebitda", "fcff", "fcfe", "current_exint",
+            "noncurrent_exint", "interestdebt", "netdebt", "tangible_asset", "working_capital",
+            "networking_capital", "invest_capital", "retained_earnings", "diluted2_eps",
+            "bps", "ocfps", "cfps", "ebit_ps", "netprofit_margin", "grossprofit_margin",
+            "profit_to_gr", "roe", "roe_waa", "roe_dt", "roa", "roic", "debt_to_assets",
+            "assets_to_eqt", "ca_to_assets", "nca_to_assets", "tbassets_to_totalassets",
+            "int_to_talcap", "eqt_to_talcapital", "currentdebt_to_debt", "longdeb_to_debt",
+            "debt_to_eqt", "eqt_to_debt", "eqt_to_interestdebt", "tangibleasset_to_debt",
+            "ocf_to_debt", "turn_days", "fixed_assets", "profit_prefin_exp", "non_op_profit",
+            "op_to_ebt", "q_opincome", "q_dtprofit", "q_eps", "q_netprofit_margin",
+            "q_gsprofit_margin", "q_profit_to_gr", "q_salescash_to_or", "q_ocf_to_sales",
+            "basic_eps_yoy", "dt_eps_yoy", "cfps_yoy", "op_yoy", "ebt_yoy", "netprofit_yoy",
+            "dt_netprofit_yoy", "ocf_yoy", "roe_yoy", "bps_yoy", "assets_yoy", "eqt_yoy",
+            "tr_yoy", "or_yoy", "q_gr_yoy", "q_sales_yoy", "q_op_yoy", "q_op_qoq",
+            "q_profit_yoy", "q_profit_qoq", "q_netprofit_yoy", "q_netprofit_qoq", "equity_yoy"
+        ]
+
+        # 构建INSERT语句
+        columns_str = ", ".join([
+            "ts_code", "ann_date", "end_date", "end_date_time"
+        ] + indicator_columns)
+        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "end_date", "end_date_time"] + indicator_columns])
+
+        # ON CONFLICT部分
+        update_parts = []
+        for col in ["ann_date", "end_date"] + indicator_columns:
+            update_parts.append(f"{col} = EXCLUDED.{col}")
+        update_str = ", ".join(update_parts)
+
+        insert_sql = f"""
+            INSERT INTO fina_indicator ({columns_str})
+            VALUES ({values_str})
+            ON CONFLICT (ts_code, end_date_time) DO UPDATE SET
+                {update_str},
+                updated_at = NOW()
+        """
+
+        total_inserted = 0
+
+        for i in range(0, len(data), batch_size):
+            batch = data.iloc[i : i + batch_size]
+            records = batch.to_dict("records")
+
+            # 处理NaN值和datetime
+            for record in records:
+                for key, value in record.items():
+                    if pd.isna(value):
+                        record[key] = None
+                    elif key == "end_date_time" or isinstance(value, pd.Timestamp):
+                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+
+            async with self.db_manager._engine.begin() as conn:
+                result = await conn.execute(text(insert_sql), records)
+                total_inserted += result.rowcount
+
+            logger.info(
+                f"Inserted batch {i // batch_size + 1}: "
+                f"{len(batch)} records (total: {total_inserted})"
+            )
+
+        logger.info(f"Total inserted {total_inserted} fina_indicator records")
+        return total_inserted
+
+    async def get_fina_indicator(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取财务指标数据
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期）
+            end_date: 结束日期（YYYY-MM-DD格式，报告期）
+
+        Returns:
+            Optional[pd.DataFrame]: 财务指标数据
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
+        # 构建查询条件
+        query = "SELECT * FROM fina_indicator WHERE 1=1"
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        if start_dt:
+            query += " AND end_date_time >= :start_date"
+            params["start_date"] = start_dt
+
+        if end_dt:
+            query += " AND end_date_time <= :end_date"
+            params["end_date"] = end_dt
+
+        query += " ORDER BY ts_code, end_date_time"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_latest_fina_indicator_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+        """
+        获取最新的财务指标数据日期
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示任意股票
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(end_date_time) as latest_date
+            FROM fina_indicator
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None

@@ -30,6 +30,7 @@ from finance_data_hub.providers.schema import (
     CNMSchema,
     CNPMISchema,
     IndexDailybasicSchema,
+    FinaIndicatorSchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -1891,4 +1892,145 @@ class TushareProvider(BaseDataProvider):
         final_df = validate_dataframe(final_df, IndexDailybasicSchema, provider_name=self.name)
 
         logger.info(f"Total fetched {len(final_df)} index dailybasic records")
+        return final_df
+
+    def get_fina_indicator(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取上市公司财务指标数据（自动处理Tushare 100条记录限制）
+
+        当返回记录数等于100时，自动继续获取更早的数据，确保获取完整历史数据。
+
+        Args:
+            ts_code: TS股票代码（如600001.SH/000001.SZ），支持多值（逗号分隔）
+            start_date: 报告期开始日期（YYYYMMDD格式）
+            end_date: 报告期结束日期（YYYYMMDD格式）
+
+        Returns:
+            pd.DataFrame: 标准格式的财务指标数据
+        """
+        logger.info(
+            f"Fetching fina_indicator data (ts_code={ts_code}, start_date={start_date}, end_date={end_date})"
+        )
+
+        # 转换日期格式
+        if start_date:
+            start_date = start_date.replace("-", "")
+        if end_date:
+            end_date = end_date.replace("-", "")
+
+        # Tushare API 记录限制常量
+        TUSHARE_MAX_RECORDS = 100
+
+        # 解析 ts_code 列表
+        ts_code_list = [c.strip() for c in ts_code.split(",") if c.strip()]
+
+        # 记录所有股票的数据
+        all_dataframes = []
+        total_records = 0
+
+        for code in ts_code_list:
+            logger.info(f"Fetching fina_indicator for {code}")
+            code_dataframes = []
+            current_end_date = end_date
+            batch_count = 0
+
+            while True:
+                batch_count += 1
+                # 构建API参数
+                api_params = {
+                    "ts_code": code,
+                    "fields": "ts_code,ann_date,end_date,eps,dt_eps,total_revenue_ps,revenue_ps,"
+                              "capital_rese_ps,surplus_rese_ps,undist_profit_ps,extra_item,profit_dedt,"
+                              "gross_margin,current_ratio,quick_ratio,cash_ratio,ar_turn,ca_turn,"
+                              "fa_turn,assets_turn,op_income,ebit,ebitda,fcff,fcfe,current_exint,"
+                              "noncurrent_exint,interestdebt,netdebt,tangible_asset,working_capital,"
+                              "networking_capital,invest_capital,retained_earnings,diluted2_eps,"
+                              "bps,ocfps,cfps,ebit_ps,netprofit_margin,grossprofit_margin,profit_to_gr,"
+                              "roe,roe_waa,roe_dt,roa,roic,debt_to_assets,assets_to_eqt,ca_to_assets,"
+                              "nca_to_assets,tbassets_to_totalassets,int_to_talcap,eqt_to_talcapital,"
+                              "currentdebt_to_debt,longdeb_to_debt,debt_to_eqt,eqt_to_debt,"
+                              "eqt_to_interestdebt,tangibleasset_to_debt,ocf_to_debt,turn_days,"
+                              "fixed_assets,profit_prefin_exp,non_op_profit,op_to_ebt,q_opincome,"
+                              "q_dtprofit,q_eps,q_netprofit_margin,q_gsprofit_margin,q_profit_to_gr,"
+                              "q_salescash_to_or,q_ocf_to_sales,basic_eps_yoy,dt_eps_yoy,cfps_yoy,"
+                              "op_yoy,ebt_yoy,netprofit_yoy,dt_netprofit_yoy,ocf_yoy,roe_yoy,bps_yoy,"
+                              "assets_yoy,eqt_yoy,tr_yoy,or_yoy,q_gr_yoy,q_sales_yoy,q_op_yoy,q_op_qoq,"
+                              "q_profit_yoy,q_profit_qoq,q_netprofit_yoy,q_netprofit_qoq,equity_yoy",
+                }
+                if start_date:
+                    api_params["start_date"] = start_date
+                if current_end_date:
+                    api_params["end_date"] = current_end_date.replace("-", "") if isinstance(current_end_date, str) else current_end_date
+
+                df = self._call_api("fina_indicator", **api_params)
+
+                if df.empty:
+                    logger.info(f"  Batch {batch_count}: No data returned, stopping")
+                    break
+
+                # 记录原始数据条数
+                batch_records = len(df)
+                logger.info(f"  Batch {batch_count}: Fetched {batch_records} records")
+
+                # 将 ann_date 和 end_date 转换为标准格式
+                # end_date 转换为时间序列格式 end_date_time
+                df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+
+                # 列名映射（财务指标字段保持原名，只需处理时间字段）
+                column_mapping = {
+                    "ts_code": "ts_code",
+                    "ann_date": "ann_date",
+                    "end_date": "end_date",
+                    "end_date_time": "end_date_time",
+                }
+
+                df = convert_to_standard_columns(df, column_mapping)
+
+                # 保留所有原始财务指标字段
+                for col in df.columns:
+                    if col not in ["ts_code", "ann_date", "end_date", "end_date_time"]:
+                        if col not in column_mapping:
+                            pass  # 保持原列名
+
+                code_dataframes.append(df)
+
+                # 检查是否需要继续获取更早的数据
+                if batch_records == TUSHARE_MAX_RECORDS and start_date is None:
+                    # 获取当前批次中最早的报告期
+                    earliest_date = df["end_date"].min()
+                    logger.info(f"  Batch {batch_count}: Max limit reached, fetching earlier data before {earliest_date}")
+                    current_end_date = earliest_date
+                    continue
+                else:
+                    break
+
+            # 合并该股票的数据
+            if code_dataframes:
+                code_df = pd.concat(code_dataframes, ignore_index=True)
+                all_dataframes.append(code_df)
+                total_records += len(code_df)
+                logger.info(f"  {code}: Total {len(code_df)} records")
+
+        # 合并所有股票的数据
+        if not all_dataframes:
+            logger.warning("No fina_indicator data returned from Tushare")
+            return pd.DataFrame(columns=FinaIndicatorSchema.get_required_columns())
+
+        # 合并DataFrame
+        final_df = pd.concat(all_dataframes, ignore_index=True)
+
+        # 去重（按ts_code和end_date_time）
+        final_df = final_df.drop_duplicates(subset=["ts_code", "end_date"]).sort_values(
+            ["ts_code", "end_date"]
+        ).reset_index(drop=True)
+
+        # 验证数据格式
+        final_df = validate_dataframe(final_df, FinaIndicatorSchema, provider_name=self.name)
+
+        logger.info(f"Total fetched {len(final_df)} fina_indicator records")
         return final_df

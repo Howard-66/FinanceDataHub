@@ -277,3 +277,120 @@ COMMENT ON COLUMN index_dailybasic.turnover_rate_f IS '换手率(基于自由流
 COMMENT ON COLUMN index_dailybasic.pe IS '市盈率';
 COMMENT ON COLUMN index_dailybasic.pe_ttm IS '市盈率TTM';
 COMMENT ON COLUMN index_dailybasic.pb IS '市净率';
+
+-- 上市公司财务指标数据表
+CREATE TABLE IF NOT EXISTS fina_indicator (
+    ts_code VARCHAR(20) NOT NULL,                     -- TS代码
+    ann_date VARCHAR(20) NOT NULL,                    -- 公告日期
+    end_date VARCHAR(20) NOT NULL,                    -- 报告期
+    end_date_time TIMESTAMPTZ NOT NULL,               -- 报告期（时间序列格式，如2024-12-31）
+    eps DECIMAL(15,4),                                -- 基本每股收益
+    dt_eps DECIMAL(15,4),                             -- 稀释每股收益
+    total_revenue_ps DECIMAL(15,4),                   -- 每股营业总收入
+    revenue_ps DECIMAL(15,4),                         -- 每股营业收入
+    capital_rese_ps DECIMAL(15,4),                    -- 每股资本公积
+    surplus_rese_ps DECIMAL(15,4),                    -- 每股盈余公积
+    undist_profit_ps DECIMAL(15,4),                   -- 每股未分配利润
+    extra_item DECIMAL(20,4),                         -- 非经常性损益
+    profit_dedt DECIMAL(20,4),                        -- 扣除非经常性损益后的净利润
+    gross_margin DECIMAL(20,4),                       -- 毛利
+    current_ratio DECIMAL(10,4),                      -- 流动比率
+    quick_ratio DECIMAL(10,4),                        -- 速动比率
+    cash_ratio DECIMAL(10,4),                         -- 保守速动比率
+    ar_turn DECIMAL(10,4),                            -- 应收账款周转率
+    ca_turn DECIMAL(10,4),                            -- 流动资产周转率
+    fa_turn DECIMAL(10,4),                            -- 固定资产周转率
+    assets_turn DECIMAL(10,4),                        -- 总资产周转率
+    op_income DECIMAL(20,4),                          -- 经营活动净收益
+    ebit DECIMAL(20,4),                               -- 息税前利润
+    ebitda DECIMAL(20,4),                             -- 息税折旧摊销前利润
+    fcff DECIMAL(20,4),                               -- 企业自由现金流量
+    fcfe DECIMAL(20,4),                               -- 股权自由现金流量
+    current_exint DECIMAL(20,4),                      -- 无息流动负债
+    noncurrent_exint DECIMAL(20,4),                   -- 无息非流动负债
+    interestdebt DECIMAL(20,4),                       -- 带息债务
+    netdebt DECIMAL(20,4),                            -- 净债务
+    tangible_asset DECIMAL(20,4),                     -- 有形资产
+    working_capital DECIMAL(20,4),                    -- 营运资金
+    networking_capital DECIMAL(20,4),                 -- 营运流动资本
+    invest_capital DECIMAL(20,4),                     -- 全部投入资本
+    retained_earnings DECIMAL(20,4),                  -- 留存收益
+    diluted2_eps DECIMAL(15,4),                       -- 期末摊薄每股收益
+    bps DECIMAL(15,4),                                -- 每股净资产
+    ocfps DECIMAL(15,4),                              -- 每股经营活动产生的现金流量净额
+    cfps DECIMAL(15,4),                               -- 每股现金流量净额
+    ebit_ps DECIMAL(15,4),                            -- 每股息税前利润
+    netprofit_margin DECIMAL(10,4),                   -- 销售净利率
+    grossprofit_margin DECIMAL(10,4),                 -- 销售毛利率
+    profit_to_gr DECIMAL(10,4),                       -- 净利润/营业总收入
+    roe DECIMAL(10,4),                                -- 净资产收益率
+    roe_waa DECIMAL(10,4),                            -- 加权平均净资产收益率
+    roe_dt DECIMAL(10,4),                             -- 净资产收益率(扣除非经常损益)
+    roa DECIMAL(10,4),                                -- 总资产报酬率
+    roic DECIMAL(10,4),                               -- 投入资本回报率
+    debt_to_assets DECIMAL(10,4),                     -- 资产负债率
+    assets_to_eqt DECIMAL(10,4),                      -- 权益乘数
+    ca_to_assets DECIMAL(10,4),                       -- 流动资产/总资产
+    nca_to_assets DECIMAL(10,4),                      -- 非流动资产/总资产
+    tbassets_to_totalassets DECIMAL(10,4),            -- 有形资产/总资产
+    int_to_talcap DECIMAL(10,4),                      -- 带息债务/全部投入资本
+    eqt_to_talcapital DECIMAL(10,4),                  -- 归属于母公司的股东权益/全部投入资本
+    currentdebt_to_debt DECIMAL(10,4),                -- 流动负债/负债合计
+    longdeb_to_debt DECIMAL(10,4),                    -- 非流动负债/负债合计
+    debt_to_eqt DECIMAL(10,4),                        -- 产权比率
+    eqt_to_debt DECIMAL(10,4),                        -- 归属于母公司的股东权益/负债合计
+    eqt_to_interestdebt DECIMAL(10,4),                -- 归属于母公司的股东权益/带息债务
+    tangibleasset_to_debt DECIMAL(10,4),              -- 有形资产/负债合计
+    ocf_to_debt DECIMAL(10,4),                        -- 经营活动产生的现金流量净额/负债合计
+    turn_days DECIMAL(10,2),                          -- 营业周期
+    fixed_assets DECIMAL(20,4),                       -- 固定资产合计
+    profit_prefin_exp DECIMAL(20,4),                  -- 扣除财务费用前营业利润
+    non_op_profit DECIMAL(20,4),                      -- 非营业利润
+    op_to_ebt DECIMAL(10,4),                          -- 营业利润／利润总额
+    q_opincome DECIMAL(20,4),                         -- 经营活动单季度净收益
+    q_dtprofit DECIMAL(20,4),                         -- 扣除非经常损益后的单季度净利润
+    q_eps DECIMAL(15,4),                              -- 每股收益(单季度)
+    q_netprofit_margin DECIMAL(10,4),                 -- 销售净利率(单季度)
+    q_gsprofit_margin DECIMAL(10,4),                  -- 销售毛利率(单季度)
+    q_profit_to_gr DECIMAL(10,4),                     -- 净利润／营业总收入(单季度)
+    q_salescash_to_or DECIMAL(10,4),                  -- 销售商品提供劳务收到的现金／营业收入(单季度)
+    q_ocf_to_sales DECIMAL(10,4),                     -- 经营活动产生的现金流量净额／营业收入(单季度)
+    basic_eps_yoy DECIMAL(10,4),                      -- 基本每股收益同比增长率(%)
+    dt_eps_yoy DECIMAL(10,4),                         -- 稀释每股收益同比增长率(%)
+    cfps_yoy DECIMAL(10,4),                           -- 每股经营活动产生的现金流量净额同比增长率(%)
+    op_yoy DECIMAL(10,4),                             -- 营业利润同比增长率(%)
+    ebt_yoy DECIMAL(10,4),                            -- 利润总额同比增长率(%)
+    netprofit_yoy DECIMAL(10,4),                      -- 归属母公司股东的净利润同比增长率(%)
+    dt_netprofit_yoy DECIMAL(10,4),                   -- 归属母公司股东的净利润-扣除非经常损益同比增长率(%)
+    ocf_yoy DECIMAL(10,4),                            -- 经营活动产生的现金流量净额同比增长率(%)
+    roe_yoy DECIMAL(10,4),                            -- 净资产收益率(摊薄)同比增长率(%)
+    bps_yoy DECIMAL(10,4),                            -- 每股净资产相对年初增长率(%)
+    assets_yoy DECIMAL(10,4),                         -- 资产总计相对年初增长率(%)
+    eqt_yoy DECIMAL(10,4),                            -- 归属母公司的股东权益相对年初增长率(%)
+    tr_yoy DECIMAL(10,4),                             -- 营业总收入同比增长率(%)
+    or_yoy DECIMAL(10,4),                             -- 营业收入同比增长率(%)
+    q_gr_yoy DECIMAL(10,4),                           -- 营业总收入同比增长率(%)(单季度)
+    q_sales_yoy DECIMAL(10,4),                        -- 营业收入同比增长率(%)(单季度)
+    q_op_yoy DECIMAL(10,4),                           -- 营业利润同比增长率(%)(单季度)
+    q_op_qoq DECIMAL(10,4),                           -- 营业利润环比增长率(%)(单季度)
+    q_profit_yoy DECIMAL(10,4),                       -- 净利润同比增长率(%)(单季度)
+    q_profit_qoq DECIMAL(10,4),                       -- 净利润环比增长率(%)(单季度)
+    q_netprofit_yoy DECIMAL(10,4),                    -- 归属母公司股东的净利润同比增长率(%)(单季度)
+    q_netprofit_qoq DECIMAL(10,4),                    -- 归属母公司股东的净利润环比增长率(%)(单季度)
+    equity_yoy DECIMAL(10,4),                         -- 净资产同比增长率
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts_code, end_date_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fina_indicator_end_date ON fina_indicator(end_date_time);
+CREATE INDEX IF NOT EXISTS idx_fina_indicator_ann_date ON fina_indicator(ann_date);
+
+COMMENT ON TABLE fina_indicator IS '上市公司财务指标数据表';
+COMMENT ON COLUMN fina_indicator.ts_code IS 'TS代码';
+COMMENT ON COLUMN fina_indicator.ann_date IS '公告日期';
+COMMENT ON COLUMN fina_indicator.end_date IS '报告期';
+COMMENT ON COLUMN fina_indicator.end_date_time IS '报告期（时间序列格式，用于增量更新）';
+COMMENT ON COLUMN fina_indicator.eps IS '基本每股收益';
+COMMENT ON COLUMN fina_indicator.roe IS '净资产收益率(%)';
+COMMENT ON COLUMN fina_indicator.debt_to_assets IS '资产负债率(%)';
