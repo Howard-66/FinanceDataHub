@@ -852,3 +852,78 @@ COMMENT ON COLUMN income.income_tax IS '所得税费用';
 COMMENT ON COLUMN income.n_income IS '净利润(含少数股东损益)';
 COMMENT ON COLUMN income.ebit IS '息税前利润';
 COMMENT ON COLUMN income.ebitda IS '息税折旧摊销前利润';
+
+
+-- ======================================
+-- 申万行业分类数据表
+-- ======================================
+
+-- 申万行业分类表
+CREATE TABLE IF NOT EXISTS sw_industry_classify (
+    index_code VARCHAR(30) NOT NULL,              -- 指数代码，如801010
+    industry_name VARCHAR(100) NOT NULL,          -- 行业名称
+    parent_code VARCHAR(30),                      -- 父级代码，L1的parent_code为0
+    level VARCHAR(5) NOT NULL,                    -- 行业层级：L1/L2/L3
+    industry_code VARCHAR(30) NOT NULL,           -- 行业代码
+    is_pub VARCHAR(5),                            -- 是否发布指数
+    src VARCHAR(20),                              -- 行业分类来源：SW2014/SW2021
+    update_time TIMESTAMPTZ,                      -- 更新时间
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (index_code, industry_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sw_classify_level ON sw_industry_classify(level);
+CREATE INDEX IF NOT EXISTS idx_sw_classify_parent ON sw_industry_classify(parent_code);
+CREATE INDEX IF NOT EXISTS idx_sw_classify_industry_code ON sw_industry_classify(industry_code);
+
+COMMENT ON TABLE sw_industry_classify IS '申万行业分类表 - 存储申万2014/2021年版行业分类';
+COMMENT ON COLUMN sw_industry_classify.index_code IS '指数代码，如801010';
+COMMENT ON COLUMN sw_industry_classify.industry_name IS '行业名称';
+COMMENT ON COLUMN sw_industry_classify.parent_code IS '父级代码，L1的parent_code为0';
+COMMENT ON COLUMN sw_industry_classify.level IS '行业层级：L1/L2/L3';
+COMMENT ON COLUMN sw_industry_classify.industry_code IS '行业代码，如801010表示一级行业，801010.SI表示二级';
+COMMENT ON COLUMN sw_industry_classify.is_pub IS '是否发布指数';
+COMMENT ON COLUMN sw_industry_classify.src IS '行业分类来源：SW2014（申万2014版）或SW2021（申万2021版）';
+
+-- 申万行业成分股表
+CREATE TABLE IF NOT EXISTS sw_industry_member (
+    index_code VARCHAR(30) NOT NULL,              -- 指数代码，如801010
+    l1_code VARCHAR(30) NOT NULL,                 -- 一级行业代码，如801010
+    l1_name VARCHAR(100) NOT NULL,                -- 一级行业名称
+    l2_code VARCHAR(30) NOT NULL,                 -- 二级行业代码，如801010.SI
+    l2_name VARCHAR(100) NOT NULL,                -- 二级行业名称
+    l3_code VARCHAR(30) NOT NULL,                 -- 三级行业代码，如801010.SI10
+    l3_name VARCHAR(100) NOT NULL,                -- 三级行业名称
+    ts_code VARCHAR(20) NOT NULL,                 -- 成分股票代码，如600519.SH
+    name VARCHAR(100),                            -- 成分股票名称
+    in_date DATE,                                 -- 纳入日期
+    out_date DATE,                                -- 剔除日期
+    is_new VARCHAR(5),                            -- 是否最新：Y/N
+    update_time TIMESTAMPTZ,                      -- 更新时间
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (l3_code, ts_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sw_member_index_code ON sw_industry_member(index_code);
+CREATE INDEX IF NOT EXISTS idx_sw_member_l1 ON sw_industry_member(l1_code);
+CREATE INDEX IF NOT EXISTS idx_sw_member_l2 ON sw_industry_member(l2_code);
+CREATE INDEX IF NOT EXISTS idx_sw_member_l3 ON sw_industry_member(l3_code);
+CREATE INDEX IF NOT EXISTS idx_sw_member_ts_code ON sw_industry_member(ts_code);
+CREATE INDEX IF NOT EXISTS idx_sw_member_in_date ON sw_industry_member(in_date);
+CREATE INDEX IF NOT EXISTS idx_sw_member_out_date ON sw_industry_member(out_date);
+
+COMMENT ON TABLE sw_industry_member IS '申万行业成分股表 - 存储申万行业分类的成分股票';
+COMMENT ON COLUMN sw_industry_member.index_code IS '指数代码，如801010';
+COMMENT ON COLUMN sw_industry_member.l1_code IS '一级行业代码，如801010';
+COMMENT ON COLUMN sw_industry_member.l1_name IS '一级行业名称';
+COMMENT ON COLUMN sw_industry_member.l2_code IS '二级行业代码，如801010.SI';
+COMMENT ON COLUMN sw_industry_member.l2_name IS '二级行业名称';
+COMMENT ON COLUMN sw_industry_member.l3_code IS '三级行业代码，如801010.SI10';
+COMMENT ON COLUMN sw_industry_member.l3_name IS '三级行业名称';
+COMMENT ON COLUMN sw_industry_member.ts_code IS '成分股票代码，如600519.SH';
+COMMENT ON COLUMN sw_industry_member.name IS '成分股票名称';
+COMMENT ON COLUMN sw_industry_member.in_date IS '纳入日期';
+COMMENT ON COLUMN sw_industry_member.out_date IS '剔除日期';
+COMMENT ON COLUMN sw_industry_member.is_new IS '是否最新：Y-是，N-否';

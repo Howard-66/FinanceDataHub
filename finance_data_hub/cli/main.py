@@ -755,6 +755,80 @@ async def _run_smart_download(
                     console.print(f"[bold red]ERROR:[/bold red] 更新利润表数据失败: {str(e)}")
                     raise
 
+    # 申万行业分类数据处理
+    if data_type == "sw_industry_classify":
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - 申万行业分类数据（一级/二级/三级行业）")
+            console.print("  - 获取申万2021年版行业分类")
+            console.print("")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取申万行业分类...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_sw_industry_classify(
+                        level="L1",
+                        src="SW2021",
+                        force_update=False,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条行业分类数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条行业分类数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新行业分类数据失败: {str(e)}")
+                    raise
+
+    # 申万行业成分股数据处理
+    if data_type == "sw_industry_member":
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - 申万行业成分股数据")
+            console.print("  - 按一级行业逐个下载成分股")
+            console.print("  - 进度按行业计算")
+            console.print("")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取申万行业成分股...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=(current / total) * 100)
+
+                try:
+                    count = await updater.update_sw_industry_members(
+                        l1_code=None,  # 下载所有行业
+                        force_update=False,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条成分股数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条成分股数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新成分股数据失败: {str(e)}")
+                    raise
+
     if not quiet:
         console.print("[bold]智能下载策略:[/bold]")
         console.print("  - 自动检测symbol是否存在于数据库")
@@ -1123,6 +1197,80 @@ async def _run_force_update(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新财务指标数据失败: {str(e)}")
+                    raise
+
+    # 申万行业分类数据处理（强制更新）
+    if data_type == "sw_industry_classify":
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 申万行业分类数据（一级/二级/三级行业）")
+            console.print("  - 强制重新获取所有数据")
+            console.print("")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取申万行业分类...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_sw_industry_classify(
+                        level="L1",
+                        src="SW2021",
+                        force_update=True,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条行业分类数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条行业分类数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新行业分类数据失败: {str(e)}")
+                    raise
+
+    # 申万行业成分股数据处理（强制更新）
+    if data_type == "sw_industry_member":
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 申万行业成分股数据")
+            console.print("  - 按一级行业逐个下载成分股")
+            console.print("  - 强制重新获取所有数据")
+            console.print("")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取申万行业成分股...", total=100)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=(current / total) * 100)
+
+                try:
+                    count = await updater.update_sw_industry_members(
+                        l1_code=None,  # 下载所有行业
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条成分股数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条成分股数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新成分股数据失败: {str(e)}")
                     raise
 
     if not quiet:

@@ -808,6 +808,48 @@ IncomeSchema = DataFrameSchema(
 
 
 # ===========================
+# 申万行业分类 Schema
+# ===========================
+
+
+# 申万行业分类 Schema
+SwIndustryClassifySchema = DataFrameSchema(
+    name="sw_industry_classify",
+    description="申万行业分类",
+    columns=[
+        ColumnSchema("index_code", "object", False, "指数代码"),
+        ColumnSchema("industry_name", "object", False, "行业名称"),
+        ColumnSchema("parent_code", "object", True, "父级代码"),
+        ColumnSchema("level", "object", False, "行业层级 (L1/L2/L3)"),
+        ColumnSchema("industry_code", "object", False, "行业代码"),
+        ColumnSchema("is_pub", "object", True, "是否发布指数"),
+        ColumnSchema("src", "object", True, "行业分类来源"),
+    ],
+)
+
+
+# 申万行业成分股 Schema
+SwIndustryMemberSchema = DataFrameSchema(
+    name="sw_industry_member",
+    description="申万行业成分股",
+    columns=[
+        ColumnSchema("index_code", "object", False, "指数代码"),
+        ColumnSchema("l1_code", "object", False, "一级行业代码"),
+        ColumnSchema("l1_name", "object", False, "一级行业名称"),
+        ColumnSchema("l2_code", "object", False, "二级行业代码"),
+        ColumnSchema("l2_name", "object", False, "二级行业名称"),
+        ColumnSchema("l3_code", "object", False, "三级行业代码"),
+        ColumnSchema("l3_name", "object", False, "三级行业名称"),
+        ColumnSchema("ts_code", "object", False, "成分股票代码"),
+        ColumnSchema("name", "object", True, "成分股票名称"),
+        ColumnSchema("in_date", "datetime64[ns]", True, "纳入日期"),
+        ColumnSchema("out_date", "datetime64[ns]", True, "剔除日期"),
+        ColumnSchema("is_new", "object", True, "是否最新Y/N"),
+    ],
+)
+
+
+# ===========================
 # 验证函数
 # ===========================
 

@@ -3196,3 +3196,262 @@ class DataOperations:
             return row.latest_date.strftime("%Y-%m-%d")
 
         return None
+
+    # ===========================
+    # 申万行业分类数据操作
+    # ===========================
+
+    async def insert_sw_industry_classify_batch(self, data: pd.DataFrame, batch_size: int = 1000) -> int:
+        """
+        批量插入申万行业分类数据
+
+        Args:
+            data: 包含申万行业分类数据的DataFrame
+            batch_size: 批处理大小
+
+        Returns:
+            int: 插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        # 准备插入语句
+        insert_sql = """
+            INSERT INTO sw_industry_classify (
+                index_code, industry_name, parent_code, level,
+                industry_code, is_pub, src
+            )
+            VALUES (
+                :index_code, :industry_name, :parent_code, :level,
+                :industry_code, :is_pub, :src
+            )
+            ON CONFLICT (index_code, industry_code) DO UPDATE SET
+                industry_name = EXCLUDED.industry_name,
+                parent_code = EXCLUDED.parent_code,
+                level = EXCLUDED.level,
+                is_pub = EXCLUDED.is_pub,
+                src = EXCLUDED.src,
+                updated_at = NOW()
+        """
+
+        total_inserted = 0
+
+        # 按批插入
+        for i in range(0, len(data), batch_size):
+            batch = data.iloc[i : i + batch_size]
+
+            # 转换为记录列表
+            records = batch.to_dict("records")
+
+            # 处理NaT值和NaN值
+            for record in records:
+                for key, value in record.items():
+                    if pd.isna(value):
+                        record[key] = None
+
+            async with self.db_manager._engine.begin() as conn:
+                result = await conn.execute(text(insert_sql), records)
+                total_inserted += result.rowcount
+
+            logger.info(
+                f"Inserted batch {i // batch_size + 1}: "
+                f"{len(batch)} records (total: {total_inserted})"
+            )
+
+        logger.info(f"Total inserted {total_inserted} records to sw_industry_classify")
+        return total_inserted
+
+    async def get_sw_industry_classify(self, level: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """
+        查询申万行业分类
+
+        Args:
+            level: 行业层级 (L1/L2/L3)，None表示所有层级
+
+        Returns:
+            Optional[pd.DataFrame]: 申万行业分类数据
+        """
+        query = """
+            SELECT index_code, industry_name, parent_code, level,
+                   industry_code, is_pub, src, update_time
+            FROM sw_industry_classify
+            WHERE 1=1
+        """
+        params = {}
+
+        if level:
+            query += " AND level = :level"
+            params["level"] = level
+
+        query += " ORDER BY industry_code"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+            if rows:
+                columns = result.keys()
+                data = pd.DataFrame(rows, columns=columns)
+                return data
+
+        return None
+
+    async def get_sw_l1_industry_codes(self) -> List[str]:
+        """
+        获取所有一级行业代码列表
+
+        Returns:
+            List[str]: 一级行业代码列表
+        """
+        query = """
+            SELECT DISTINCT industry_code
+            FROM sw_industry_classify
+            WHERE level = 'L1'
+            ORDER BY industry_code
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query))
+            rows = result.fetchall()
+
+        return [row.industry_code for row in rows if row.industry_code]
+
+    # ===========================
+    # 申万行业成分股数据操作
+    # ===========================
+
+    async def insert_sw_industry_member_batch(self, data: pd.DataFrame, batch_size: int = 1000) -> int:
+        """
+        批量插入申万行业成分股数据
+
+        Args:
+            data: 包含申万行业成分股数据的DataFrame
+            batch_size: 批处理大小
+
+        Returns:
+            int: 插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        # 准备插入语句
+        insert_sql = """
+            INSERT INTO sw_industry_member (
+                index_code, l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
+                ts_code, name, in_date, out_date, is_new
+            )
+            VALUES (
+                :index_code, :l1_code, :l1_name, :l2_code, :l2_name, :l3_code, :l3_name,
+                :ts_code, :name, :in_date, :out_date, :is_new
+            )
+            ON CONFLICT (l3_code, ts_code) DO UPDATE SET
+                index_code = EXCLUDED.index_code,
+                l1_code = EXCLUDED.l1_code,
+                l1_name = EXCLUDED.l1_name,
+                l2_code = EXCLUDED.l2_code,
+                l2_name = EXCLUDED.l2_name,
+                l3_name = EXCLUDED.l3_name,
+                name = EXCLUDED.name,
+                in_date = EXCLUDED.in_date,
+                out_date = EXCLUDED.out_date,
+                is_new = EXCLUDED.is_new,
+                updated_at = NOW()
+        """
+
+        total_inserted = 0
+
+        # 按批插入
+        for i in range(0, len(data), batch_size):
+            batch = data.iloc[i : i + batch_size]
+
+            # 转换为记录列表
+            records = batch.to_dict("records")
+
+            # 处理NaT值和NaN值
+            for record in records:
+                for key, value in record.items():
+                    if pd.isna(value):
+                        record[key] = None
+                    elif key in ("in_date", "out_date") and isinstance(value, pd.Timestamp):
+                        # 转换时间戳为Python datetime
+                        record[key] = value.to_pydatetime()
+
+            async with self.db_manager._engine.begin() as conn:
+                result = await conn.execute(text(insert_sql), records)
+                total_inserted += result.rowcount
+
+            logger.info(
+                f"Inserted batch {i // batch_size + 1}: "
+                f"{len(batch)} records (total: {total_inserted})"
+            )
+
+        logger.info(f"Total inserted {total_inserted} records to sw_industry_member")
+        return total_inserted
+
+    async def get_sw_industry_members(
+        self,
+        l1_code: Optional[str] = None,
+        l2_code: Optional[str] = None,
+        l3_code: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        查询申万行业成分股
+
+        Args:
+            l1_code: 一级行业代码
+            l2_code: 二级行业代码
+            l3_code: 三级行业代码
+
+        Returns:
+            Optional[pd.DataFrame]: 申万行业成分股数据
+        """
+        query = """
+            SELECT l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
+                   ts_code, name, in_date, out_date, is_new, update_time
+            FROM sw_industry_member
+            WHERE 1=1
+        """
+        params = {}
+
+        if l1_code:
+            query += " AND l1_code = :l1_code"
+            params["l1_code"] = l1_code
+        if l2_code:
+            query += " AND l2_code = :l2_code"
+            params["l2_code"] = l2_code
+        if l3_code:
+            query += " AND l3_code = :l3_code"
+            params["l3_code"] = l3_code
+
+        query += " ORDER BY l1_code, l2_code, l3_code, ts_code"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+            if rows:
+                columns = result.keys()
+                data = pd.DataFrame(rows, columns=columns)
+                return data
+
+        return None
+
+    async def get_sw_industry_member_count(self, l3_code: str) -> int:
+        """
+        获取指定三级行业的成分股数量
+
+        Args:
+            l3_code: 三级行业代码
+
+        Returns:
+            int: 成分股数量
+        """
+        query = """
+            SELECT COUNT(*) as cnt
+            FROM sw_industry_member
+            WHERE l3_code = :l3_code
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), {"l3_code": l3_code})
+            row = result.fetchone()
+
+        return row.cnt if row else 0

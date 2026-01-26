@@ -7,6 +7,7 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pathlib import Path
+import time
 import pandas as pd
 from loguru import logger
 
@@ -1335,6 +1336,188 @@ class DataUpdater:
         # 获取该月最后一天
         last_day = calendar.monthrange(next_year, next_month)[1]
         return f"{next_year:04d}-{next_month:02d}-{last_day:02d}"
+
+    # ============================================================================
+    # 申万行业数据更新方法
+    # ============================================================================
+
+    async def update_sw_industry_classify(
+        self,
+        level: str = "L1",
+        src: str = "SW2021",
+        force_update: bool = False,
+    ) -> int:
+        """
+        更新申万行业分类数据
+
+        Args:
+            level: 行业层级 (L1/L2/L3)
+            src: 行业分类来源 (SW2014/SW2021)
+            force_update: 是否强制更新
+
+        Returns:
+            int: 更新的记录数
+        """
+        logger.info(
+            f"Updating Shenwan industry classify (level={level}, src={src}, force={force_update})"
+        )
+
+        try:
+            total_inserted = 0
+
+            # 获取并存储所有级别的行业分类数据（L1, L2, L3）
+            for lvl in ["L1", "L2", "L3"]:
+                data = self.router.route(
+                    asset_class="index",
+                    data_type="sw_classify",
+                    method_name="get_sw_industry_classify",
+                    level=lvl,
+                    src=src,
+                )
+
+                if data is None or data.empty:
+                    logger.warning(f"No {lvl} industry classify data received")
+                    continue
+
+                # 插入数据库
+                inserted_count = await self.data_ops.insert_sw_industry_classify_batch(data)
+                total_inserted += inserted_count
+                logger.info(f"Inserted {inserted_count} {lvl} industry classify records")
+
+            logger.info(f"Updated total {total_inserted} industry classify records")
+            return total_inserted
+
+        except Exception as e:
+            logger.exception("Failed to update industry classify")
+            raise
+
+    async def update_sw_industry_members(
+        self,
+        l1_code: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """
+        更新申万行业成分股数据（按一级行业逐个下载）
+
+        Args:
+            l1_code: 一级行业代码，None表示更新所有行业
+            force_update: 是否强制更新
+            progress_callback: 进度回调函数 (current, total)
+
+        Returns:
+            int: 更新的记录数
+        """
+        logger.info(
+            f"Updating Shenwan industry members (l1={l1_code}, force={force_update})"
+        )
+
+        try:
+            # 如果没有指定一级行业代码，先获取所有一级行业
+            if not l1_code:
+                # 确保行业分类已下载
+                classify_data = self.router.route(
+                    asset_class="index",
+                    data_type="sw_classify",
+                    method_name="get_sw_industry_classify",
+                    level="L1",
+                    src="SW2021",
+                )
+
+                if classify_data is None or classify_data.empty:
+                    logger.warning("No industry classify data, please update classify first")
+                    return 0
+
+                l1_codes = classify_data["industry_code"].tolist()
+                logger.info(f"Found {len(l1_codes)} level-1 industries")
+            else:
+                l1_codes = [l1_code]
+
+            total_industries = len(l1_codes)
+            total_records = 0
+            completed = 0
+
+            # 预先获取所有L2和L3行业数据（只获取一次）
+            l2_data = self.router.route(
+                asset_class="index",
+                data_type="sw_classify",
+                method_name="get_sw_industry_classify",
+                level="L2",
+                src="SW2021",
+            )
+
+            l3_data = self.router.route(
+                asset_class="index",
+                data_type="sw_classify",
+                method_name="get_sw_industry_classify",
+                level="L3",
+                src="SW2021",
+            )
+
+            if l3_data is None or l3_data.empty:
+                logger.warning("No L3 industry classify data")
+                return 0
+
+            logger.info(f"Found {len(l3_data)} L3 industries total")
+
+            for l1_code_item in l1_codes:
+                try:
+                    # 步骤1: 筛选属于当前一级行业的所有二级行业
+                    l2_codes = l2_data[l2_data["parent_code"] == l1_code_item]["industry_code"].tolist() if l2_data is not None and not l2_data.empty else []
+
+                    if not l2_codes:
+                        # 如果没有L2数据，直接跳过
+                        completed += 1
+                        if progress_callback:
+                            progress_callback(completed, total_industries)
+                        continue
+
+                    # 步骤2: 筛选属于这些二级行业的所有三级行业
+                    l3_codes = l3_data[l3_data["parent_code"].isin(l2_codes)]["industry_code"].tolist()
+
+                    if not l3_codes:
+                        completed += 1
+                        if progress_callback:
+                            progress_callback(completed, total_industries)
+                        continue
+
+                    logger.info(f"L1 {l1_code_item}: found {len(l2_codes)} L2, {len(l3_codes)} L3 industries")
+
+                    # 步骤3: 获取每个三级行业的成分股
+                    industry_data = []
+                    for l3_code in l3_codes:
+                        data = self.router.route(
+                            asset_class="index",
+                            data_type="sw_member",
+                            method_name="get_sw_industry_members",
+                            index_code=l3_code,  # Tushare API uses index_code
+                        )
+                        if data is not None and not data.empty:
+                            industry_data.append(data)
+
+                        # API限流
+                        time.sleep(0.3)
+
+                    if industry_data:
+                        all_data = pd.concat(industry_data, ignore_index=True)
+                        inserted = await self.data_ops.insert_sw_industry_member_batch(all_data)
+                        total_records += inserted
+                        logger.info(f"Industry {l1_code_item}: inserted {inserted} member records")
+
+                except Exception as e:
+                    logger.error(f"Failed to update members for industry {l1_code_item}: {str(e)}")
+                    continue
+
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, total_industries)
+
+            logger.info(f"Updated total {total_records} industry member records")
+            return total_records
+
+        except Exception as e:
+            logger.exception("Failed to update industry members")
+            raise
 
     async def close(self) -> None:
         """关闭资源"""

@@ -34,6 +34,8 @@ from finance_data_hub.providers.schema import (
     CashflowSchema,
     BalancesheetSchema,
     IncomeSchema,
+    SwIndustryClassifySchema,
+    SwIndustryMemberSchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -2541,3 +2543,140 @@ class TushareProvider(BaseDataProvider):
 
         logger.info(f"Total fetched {len(final_df)} income records")
         return final_df
+
+    def get_sw_industry_classify(
+        self,
+        level: str = "L1",
+        src: str = "SW2021",
+    ) -> pd.DataFrame:
+        """
+        获取申万行业分类列表
+
+        Args:
+            level: 行业分级 (L1/L2/L3)
+            src: 指数来源 (SW2014: 申万2014年版本, SW2021: 申万2021年版本)
+
+        Returns:
+            pd.DataFrame: 标准格式的申万行业分类数据
+        """
+        logger.info(f"Fetching Shenwan industry classify (level={level}, src={src})")
+
+        # 构建API参数
+        api_params = {
+            "fields": "index_code,industry_name,parent_code,level,industry_code,is_pub,src",
+        }
+        if level:
+            api_params["level"] = level
+        if src:
+            api_params["src"] = src
+
+        # 调用API
+        df = self._call_api("index_classify", **api_params)
+
+        if df.empty:
+            logger.warning("No Shenwan industry classify data returned from Tushare")
+            return pd.DataFrame(columns=SwIndustryClassifySchema.get_required_columns())
+
+        # 列名映射（Tushare字段名与标准字段名相同）
+        column_mapping = {
+            "index_code": "index_code",
+            "industry_name": "industry_name",
+            "parent_code": "parent_code",
+            "level": "level",
+            "industry_code": "industry_code",
+            "is_pub": "is_pub",
+            "src": "src",
+        }
+
+        df = convert_to_standard_columns(df, column_mapping)
+
+        # 验证数据格式
+        df = validate_dataframe(df, SwIndustryClassifySchema, provider_name=self.name)
+
+        logger.info(f"Total fetched {len(df)} Shenwan industry classify records")
+        return df
+
+    def get_sw_industry_members(
+        self,
+        index_code: Optional[str] = None,
+        l1_code: Optional[str] = None,
+        l2_code: Optional[str] = None,
+        l3_code: Optional[str] = None,
+        ts_code: Optional[str] = None,
+        is_new: str = "Y",
+    ) -> pd.DataFrame:
+        """
+        获取申万行业成分股（按三级分类提取）
+
+        Args:
+            index_code: 指数代码（行业代码，如801010）
+            l1_code: 一级行业代码
+            l2_code: 二级行业代码
+            l3_code: 三级行业代码
+            ts_code: 股票代码
+            is_new: 是否最新 (默认为Y)
+
+        Returns:
+            pd.DataFrame: 标准格式的申万行业成分股数据
+        """
+        logger.info(
+            f"Fetching Shenwan industry members (index_code={index_code}, l1={l1_code}, l2={l2_code}, l3={l3_code}, ts_code={ts_code})"
+        )
+
+        # 构建API参数
+        api_params = {
+            "fields": "index_code,l1_code,l1_name,l2_code,l2_name,l3_code,l3_name,ts_code,name,in_date,out_date,is_new",
+        }
+        if index_code:
+            api_params["index_code"] = index_code
+        if l1_code:
+            api_params["l1_code"] = l1_code
+        if l2_code:
+            api_params["l2_code"] = l2_code
+        if l3_code:
+            api_params["l3_code"] = l3_code
+        if ts_code:
+            api_params["ts_code"] = ts_code
+        if is_new:
+            api_params["is_new"] = is_new
+
+        # 调用API
+        df = self._call_api("index_member_all", **api_params)
+
+        if df.empty:
+            logger.warning("No Shenwan industry member data returned from Tushare")
+            return pd.DataFrame(columns=SwIndustryMemberSchema.get_required_columns())
+
+        # 列名映射（Tushare字段名与标准字段名相同）
+        column_mapping = {
+            "index_code": "index_code",
+            "l1_code": "l1_code",
+            "l1_name": "l1_name",
+            "l2_code": "l2_code",
+            "l2_name": "l2_name",
+            "l3_code": "l3_code",
+            "l3_name": "l3_name",
+            "ts_code": "ts_code",
+            "name": "name",
+            "in_date": "in_date",
+            "out_date": "out_date",
+            "is_new": "is_new",
+        }
+
+        df = convert_to_standard_columns(df, column_mapping)
+
+        # 如果API没有返回index_code，但我们在参数中指定了，则补充该列
+        if "index_code" not in df.columns and index_code:
+            df["index_code"] = index_code
+
+        # 处理日期字段
+        if "in_date" in df.columns:
+            df["in_date"] = pd.to_datetime(df["in_date"], format="%Y%m%d", errors="coerce")
+        if "out_date" in df.columns:
+            df["out_date"] = pd.to_datetime(df["out_date"], format="%Y%m%d", errors="coerce")
+
+        # 验证数据格式
+        df = validate_dataframe(df, SwIndustryMemberSchema, provider_name=self.name)
+
+        logger.info(f"Total fetched {len(df)} Shenwan industry member records")
+        return df

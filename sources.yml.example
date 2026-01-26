@@ -120,6 +120,16 @@ routing_strategy:
       providers: [tushare]
       fallback: false
 
+    # 申万行业分类
+    sw_classify:
+      providers: [tushare]
+      fallback: false
+
+    # 申万行业成分股
+    sw_member:
+      providers: [tushare]
+      fallback: false
+
 # 故障转移配置
 failover:
   enabled: true

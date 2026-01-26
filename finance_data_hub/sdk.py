@@ -1130,6 +1130,90 @@ class FinanceDataHub:
         return await self.ops.get_income(ts_code, start_date, end_date)
 
     # ============================================================================
+    # 申万行业数据查询方法
+    # ============================================================================
+
+    def get_sw_industry_classify(
+        self,
+        level: str = "L1",
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取申万行业分类
+
+        Args:
+            level: 行业层级 (L1/L2/L3)
+
+        Returns:
+            Optional[pd.DataFrame]: 申万行业分类数据
+
+        Examples:
+            >>> fdh = FinanceDataHub(settings)
+            >>> classify = fdh.get_sw_industry_classify(level="L1")
+            >>> print(classify[['industry_code', 'industry_name', 'level']])
+        """
+        return asyncio.run(self.get_sw_industry_classify_async(level))
+
+    async def get_sw_industry_classify_async(
+        self,
+        level: str = "L1",
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取申万行业分类（异步方法）
+
+        Args:
+            level: 行业层级 (L1/L2/L3)
+
+        Returns:
+            Optional[pd.DataFrame]: 申万行业分类数据
+        """
+        return await self.ops.get_sw_industry_classify(level)
+
+    def get_sw_industry_members(
+        self,
+        l1_code: Optional[str] = None,
+        l2_code: Optional[str] = None,
+        l3_code: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取申万行业成分股
+
+        Args:
+            l1_code: 一级行业代码
+            l2_code: 二级行业代码
+            l3_code: 三级行业代码
+
+        Returns:
+            Optional[pd.DataFrame]: 申万行业成分股数据
+
+        Examples:
+            >>> fdh = FinanceDataHub(settings)
+            >>> # 获取某一级行业下的所有成分股
+            >>> members = fdh.get_sw_industry_members(l1_code="801010")
+            >>> # 获取某三级行业下的成分股
+            >>> members = fdh.get_sw_industry_members(l3_code="801010.SI")
+        """
+        return asyncio.run(self.get_sw_industry_members_async(l1_code, l2_code, l3_code))
+
+    async def get_sw_industry_members_async(
+        self,
+        l1_code: Optional[str] = None,
+        l2_code: Optional[str] = None,
+        l3_code: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取申万行业成分股（异步方法）
+
+        Args:
+            l1_code: 一级行业代码
+            l2_code: 二级行业代码
+            l3_code: 三级行业代码
+
+        Returns:
+            Optional[pd.DataFrame]: 申万行业成分股数据
+        """
+        return await self.ops.get_sw_industry_members(l1_code, l2_code, l3_code)
+
+    # ============================================================================
     # 资源管理
     # ============================================================================
 
