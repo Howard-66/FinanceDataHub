@@ -711,3 +711,144 @@ COMMENT ON COLUMN balancesheet.comp_type IS '公司类型';
 COMMENT ON COLUMN balancesheet.total_assets IS '资产总计';
 COMMENT ON COLUMN balancesheet.total_liab IS '负债合计';
 COMMENT ON COLUMN balancesheet.total_hldr_eqy_exc_min_int IS '股东权益合计(不含少数股东权益)';
+
+-- 上市公司利润表数据表
+CREATE TABLE IF NOT EXISTS income (
+    ts_code VARCHAR(20) NOT NULL,                           -- TS代码
+    ann_date VARCHAR(8),                                    -- 公告日期
+    f_ann_date VARCHAR(8),                                  -- 实际公告日期
+    end_date VARCHAR(8),                                    -- 报告期
+    end_date_time TIMESTAMPTZ NOT NULL,                     -- 报告期（时间序列格式，用于增量更新）
+    comp_type VARCHAR(4),                                   -- 公司类型
+    report_type VARCHAR(4),                                 -- 报表类型
+    end_type VARCHAR(4),                                    -- 报告期类型
+    -- 每股收益
+    basic_eps DECIMAL(20,4),                                -- 基本每股收益
+    diluted_eps DECIMAL(20,4),                              -- 稀释每股收益
+    -- 收入类字段
+    total_revenue DECIMAL(20,4),                            -- 营业总收入
+    revenue DECIMAL(20,4),                                  -- 营业收入
+    int_income DECIMAL(20,4),                               -- 利息收入
+    prem_earned DECIMAL(20,4),                              -- 已赚保费
+    comm_income DECIMAL(20,4),                              -- 手续费及佣金收入
+    n_commis_income DECIMAL(20,4),                          -- 手续费及佣金净收入
+    n_oth_income DECIMAL(20,4),                             -- 其他经营净收益
+    n_oth_b_income DECIMAL(20,4),                           -- 加:其他业务净收益
+    prem_income DECIMAL(20,4),                              -- 保险业务收入
+    out_prem DECIMAL(20,4),                                 -- 减:分出保费
+    une_prem_reser DECIMAL(20,4),                           -- 提取未到期责任准备金
+    reins_income DECIMAL(20,4),                             -- 其中:分保费收入
+    -- 证券业务
+    n_sec_tb_income DECIMAL(20,4),                          -- 代理买卖证券业务净收入
+    n_sec_uw_income DECIMAL(20,4),                          -- 证券承销业务净收入
+    n_asset_mg_income DECIMAL(20,4),                        -- 受托客户资产管理业务净收入
+    oth_b_income DECIMAL(20,4),                             -- 其他业务收入
+    -- 投资收益
+    fv_value_chg_gain DECIMAL(20,4),                        -- 加:公允价值变动净收益
+    invest_income DECIMAL(20,4),                            -- 加:投资净收益
+    ass_invest_income DECIMAL(20,4),                        -- 其中:对联营企业和合营企业的投资收益
+    forex_gain DECIMAL(20,4),                               -- 加:汇兑净收益
+    -- 成本费用
+    total_cogs DECIMAL(20,4),                               -- 营业总成本
+    oper_cost DECIMAL(20,4),                                -- 减:营业成本
+    int_exp DECIMAL(20,4),                                  -- 减:利息支出
+    comm_exp DECIMAL(20,4),                                 -- 减:手续费及佣金支出
+    biz_tax_surchg DECIMAL(20,4),                           -- 减:营业税金及附加
+    sell_exp DECIMAL(20,4),                                 -- 减:销售费用
+    admin_exp DECIMAL(20,4),                                -- 减:管理费用
+    fin_exp DECIMAL(20,4),                                  -- 减:财务费用
+    assets_impair_loss DECIMAL(20,4),                       -- 减:资产减值损失
+    -- 保险业务
+    prem_refund DECIMAL(20,4),                              -- 退保金
+    compens_payout DECIMAL(20,4),                           -- 赔付总支出
+    reser_insur_liab DECIMAL(20,4),                         -- 提取保险责任准备金
+    div_payt DECIMAL(20,4),                                 -- 保户红利支出
+    reins_exp DECIMAL(20,4),                                -- 分保费用
+    oper_exp DECIMAL(20,4),                                 -- 营业支出
+    compens_payout_refu DECIMAL(20,4),                      -- 减:摊回赔付支出
+    insur_reser_refu DECIMAL(20,4),                         -- 减:摊回保险责任准备金
+    reins_cost_refund DECIMAL(20,4),                        -- 减:摊回分保费用
+    other_bus_cost DECIMAL(20,4),                           -- 其他业务成本
+    -- 利润
+    operate_profit DECIMAL(20,4),                           -- 营业利润
+    non_oper_income DECIMAL(20,4),                          -- 加:营业外收入
+    non_oper_exp DECIMAL(20,4),                             -- 减:营业外支出
+    nca_disploss DECIMAL(20,4),                             -- 其中:减:非流动资产处置净损失
+    total_profit DECIMAL(20,4),                             -- 利润总额
+    income_tax DECIMAL(20,4),                               -- 所得税费用
+    n_income DECIMAL(20,4),                                 -- 净利润(含少数股东损益)
+    n_income_attr_p DECIMAL(20,4),                          -- 净利润(不含少数股东损益)
+    minority_gain DECIMAL(20,4),                            -- 少数股东损益
+    -- 综合收益
+    oth_compr_income DECIMAL(20,4),                         -- 其他综合收益
+    t_compr_income DECIMAL(20,4),                           -- 综合收益总额
+    compr_inc_attr_p DECIMAL(20,4),                         -- 归属于母公司(或股东)的综合收益总额
+    compr_inc_attr_m_s DECIMAL(20,4),                       -- 归属于少数股东的综合收益总额
+    -- 关键指标
+    ebit DECIMAL(20,4),                                     -- 息税前利润
+    ebitda DECIMAL(20,4),                                   -- 息税折旧摊销前利润
+    -- 保险
+    insurance_exp DECIMAL(20,4),                            -- 保险业务支出
+    -- 利润分配
+    undist_profit DECIMAL(20,4),                            -- 年初未分配利润
+    distable_profit DECIMAL(20,4),                          -- 可分配利润
+    -- 费用
+    rd_exp DECIMAL(20,4),                                   -- 研发费用
+    fin_exp_int_exp DECIMAL(20,4),                          -- 财务费用:利息费用
+    fin_exp_int_inc DECIMAL(20,4),                          -- 财务费用:利息收入
+    -- 盈余公积转入
+    transfer_surplus_rese DECIMAL(20,4),                    -- 盈余公积转入
+    transfer_housing_imprest DECIMAL(20,4),                 -- 住房周转金转入
+    transfer_oth DECIMAL(20,4),                             -- 其他转入
+    adj_lossgain DECIMAL(20,4),                             -- 调整以前年度损益
+    -- 提取
+    withdra_legal_surplus DECIMAL(20,4),                    -- 提取法定盈余公积
+    withdra_legal_pubfund DECIMAL(20,4),                    -- 提取法定公益金
+    withdra_biz_devfund DECIMAL(20,4),                      -- 提取企业发展基金
+    withdra_rese_fund DECIMAL(20,4),                        -- 提取储备基金
+    withdra_oth_ersu DECIMAL(20,4),                         -- 提取任意盈余公积金
+    workers_welfare DECIMAL(20,4),                          -- 职工奖金福利
+    distr_profit_shrhder DECIMAL(20,4),                     -- 可供股东分配的利润
+    -- 应付股利
+    prfshare_payable_dvd DECIMAL(20,4),                     -- 应付优先股股利
+    comshare_payable_dvd DECIMAL(20,4),                     -- 应付普通股股利
+    capit_comstock_div DECIMAL(20,4),                       -- 转作股本的普通股股利
+    -- 新增字段
+    net_after_nr_lp_correct DECIMAL(20,4),                  -- 扣除非经常性损益后的净利润（更正前）
+    credit_impa_loss DECIMAL(20,4),                         -- 信用减值损失
+    net_expo_hedging_benefits DECIMAL(20,4),                -- 净敞口套期收益
+    oth_impair_loss_assets DECIMAL(20,4),                   -- 其他资产减值损失
+    total_opcost DECIMAL(20,4),                             -- 营业总成本（二）
+    amodcost_fin_assets DECIMAL(20,4),                      -- 以摊余成本计量的金融资产终止确认收益
+    oth_income DECIMAL(20,4),                               -- 其他收益
+    asset_disp_income DECIMAL(20,4),                        -- 资产处置收益
+    continued_net_profit DECIMAL(20,4),                     -- 持续经营净利润
+    end_net_profit DECIMAL(20,4),                           -- 终止经营净利润
+    update_flag VARCHAR(4),                                 -- 更新标志
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts_code, end_date_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_income_end_date ON income(end_date_time);
+CREATE INDEX IF NOT EXISTS idx_income_ann_date ON income(ann_date);
+CREATE INDEX IF NOT EXISTS idx_income_ts_code ON income(ts_code);
+
+COMMENT ON TABLE income IS '上市公司利润表数据表';
+COMMENT ON COLUMN income.ts_code IS 'TS代码';
+COMMENT ON COLUMN income.ann_date IS '公告日期';
+COMMENT ON COLUMN income.f_ann_date IS '实际公告日期';
+COMMENT ON COLUMN income.end_date IS '报告期';
+COMMENT ON COLUMN income.end_date_time IS '报告期（时间序列格式，用于增量更新）';
+COMMENT ON COLUMN income.comp_type IS '公司类型';
+COMMENT ON COLUMN income.report_type IS '报表类型';
+COMMENT ON COLUMN income.basic_eps IS '基本每股收益';
+COMMENT ON COLUMN income.diluted_eps IS '稀释每股收益';
+COMMENT ON COLUMN income.total_revenue IS '营业总收入';
+COMMENT ON COLUMN income.revenue IS '营业收入';
+COMMENT ON COLUMN income.operate_profit IS '营业利润';
+COMMENT ON COLUMN income.total_profit IS '利润总额';
+COMMENT ON COLUMN income.income_tax IS '所得税费用';
+COMMENT ON COLUMN income.n_income IS '净利润(含少数股东损益)';
+COMMENT ON COLUMN income.ebit IS '息税前利润';
+COMMENT ON COLUMN income.ebitda IS '息税折旧摊销前利润';

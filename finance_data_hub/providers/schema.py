@@ -687,6 +687,126 @@ BalancesheetSchema = DataFrameSchema(
 )
 
 
+# 上市公司利润表数据 Schema
+IncomeSchema = DataFrameSchema(
+    name="income",
+    description="上市公司利润表数据",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "TS代码"),
+        ColumnSchema("ann_date", "object", True, "公告日期"),
+        ColumnSchema("f_ann_date", "object", True, "实际公告日期"),
+        ColumnSchema("end_date", "object", True, "报告期"),
+        ColumnSchema("end_date_time", "datetime64[ns]", False, "报告期（时间序列格式）"),
+        ColumnSchema("comp_type", "object", True, "公司类型"),
+        ColumnSchema("report_type", "object", True, "报表类型"),
+        ColumnSchema("end_type", "object", True, "报告期类型"),
+        # 每股收益
+        ColumnSchema("basic_eps", "float64", True, "基本每股收益"),
+        ColumnSchema("diluted_eps", "float64", True, "稀释每股收益"),
+        # 收入类字段
+        ColumnSchema("total_revenue", "float64", True, "营业总收入"),
+        ColumnSchema("revenue", "float64", True, "营业收入"),
+        ColumnSchema("int_income", "float64", True, "利息收入"),
+        ColumnSchema("prem_earned", "float64", True, "已赚保费"),
+        ColumnSchema("comm_income", "float64", True, "手续费及佣金收入"),
+        ColumnSchema("n_commis_income", "float64", True, "手续费及佣金净收入"),
+        ColumnSchema("n_oth_income", "float64", True, "其他经营净收益"),
+        ColumnSchema("n_oth_b_income", "float64", True, "加:其他业务净收益"),
+        ColumnSchema("prem_income", "float64", True, "保险业务收入"),
+        ColumnSchema("out_prem", "float64", True, "减:分出保费"),
+        ColumnSchema("une_prem_reser", "float64", True, "提取未到期责任准备金"),
+        ColumnSchema("reins_income", "float64", True, "其中:分保费收入"),
+        # 证券业务
+        ColumnSchema("n_sec_tb_income", "float64", True, "代理买卖证券业务净收入"),
+        ColumnSchema("n_sec_uw_income", "float64", True, "证券承销业务净收入"),
+        ColumnSchema("n_asset_mg_income", "float64", True, "受托客户资产管理业务净收入"),
+        ColumnSchema("oth_b_income", "float64", True, "其他业务收入"),
+        # 投资收益
+        ColumnSchema("fv_value_chg_gain", "float64", True, "加:公允价值变动净收益"),
+        ColumnSchema("invest_income", "float64", True, "加:投资净收益"),
+        ColumnSchema("ass_invest_income", "float64", True, "其中:对联营企业和合营企业的投资收益"),
+        ColumnSchema("forex_gain", "float64", True, "加:汇兑净收益"),
+        # 成本费用
+        ColumnSchema("total_cogs", "float64", True, "营业总成本"),
+        ColumnSchema("oper_cost", "float64", True, "减:营业成本"),
+        ColumnSchema("int_exp", "float64", True, "减:利息支出"),
+        ColumnSchema("comm_exp", "float64", True, "减:手续费及佣金支出"),
+        ColumnSchema("biz_tax_surchg", "float64", True, "减:营业税金及附加"),
+        ColumnSchema("sell_exp", "float64", True, "减:销售费用"),
+        ColumnSchema("admin_exp", "float64", True, "减:管理费用"),
+        ColumnSchema("fin_exp", "float64", True, "减:财务费用"),
+        ColumnSchema("assets_impair_loss", "float64", True, "减:资产减值损失"),
+        # 保险业务
+        ColumnSchema("prem_refund", "float64", True, "退保金"),
+        ColumnSchema("compens_payout", "float64", True, "赔付总支出"),
+        ColumnSchema("reser_insur_liab", "float64", True, "提取保险责任准备金"),
+        ColumnSchema("div_payt", "float64", True, "保户红利支出"),
+        ColumnSchema("reins_exp", "float64", True, "分保费用"),
+        ColumnSchema("oper_exp", "float64", True, "营业支出"),
+        ColumnSchema("compens_payout_refu", "float64", True, "减:摊回赔付支出"),
+        ColumnSchema("insur_reser_refu", "float64", True, "减:摊回保险责任准备金"),
+        ColumnSchema("reins_cost_refund", "float64", True, "减:摊回分保费用"),
+        ColumnSchema("other_bus_cost", "float64", True, "其他业务成本"),
+        # 利润
+        ColumnSchema("operate_profit", "float64", True, "营业利润"),
+        ColumnSchema("non_oper_income", "float64", True, "加:营业外收入"),
+        ColumnSchema("non_oper_exp", "float64", True, "减:营业外支出"),
+        ColumnSchema("nca_disploss", "float64", True, "其中:减:非流动资产处置净损失"),
+        ColumnSchema("total_profit", "float64", True, "利润总额"),
+        ColumnSchema("income_tax", "float64", True, "所得税费用"),
+        ColumnSchema("n_income", "float64", True, "净利润(含少数股东损益)"),
+        ColumnSchema("n_income_attr_p", "float64", True, "净利润(不含少数股东损益)"),
+        ColumnSchema("minority_gain", "float64", True, "少数股东损益"),
+        # 综合收益
+        ColumnSchema("oth_compr_income", "float64", True, "其他综合收益"),
+        ColumnSchema("t_compr_income", "float64", True, "综合收益总额"),
+        ColumnSchema("compr_inc_attr_p", "float64", True, "归属于母公司(或股东)的综合收益总额"),
+        ColumnSchema("compr_inc_attr_m_s", "float64", True, "归属于少数股东的综合收益总额"),
+        # 关键指标
+        ColumnSchema("ebit", "float64", True, "息税前利润"),
+        ColumnSchema("ebitda", "float64", True, "息税折旧摊销前利润"),
+        # 保险
+        ColumnSchema("insurance_exp", "float64", True, "保险业务支出"),
+        # 利润分配
+        ColumnSchema("undist_profit", "float64", True, "年初未分配利润"),
+        ColumnSchema("distable_profit", "float64", True, "可分配利润"),
+        # 费用
+        ColumnSchema("rd_exp", "float64", True, "研发费用"),
+        ColumnSchema("fin_exp_int_exp", "float64", True, "财务费用:利息费用"),
+        ColumnSchema("fin_exp_int_inc", "float64", True, "财务费用:利息收入"),
+        # 盈余公积转入
+        ColumnSchema("transfer_surplus_rese", "float64", True, "盈余公积转入"),
+        ColumnSchema("transfer_housing_imprest", "float64", True, "住房周转金转入"),
+        ColumnSchema("transfer_oth", "float64", True, "其他转入"),
+        ColumnSchema("adj_lossgain", "float64", True, "调整以前年度损益"),
+        # 提取
+        ColumnSchema("withdra_legal_surplus", "float64", True, "提取法定盈余公积"),
+        ColumnSchema("withdra_legal_pubfund", "float64", True, "提取法定公益金"),
+        ColumnSchema("withdra_biz_devfund", "float64", True, "提取企业发展基金"),
+        ColumnSchema("withdra_rese_fund", "float64", True, "提取储备基金"),
+        ColumnSchema("withdra_oth_ersu", "float64", True, "提取任意盈余公积金"),
+        ColumnSchema("workers_welfare", "float64", True, "职工奖金福利"),
+        ColumnSchema("distr_profit_shrhder", "float64", True, "可供股东分配的利润"),
+        # 应付股利
+        ColumnSchema("prfshare_payable_dvd", "float64", True, "应付优先股股利"),
+        ColumnSchema("comshare_payable_dvd", "float64", True, "应付普通股股利"),
+        ColumnSchema("capit_comstock_div", "float64", True, "转作股本的普通股股利"),
+        # 新增字段
+        ColumnSchema("net_after_nr_lp_correct", "float64", True, "扣除非经常性损益后的净利润（更正前）"),
+        ColumnSchema("credit_impa_loss", "float64", True, "信用减值损失"),
+        ColumnSchema("net_expo_hedging_benefits", "float64", True, "净敞口套期收益"),
+        ColumnSchema("oth_impair_loss_assets", "float64", True, "其他资产减值损失"),
+        ColumnSchema("total_opcost", "float64", True, "营业总成本（二）"),
+        ColumnSchema("amodcost_fin_assets", "float64", True, "以摊余成本计量的金融资产终止确认收益"),
+        ColumnSchema("oth_income", "float64", True, "其他收益"),
+        ColumnSchema("asset_disp_income", "float64", True, "资产处置收益"),
+        ColumnSchema("continued_net_profit", "float64", True, "持续经营净利润"),
+        ColumnSchema("end_net_profit", "float64", True, "终止经营净利润"),
+        ColumnSchema("update_flag", "object", True, "更新标志"),
+    ],
+)
+
+
 # ===========================
 # 验证函数
 # ===========================

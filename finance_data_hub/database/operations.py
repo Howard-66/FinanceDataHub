@@ -1736,6 +1736,208 @@ class DataOperations:
 
         return None
 
+    async def insert_income_batch(self, df: pd.DataFrame, batch_size: int = 1000) -> int:
+        """
+        批量插入利润表数据
+
+        Args:
+            df: 利润表数据DataFrame
+            batch_size: 批量插入大小，默认1000
+
+        Returns:
+            int: 插入的记录数
+        """
+        if df.empty:
+            return 0
+
+        # 确保 end_date_time 列存在且格式正确
+        if "end_date_time" not in df.columns:
+            df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+
+        # 验证时间列有有效值
+        if df["end_date_time"].isna().all():
+            logger.warning("All end_date_time values are NaT, skipping insert")
+            return 0
+
+        total_inserted = 0
+        for i in range(0, len(df), batch_size):
+            batch_df = df.iloc[i : i + batch_size]
+            try:
+                inserted = await self._insert_income_with_retry(batch_df)
+                total_inserted += inserted
+            except Exception as e:
+                logger.error(f"Failed to insert income batch {i // batch_size}: {e}")
+                continue
+
+        return total_inserted
+
+    async def _insert_income_with_retry(self, df: pd.DataFrame, max_retries: int = 3) -> int:
+        """
+        带重试机制的插入利润表数据
+
+        Args:
+            df: 利润表数据DataFrame
+            max_retries: 最大重试次数
+
+        Returns:
+            int: 插入的记录数
+        """
+        for attempt in range(max_retries):
+            try:
+                return await self.__insert_income_batch(df)
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                else:
+                    logger.error(f"Insert income batch failed after {max_retries} attempts: {e}")
+                    raise
+
+        return 0
+
+    async def __insert_income_batch(self, df: pd.DataFrame) -> int:
+        """
+        内部方法：批量插入利润表数据到数据库
+
+        Args:
+            df: 利润表数据DataFrame
+
+        Returns:
+            int: 插入的记录数
+        """
+        if df.empty:
+            return 0
+
+        # 准备插入数据
+        rows_to_insert = []
+        for _, row in df.iterrows():
+            row_data = {}
+            for col in df.columns:
+                val = row.get(col)
+                if col == "end_date_time":
+                    # 时间字段需要时区感知的datetime
+                    if pd.notna(val):
+                        try:
+                            if hasattr(val, 'tzinfo') and val.tzinfo is None:
+                                row_data[col] = val.tz_localize('UTC')
+                            else:
+                                row_data[col] = val
+                        except (ValueError, TypeError):
+                            row_data[col] = None
+                    else:
+                        row_data[col] = None
+                elif col == "update_flag":
+                    row_data[col] = str(val) if pd.notna(val) else None
+                elif hasattr(val, 'item'):
+                    # numpy类型转换为Python原生类型
+                    try:
+                        row_data[col] = val.item()
+                    except (ValueError, TypeError):
+                        row_data[col] = None
+                else:
+                    row_data[col] = val
+
+            rows_to_insert.append(row_data)
+
+        if not rows_to_insert:
+            return 0
+
+        # 构建插入语句
+        columns = list(rows_to_insert[0].keys())
+        col_names = ", ".join(columns)
+        placeholders = ", ".join([f":{col}" for col in columns])
+        insert_sql = f"""
+            INSERT INTO income ({col_names})
+            VALUES ({placeholders})
+            ON CONFLICT (ts_code, end_date_time) DO NOTHING
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            for row in rows_to_insert:
+                try:
+                    await conn.execute(text(insert_sql), row)
+                except Exception as e:
+                    logger.debug(f"Skipping duplicate/invalid income record: {e}")
+                    continue
+
+        return len(rows_to_insert)
+
+    async def get_income(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取利润表数据
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式）
+            end_date: 结束日期（YYYY-MM-DD格式）
+
+        Returns:
+            pd.DataFrame: 利润表数据
+        """
+        query = """
+            SELECT * FROM income WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        if start_date:
+            query += " AND end_date_time >= :start_date"
+            params["start_date"] = start_date
+
+        if end_date:
+            query += " AND end_date_time <= :end_date"
+            params["end_date"] = end_date
+
+        query += " ORDER BY ts_code, end_date_time DESC"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+            if rows:
+                columns = result.keys()
+                data = pd.DataFrame(rows, columns=columns)
+                return data
+
+        return None
+
+    async def get_latest_income_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+        """
+        获取最新的利润表数据日期
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示任意股票
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(end_date_time) as latest_date
+            FROM income
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None
+
     async def get_index_dailybasic_ts_codes(self) -> list:
         """
         获取所有已存储的指数代码列表
@@ -1947,6 +2149,208 @@ class DataOperations:
 
         return None
 
+    async def insert_income_batch(self, df: pd.DataFrame, batch_size: int = 1000) -> int:
+        """
+        批量插入利润表数据
+
+        Args:
+            df: 利润表数据DataFrame
+            batch_size: 批量插入大小，默认1000
+
+        Returns:
+            int: 插入的记录数
+        """
+        if df.empty:
+            return 0
+
+        # 确保 end_date_time 列存在且格式正确
+        if "end_date_time" not in df.columns:
+            df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+
+        # 验证时间列有有效值
+        if df["end_date_time"].isna().all():
+            logger.warning("All end_date_time values are NaT, skipping insert")
+            return 0
+
+        total_inserted = 0
+        for i in range(0, len(df), batch_size):
+            batch_df = df.iloc[i : i + batch_size]
+            try:
+                inserted = await self._insert_income_with_retry(batch_df)
+                total_inserted += inserted
+            except Exception as e:
+                logger.error(f"Failed to insert income batch {i // batch_size}: {e}")
+                continue
+
+        return total_inserted
+
+    async def _insert_income_with_retry(self, df: pd.DataFrame, max_retries: int = 3) -> int:
+        """
+        带重试机制的插入利润表数据
+
+        Args:
+            df: 利润表数据DataFrame
+            max_retries: 最大重试次数
+
+        Returns:
+            int: 插入的记录数
+        """
+        for attempt in range(max_retries):
+            try:
+                return await self.__insert_income_batch(df)
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                else:
+                    logger.error(f"Insert income batch failed after {max_retries} attempts: {e}")
+                    raise
+
+        return 0
+
+    async def __insert_income_batch(self, df: pd.DataFrame) -> int:
+        """
+        内部方法：批量插入利润表数据到数据库
+
+        Args:
+            df: 利润表数据DataFrame
+
+        Returns:
+            int: 插入的记录数
+        """
+        if df.empty:
+            return 0
+
+        # 准备插入数据
+        rows_to_insert = []
+        for _, row in df.iterrows():
+            row_data = {}
+            for col in df.columns:
+                val = row.get(col)
+                if col == "end_date_time":
+                    # 时间字段需要时区感知的datetime
+                    if pd.notna(val):
+                        try:
+                            if hasattr(val, 'tzinfo') and val.tzinfo is None:
+                                row_data[col] = val.tz_localize('UTC')
+                            else:
+                                row_data[col] = val
+                        except (ValueError, TypeError):
+                            row_data[col] = None
+                    else:
+                        row_data[col] = None
+                elif col == "update_flag":
+                    row_data[col] = str(val) if pd.notna(val) else None
+                elif hasattr(val, 'item'):
+                    # numpy类型转换为Python原生类型
+                    try:
+                        row_data[col] = val.item()
+                    except (ValueError, TypeError):
+                        row_data[col] = None
+                else:
+                    row_data[col] = val
+
+            rows_to_insert.append(row_data)
+
+        if not rows_to_insert:
+            return 0
+
+        # 构建插入语句
+        columns = list(rows_to_insert[0].keys())
+        col_names = ", ".join(columns)
+        placeholders = ", ".join([f":{col}" for col in columns])
+        insert_sql = f"""
+            INSERT INTO income ({col_names})
+            VALUES ({placeholders})
+            ON CONFLICT (ts_code, end_date_time) DO NOTHING
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            for row in rows_to_insert:
+                try:
+                    await conn.execute(text(insert_sql), row)
+                except Exception as e:
+                    logger.debug(f"Skipping duplicate/invalid income record: {e}")
+                    continue
+
+        return len(rows_to_insert)
+
+    async def get_income(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取利润表数据
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式）
+            end_date: 结束日期（YYYY-MM-DD格式）
+
+        Returns:
+            pd.DataFrame: 利润表数据
+        """
+        query = """
+            SELECT * FROM income WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        if start_date:
+            query += " AND end_date_time >= :start_date"
+            params["start_date"] = start_date
+
+        if end_date:
+            query += " AND end_date_time <= :end_date"
+            params["end_date"] = end_date
+
+        query += " ORDER BY ts_code, end_date_time DESC"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+            if rows:
+                columns = result.keys()
+                data = pd.DataFrame(rows, columns=columns)
+                return data
+
+        return None
+
+    async def get_latest_income_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+        """
+        获取最新的利润表数据日期
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示任意股票
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(end_date_time) as latest_date
+            FROM income
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None
+
     # ============================================================================
     # 现金流量表数据操作
     # ============================================================================
@@ -2137,6 +2541,208 @@ class DataOperations:
         query = """
             SELECT MAX(end_date_time) as latest_date
             FROM cashflow
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None
+
+    async def insert_income_batch(self, df: pd.DataFrame, batch_size: int = 1000) -> int:
+        """
+        批量插入利润表数据
+
+        Args:
+            df: 利润表数据DataFrame
+            batch_size: 批量插入大小，默认1000
+
+        Returns:
+            int: 插入的记录数
+        """
+        if df.empty:
+            return 0
+
+        # 确保 end_date_time 列存在且格式正确
+        if "end_date_time" not in df.columns:
+            df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+
+        # 验证时间列有有效值
+        if df["end_date_time"].isna().all():
+            logger.warning("All end_date_time values are NaT, skipping insert")
+            return 0
+
+        total_inserted = 0
+        for i in range(0, len(df), batch_size):
+            batch_df = df.iloc[i : i + batch_size]
+            try:
+                inserted = await self._insert_income_with_retry(batch_df)
+                total_inserted += inserted
+            except Exception as e:
+                logger.error(f"Failed to insert income batch {i // batch_size}: {e}")
+                continue
+
+        return total_inserted
+
+    async def _insert_income_with_retry(self, df: pd.DataFrame, max_retries: int = 3) -> int:
+        """
+        带重试机制的插入利润表数据
+
+        Args:
+            df: 利润表数据DataFrame
+            max_retries: 最大重试次数
+
+        Returns:
+            int: 插入的记录数
+        """
+        for attempt in range(max_retries):
+            try:
+                return await self.__insert_income_batch(df)
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                else:
+                    logger.error(f"Insert income batch failed after {max_retries} attempts: {e}")
+                    raise
+
+        return 0
+
+    async def __insert_income_batch(self, df: pd.DataFrame) -> int:
+        """
+        内部方法：批量插入利润表数据到数据库
+
+        Args:
+            df: 利润表数据DataFrame
+
+        Returns:
+            int: 插入的记录数
+        """
+        if df.empty:
+            return 0
+
+        # 准备插入数据
+        rows_to_insert = []
+        for _, row in df.iterrows():
+            row_data = {}
+            for col in df.columns:
+                val = row.get(col)
+                if col == "end_date_time":
+                    # 时间字段需要时区感知的datetime
+                    if pd.notna(val):
+                        try:
+                            if hasattr(val, 'tzinfo') and val.tzinfo is None:
+                                row_data[col] = val.tz_localize('UTC')
+                            else:
+                                row_data[col] = val
+                        except (ValueError, TypeError):
+                            row_data[col] = None
+                    else:
+                        row_data[col] = None
+                elif col == "update_flag":
+                    row_data[col] = str(val) if pd.notna(val) else None
+                elif hasattr(val, 'item'):
+                    # numpy类型转换为Python原生类型
+                    try:
+                        row_data[col] = val.item()
+                    except (ValueError, TypeError):
+                        row_data[col] = None
+                else:
+                    row_data[col] = val
+
+            rows_to_insert.append(row_data)
+
+        if not rows_to_insert:
+            return 0
+
+        # 构建插入语句
+        columns = list(rows_to_insert[0].keys())
+        col_names = ", ".join(columns)
+        placeholders = ", ".join([f":{col}" for col in columns])
+        insert_sql = f"""
+            INSERT INTO income ({col_names})
+            VALUES ({placeholders})
+            ON CONFLICT (ts_code, end_date_time) DO NOTHING
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            for row in rows_to_insert:
+                try:
+                    await conn.execute(text(insert_sql), row)
+                except Exception as e:
+                    logger.debug(f"Skipping duplicate/invalid income record: {e}")
+                    continue
+
+        return len(rows_to_insert)
+
+    async def get_income(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取利润表数据
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式）
+            end_date: 结束日期（YYYY-MM-DD格式）
+
+        Returns:
+            pd.DataFrame: 利润表数据
+        """
+        query = """
+            SELECT * FROM income WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        if start_date:
+            query += " AND end_date_time >= :start_date"
+            params["start_date"] = start_date
+
+        if end_date:
+            query += " AND end_date_time <= :end_date"
+            params["end_date"] = end_date
+
+        query += " ORDER BY ts_code, end_date_time DESC"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+            if rows:
+                columns = result.keys()
+                data = pd.DataFrame(rows, columns=columns)
+                return data
+
+        return None
+
+    async def get_latest_income_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+        """
+        获取最新的利润表数据日期
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示任意股票
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(end_date_time) as latest_date
+            FROM income
             WHERE 1=1
         """
         params = {}
@@ -2372,6 +2978,208 @@ class DataOperations:
         query = """
             SELECT MAX(end_date_time) as latest_date
             FROM balancesheet
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None
+
+    async def insert_income_batch(self, df: pd.DataFrame, batch_size: int = 1000) -> int:
+        """
+        批量插入利润表数据
+
+        Args:
+            df: 利润表数据DataFrame
+            batch_size: 批量插入大小，默认1000
+
+        Returns:
+            int: 插入的记录数
+        """
+        if df.empty:
+            return 0
+
+        # 确保 end_date_time 列存在且格式正确
+        if "end_date_time" not in df.columns:
+            df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+
+        # 验证时间列有有效值
+        if df["end_date_time"].isna().all():
+            logger.warning("All end_date_time values are NaT, skipping insert")
+            return 0
+
+        total_inserted = 0
+        for i in range(0, len(df), batch_size):
+            batch_df = df.iloc[i : i + batch_size]
+            try:
+                inserted = await self._insert_income_with_retry(batch_df)
+                total_inserted += inserted
+            except Exception as e:
+                logger.error(f"Failed to insert income batch {i // batch_size}: {e}")
+                continue
+
+        return total_inserted
+
+    async def _insert_income_with_retry(self, df: pd.DataFrame, max_retries: int = 3) -> int:
+        """
+        带重试机制的插入利润表数据
+
+        Args:
+            df: 利润表数据DataFrame
+            max_retries: 最大重试次数
+
+        Returns:
+            int: 插入的记录数
+        """
+        for attempt in range(max_retries):
+            try:
+                return await self.__insert_income_batch(df)
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                else:
+                    logger.error(f"Insert income batch failed after {max_retries} attempts: {e}")
+                    raise
+
+        return 0
+
+    async def __insert_income_batch(self, df: pd.DataFrame) -> int:
+        """
+        内部方法：批量插入利润表数据到数据库
+
+        Args:
+            df: 利润表数据DataFrame
+
+        Returns:
+            int: 插入的记录数
+        """
+        if df.empty:
+            return 0
+
+        # 准备插入数据
+        rows_to_insert = []
+        for _, row in df.iterrows():
+            row_data = {}
+            for col in df.columns:
+                val = row.get(col)
+                if col == "end_date_time":
+                    # 时间字段需要时区感知的datetime
+                    if pd.notna(val):
+                        try:
+                            if hasattr(val, 'tzinfo') and val.tzinfo is None:
+                                row_data[col] = val.tz_localize('UTC')
+                            else:
+                                row_data[col] = val
+                        except (ValueError, TypeError):
+                            row_data[col] = None
+                    else:
+                        row_data[col] = None
+                elif col == "update_flag":
+                    row_data[col] = str(val) if pd.notna(val) else None
+                elif hasattr(val, 'item'):
+                    # numpy类型转换为Python原生类型
+                    try:
+                        row_data[col] = val.item()
+                    except (ValueError, TypeError):
+                        row_data[col] = None
+                else:
+                    row_data[col] = val
+
+            rows_to_insert.append(row_data)
+
+        if not rows_to_insert:
+            return 0
+
+        # 构建插入语句
+        columns = list(rows_to_insert[0].keys())
+        col_names = ", ".join(columns)
+        placeholders = ", ".join([f":{col}" for col in columns])
+        insert_sql = f"""
+            INSERT INTO income ({col_names})
+            VALUES ({placeholders})
+            ON CONFLICT (ts_code, end_date_time) DO NOTHING
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            for row in rows_to_insert:
+                try:
+                    await conn.execute(text(insert_sql), row)
+                except Exception as e:
+                    logger.debug(f"Skipping duplicate/invalid income record: {e}")
+                    continue
+
+        return len(rows_to_insert)
+
+    async def get_income(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取利润表数据
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式）
+            end_date: 结束日期（YYYY-MM-DD格式）
+
+        Returns:
+            pd.DataFrame: 利润表数据
+        """
+        query = """
+            SELECT * FROM income WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        if start_date:
+            query += " AND end_date_time >= :start_date"
+            params["start_date"] = start_date
+
+        if end_date:
+            query += " AND end_date_time <= :end_date"
+            params["end_date"] = end_date
+
+        query += " ORDER BY ts_code, end_date_time DESC"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+            if rows:
+                columns = result.keys()
+                data = pd.DataFrame(rows, columns=columns)
+                return data
+
+        return None
+
+    async def get_latest_income_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+        """
+        获取最新的利润表数据日期
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示任意股票
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(end_date_time) as latest_date
+            FROM income
             WHERE 1=1
         """
         params = {}

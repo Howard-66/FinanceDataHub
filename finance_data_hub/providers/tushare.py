@@ -33,6 +33,7 @@ from finance_data_hub.providers.schema import (
     FinaIndicatorSchema,
     CashflowSchema,
     BalancesheetSchema,
+    IncomeSchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -2384,4 +2385,159 @@ class TushareProvider(BaseDataProvider):
         final_df = validate_dataframe(final_df, BalancesheetSchema, provider_name=self.name)
 
         logger.info(f"Total fetched {len(final_df)} balancesheet records")
+        return final_df
+
+    def get_income(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取上市公司利润表数据（自动处理Tushare 100条记录限制）
+
+        当返回记录数等于100时，自动继续获取更早的数据，确保获取完整历史数据。
+
+        Args:
+            ts_code: TS股票代码（如600001.SH/000001.SZ），支持多值（逗号分隔）
+            start_date: 报告期开始日期（YYYYMMDD格式）
+            end_date: 报告期结束日期（YYYYMMDD格式）
+
+        Returns:
+            pd.DataFrame: 标准格式的利润表数据
+        """
+        logger.info(
+            f"Fetching income data (ts_code={ts_code}, start_date={start_date}, end_date={end_date})"
+        )
+
+        # 转换日期格式
+        if start_date:
+            start_date = start_date.replace("-", "")
+        if end_date:
+            end_date = end_date.replace("-", "")
+
+        # Tushare API 记录限制常量
+        TUSHARE_MAX_RECORDS = 100
+
+        # 解析 ts_code 列表
+        ts_code_list = [c.strip() for c in ts_code.split(",") if c.strip()]
+
+        # 记录所有股票的数据
+        all_dataframes = []
+        total_records = 0
+
+        for code in ts_code_list:
+            logger.info(f"Fetching income for {code}")
+            code_dataframes = []
+            current_end_date = end_date
+            batch_count = 0
+
+            while True:
+                batch_count += 1
+                # 构建API参数
+                api_params = {
+                    "ts_code": code,
+                    "fields": "ts_code,ann_date,f_ann_date,end_date,comp_type,report_type,end_type,"
+                              "basic_eps,diluted_eps,total_revenue,revenue,int_income,prem_earned,"
+                              "comm_income,n_commis_income,n_oth_income,n_oth_b_income,prem_income,"
+                              "out_prem,une_prem_reser,reins_income,n_sec_tb_income,n_sec_uw_income,"
+                              "n_asset_mg_income,oth_b_income,fv_value_chg_gain,invest_income,"
+                              "ass_invest_income,forex_gain,total_cogs,oper_cost,int_exp,comm_exp,"
+                              "biz_tax_surchg,sell_exp,admin_exp,fin_exp,assets_impair_loss,"
+                              "prem_refund,compens_payout,reser_insur_liab,div_payt,reins_exp,"
+                              "oper_exp,compens_payout_refu,insur_reser_refu,reins_cost_refund,"
+                              "other_bus_cost,operate_profit,non_oper_income,non_oper_exp,nca_disploss,"
+                              "total_profit,income_tax,n_income,n_income_attr_p,minority_gain,"
+                              "oth_compr_income,t_compr_income,compr_inc_attr_p,compr_inc_attr_m_s,"
+                              "ebit,ebitda,insurance_exp,undist_profit,distable_profit,rd_exp,"
+                              "fin_exp_int_exp,fin_exp_int_inc,transfer_surplus_rese,"
+                              "transfer_housing_imprest,transfer_oth,adj_lossgain,withdra_legal_surplus,"
+                              "withdra_legal_pubfund,withdra_biz_devfund,withdra_rese_fund,"
+                              "withdra_oth_ersu,workers_welfare,distr_profit_shrhder,"
+                              "prfshare_payable_dvd,comshare_payable_dvd,capit_comstock_div,"
+                              "net_after_nr_lp_correct,credit_impa_loss,net_expo_hedging_benefits,"
+                              "oth_impair_loss_assets,total_opcost,amodcost_fin_assets,oth_income,"
+                              "asset_disp_income,continued_net_profit,end_net_profit,update_flag",
+                }
+                if start_date:
+                    api_params["start_date"] = start_date
+                if current_end_date:
+                    api_params["end_date"] = current_end_date.replace("-", "") if isinstance(current_end_date, str) else current_end_date
+
+                df = self._call_api("income", **api_params)
+
+                if df.empty:
+                    logger.info(f"  Batch {batch_count}: No data returned, stopping")
+                    break
+
+                # 记录原始数据条数
+                batch_records = len(df)
+                logger.info(f"  Batch {batch_count}: Fetched {batch_records} records")
+
+                # 将 end_date 转换为时间序列格式 end_date_time
+                df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+
+                # 列名映射（利润表字段保持原名，只需处理时间字段）
+                column_mapping = {
+                    "ts_code": "ts_code",
+                    "ann_date": "ann_date",
+                    "f_ann_date": "f_ann_date",
+                    "end_date": "end_date",
+                    "end_date_time": "end_date_time",
+                }
+
+                df = convert_to_standard_columns(df, column_mapping)
+
+                code_dataframes.append(df)
+
+                # 检查是否需要继续获取更早的数据
+                if batch_records == TUSHARE_MAX_RECORDS and start_date is None:
+                    # 获取当前批次中最早的报告期
+                    earliest_date = df["end_date"].min()
+                    logger.info(f"  Batch {batch_count}: Max limit reached, fetching earlier data before {earliest_date}")
+                    current_end_date = earliest_date
+                    continue
+                else:
+                    break
+
+            # 合并该股票的数据
+            if code_dataframes:
+                # 过滤掉空DataFrame和全NA的DataFrame，并删除每个DataFrame中的全NA列
+                valid_dataframes = []
+                for df in code_dataframes:
+                    if df.empty:
+                        continue
+                    # 检查是否有至少一个非NA值
+                    if df.dropna(how='all').empty:
+                        continue
+                    # 删除全NA的列
+                    df_clean = df.dropna(axis=1, how='all')
+                    if not df_clean.empty:
+                        valid_dataframes.append(df_clean)
+
+                if valid_dataframes:
+                    code_df = pd.concat(valid_dataframes, ignore_index=True, sort=False)
+                    all_dataframes.append(code_df)
+                    total_records += len(code_df)
+                    logger.info(f"  {code}: Total {len(code_df)} records")
+
+        # 合并所有股票的数据
+        if not all_dataframes:
+            logger.warning("No income data returned from Tushare")
+            return pd.DataFrame(columns=IncomeSchema.get_required_columns())
+
+        # 合并DataFrame
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        # 清理：删除全NA的列
+        final_df = final_df.dropna(axis=1, how='all')
+
+        # 去重（按ts_code和end_date_time）
+        final_df = final_df.drop_duplicates(subset=["ts_code", "end_date"]).sort_values(
+            ["ts_code", "end_date"]
+        ).reset_index(drop=True)
+
+        # 验证数据格式
+        final_df = validate_dataframe(final_df, IncomeSchema, provider_name=self.name)
+
+        logger.info(f"Total fetched {len(final_df)} income records")
         return final_df

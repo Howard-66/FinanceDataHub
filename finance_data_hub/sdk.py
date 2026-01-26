@@ -1083,6 +1083,53 @@ class FinanceDataHub:
         return await self.ops.get_balancesheet(ts_code, start_date, end_date)
 
     # ============================================================================
+    # 利润表数据查询
+    # ============================================================================
+
+    def get_income(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取上市公司利润表数据（同步方法）
+
+        Args:
+            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 利润表数据
+
+        Examples:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_income('600519.SH', '2020-03-31', '2024-12-31')
+            >>> print(data[['ts_code', 'end_date', 'total_revenue', 'n_income']])
+        """
+        return asyncio.run(self.get_income_async(ts_code, start_date, end_date))
+
+    async def get_income_async(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取上市公司利润表数据（异步方法）
+
+        Args:
+            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 利润表数据
+        """
+        return await self.ops.get_income(ts_code, start_date, end_date)
+
+    # ============================================================================
     # 资源管理
     # ============================================================================
 
