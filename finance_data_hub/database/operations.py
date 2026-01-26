@@ -2153,3 +2153,238 @@ class DataOperations:
             return row.latest_date.strftime("%Y-%m-%d")
 
         return None
+
+    # ============================================================================
+    # 资产负债表操作
+    # ============================================================================
+
+    async def insert_balancesheet_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入资产负债表数据
+
+        Args:
+            data: 包含资产负债表数据的DataFrame
+            batch_size: 批处理大小
+
+        Returns:
+            int: 插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        # 资产负债表字段列表（除了ts_code, ann_date, f_ann_date, end_date, end_date_time）
+        balancesheet_columns = [
+            "comp_type", "report_type", "end_type", "total_share", "cap_rese",
+            "undistr_porfit", "surplus_rese", "special_rese", "money_cap", "trad_asset",
+            "notes_receiv", "accounts_receiv", "oth_receiv", "prepayment", "div_receiv",
+            "int_receiv", "inventories", "amor_exp", "nca_within_1y", "sett_rsrv",
+            "loanto_oth_bank_fi", "premium_receiv", "reinsur_receiv", "reinsur_res_receiv",
+            "pur_resale_fa", "oth_cur_assets", "total_cur_assets", "fa_avail_for_sale",
+            "htm_invest", "lt_eqt_invest", "invest_real_estate", "time_deposits", "oth_assets",
+            "lt_rec", "fix_assets", "cip", "const_materials", "fixed_assets_disp",
+            "produc_bio_assets", "oil_and_gas_assets", "intan_assets", "r_and_d", "goodwill",
+            "lt_amor_exp", "defer_tax_assets", "decr_in_disbur", "oth_nca", "total_nca",
+            "cash_reser_cb", "depos_in_oth_bfi", "prec_metals", "deriv_assets",
+            "rr_reins_une_prem", "rr_reins_outstd_cla", "rr_reins_lins_liab", "rr_reins_lthins_liab",
+            "refund_depos", "ph_pledge_loans", "refund_cap_depos", "indept_acct_assets",
+            "client_depos", "client_prov", "transac_seat_fee", "invest_as_receiv", "total_assets",
+            "lt_borr", "st_borr", "cb_borr", "depos_ib_deposits", "loan_oth_bank", "trading_fl",
+            "notes_payable", "acct_payable", "adv_receipts", "sold_for_repur_fa", "comm_payable",
+            "payroll_payable", "taxes_payable", "int_payable", "div_payable", "oth_payable",
+            "acc_exp", "deferred_inc", "st_bonds_payable", "payable_to_reinsurer", "rsrv_insur_cont",
+            "acting_trading_sec", "acting_uw_sec", "non_cur_liab_due_1y", "oth_cur_liab",
+            "total_cur_liab", "bond_payable", "lt_payable", "specific_payables", "estimated_liab",
+            "defer_tax_liab", "defer_inc_non_cur_liab", "oth_ncl", "total_ncl", "depos_oth_bfi",
+            "deriv_liab", "depos", "agency_bus_liab", "oth_liab", "prem_receiv_adva",
+            "depos_received", "ph_invest", "reser_une_prem", "reser_outstd_claims", "reser_lins_liab",
+            "reser_lthins_liab", "indept_acc_liab", "pledge_borr", "indem_payable", "policy_div_payable",
+            "total_liab", "treasury_share", "ordin_risk_reser", "forex_differ", "invest_loss_unconf",
+            "minority_int", "total_hldr_eqy_exc_min_int", "total_hldr_eqy_inc_min_int",
+            "total_liab_hldr_eqy", "lt_payroll_payable", "oth_comp_income", "oth_eqt_tools",
+            "oth_eqt_tools_p_shr", "lending_funds", "acc_receivable", "st_fin_payable", "payables",
+            "hfs_assets", "hfs_sales", "cost_fin_assets", "fair_value_fin_assets", "cip_total",
+            "oth_pay_total", "long_pay_total", "debt_invest", "oth_debt_invest", "oth_eq_invest",
+            "oth_illiq_fin_assets", "oth_eq_ppbond", "receiv_financing", "use_right_assets",
+            "lease_liab", "contract_assets", "contract_liab", "accounts_receiv_bill", "accounts_pay",
+            "oth_rcv_total", "fix_assets_total", "update_flag"
+        ]
+
+        # 构建INSERT语句
+        columns_str = ", ".join([
+            "ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"
+        ] + balancesheet_columns)
+        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"] + balancesheet_columns])
+
+        # ON CONFLICT部分
+        update_parts = []
+        for col in ["ann_date", "f_ann_date", "end_date"] + balancesheet_columns:
+            update_parts.append(f"{col} = EXCLUDED.{col}")
+        update_str = ", ".join(update_parts)
+
+        insert_sql = f"""
+            INSERT INTO balancesheet ({columns_str})
+            VALUES ({values_str})
+            ON CONFLICT (ts_code, end_date_time) DO UPDATE SET
+                {update_str},
+                updated_at = NOW()
+        """
+
+        total_inserted = 0
+
+        # 所有需要插入的列名
+        all_columns = ["ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"] + balancesheet_columns
+
+        # 可能包含大数值的字段（需要clip到安全范围）
+        large_value_columns = {
+            "total_share", "cap_rese", "undistr_porfit", "surplus_rese", "money_cap",
+            "total_cur_assets", "total_nca", "total_assets", "total_cur_liab", "total_ncl",
+            "total_liab", "total_hldr_eqy_exc_min_int", "total_hldr_eqy_inc_min_int",
+            "total_liab_hldr_eqy", "fix_assets", "fix_assets_total", "lending_funds",
+            "acc_receivable", "payables", "hfs_assets", "cost_fin_assets", "fair_value_fin_assets",
+            "cip", "cip_total", "oth_cur_assets", "oth_nca", "oth_assets", "oth_liab",
+            "oth_payable", "oth_pay_total", "lt_payable", "long_pay_total", "debt_invest",
+            "oth_debt_invest", "oth_eq_invest", "oth_illiq_fin_assets", "receiv_financing",
+            "use_right_assets", "lease_liab", "contract_assets", "contract_liab",
+            "accounts_receiv", "accounts_receiv_bill", "oth_rcv_total"
+        }
+
+        try:
+            # 分批处理
+            for i in range(0, len(data), batch_size):
+                batch = data.iloc[i : i + batch_size].copy()
+
+                # 准备批量数据
+                batch_data = []
+                for _, row in batch.iterrows():
+                    row_data = {}
+                    for col in all_columns:
+                        if col in large_value_columns:
+                            # 大数值字段，clip到安全范围
+                            val = row.get(col)
+                            if pd.notna(val):
+                                try:
+                                    row_data[col] = float(val)
+                                    if abs(row_data[col]) > 1e15:
+                                        row_data[col] = None
+                                except (ValueError, TypeError):
+                                    row_data[col] = None
+                            else:
+                                row_data[col] = None
+                        elif col == "end_date_time":
+                            # 时间字段需要转换为带时区的datetime
+                            val = row.get(col)
+                            if pd.notna(val):
+                                try:
+                                    # 如果是tz-naive的Timestamp，添加UTC时区
+                                    if hasattr(val, 'tzinfo') and val.tzinfo is None:
+                                        row_data[col] = val.tz_localize('UTC')
+                                    else:
+                                        row_data[col] = val
+                                except (ValueError, TypeError):
+                                    row_data[col] = None
+                            else:
+                                row_data[col] = None
+                        else:
+                            # 普通字段
+                            val = row.get(col)
+                            if pd.isna(val):
+                                row_data[col] = None
+                            else:
+                                row_data[col] = val
+                    batch_data.append(row_data)
+
+                # 执行批量插入
+                async with self.db_manager._engine.begin() as conn:
+                    for row_data in batch_data:
+                        await conn.execute(text(insert_sql), row_data)
+                    await conn.commit()
+
+                total_inserted += len(batch_data)
+
+            logger.info(f"Inserted {total_inserted} balancesheet records")
+            return total_inserted
+
+        except Exception as e:
+            logger.exception(f"Failed to insert balancesheet batch: {str(e)}")
+            raise
+
+    async def get_balancesheet(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取资产负债表数据
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期）
+            end_date: 结束日期（YYYY-MM-DD格式，报告期）
+
+        Returns:
+            Optional[pd.DataFrame]: 资产负债表数据
+        """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
+        # 构建查询条件
+        query = "SELECT * FROM balancesheet WHERE 1=1"
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        if start_dt:
+            query += " AND end_date_time >= :start_date"
+            params["start_date"] = start_dt
+
+        if end_dt:
+            query += " AND end_date_time <= :end_date"
+            params["end_date"] = end_dt
+
+        query += " ORDER BY ts_code, end_date_time"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+        return data
+
+    async def get_latest_balancesheet_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+        """
+        获取最新的资产负债表数据日期
+
+        Args:
+            ts_code: 股票代码（如600519.SH），None表示任意股票
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(end_date_time) as latest_date
+            FROM balancesheet
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None

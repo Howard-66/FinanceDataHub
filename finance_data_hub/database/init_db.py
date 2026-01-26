@@ -135,23 +135,30 @@ class DatabaseInitializer:
 
                 i += 1
 
-            # 执行每个SQL语句
-            async with self.db_manager._engine.begin() as conn:
-                for idx, stmt in enumerate(statements):
-                    # 清理SQL语句
-                    clean_stmt = stmt.strip()
-                    if clean_stmt and not clean_stmt.startswith('--'):
-                        logger.debug(f"执行语句 {idx+1}/{len(statements)}: {clean_stmt[:100]}...")
-                        try:
+            # 执行每个SQL语句（每条语句独立事务，失败后继续执行后续语句）
+            for idx, stmt in enumerate(statements):
+                # 清理SQL语句
+                clean_stmt = stmt.strip()
+                if clean_stmt and not clean_stmt.startswith('--'):
+                    logger.debug(f"执行语句 {idx+1}/{len(statements)}: {clean_stmt[:100]}...")
+                    try:
+                        async with self.db_manager._engine.begin() as conn:
                             await conn.execute(text(clean_stmt))
-                        except Exception as e:
-                            # 忽略已存在的对象错误
-                            if 'already exists' in str(e).lower() or 'already installed' in str(e).lower():
-                                logger.warning(f"对象已存在，跳过: {str(e)[:100]}")
-                            else:
-                                logger.error(f"执行SQL失败: {str(e)}")
-                                logger.error(f"失败的SQL: {clean_stmt[:300]}")
-                                raise
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        # 忽略已存在的对象错误
+                        if 'already exists' in error_msg or 'already installed' in error_msg:
+                            logger.warning(f"对象已存在，跳过: {str(e)[:100]}")
+                        # 忽略不存在的对象错误（用于索引等依赖对象）
+                        elif 'relation does not exist' in error_msg or 'does not exist' in error_msg:
+                            logger.warning(f"依赖对象不存在，跳过: {str(e)[:100]}")
+                        # 忽略某些视图/物化视图错误
+                        elif 'materialized view' in error_msg and 'does not exist' in error_msg:
+                            logger.warning(f"视图不存在，跳过: {str(e)[:100]}")
+                        else:
+                            logger.error(f"执行SQL失败: {str(e)}")
+                            logger.error(f"失败的SQL: {clean_stmt[:300]}")
+                            raise
 
             logger.info(f"[OK] 完成: {sql_file.name}")
 

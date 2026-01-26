@@ -32,6 +32,7 @@ from finance_data_hub.providers.schema import (
     IndexDailybasicSchema,
     FinaIndicatorSchema,
     CashflowSchema,
+    BalancesheetSchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -2215,4 +2216,172 @@ class TushareProvider(BaseDataProvider):
         final_df = validate_dataframe(final_df, CashflowSchema, provider_name=self.name)
 
         logger.info(f"Total fetched {len(final_df)} cashflow records")
+        return final_df
+
+    def get_balancesheet(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取上市公司资产负债表数据（自动处理Tushare 100条记录限制）
+
+        当返回记录数等于100时，自动继续获取更早的数据，确保获取完整历史数据。
+
+        Args:
+            ts_code: TS股票代码（如600001.SH/000001.SZ），支持多值（逗号分隔）
+            start_date: 报告期开始日期（YYYYMMDD格式）
+            end_date: 报告期结束日期（YYYYMMDD格式）
+
+        Returns:
+            pd.DataFrame: 标准格式的资产负债表数据
+        """
+        logger.info(
+            f"Fetching balancesheet data (ts_code={ts_code}, start_date={start_date}, end_date={end_date})"
+        )
+
+        # 转换日期格式
+        if start_date:
+            start_date = start_date.replace("-", "")
+        if end_date:
+            end_date = end_date.replace("-", "")
+
+        # Tushare API 记录限制常量
+        TUSHARE_MAX_RECORDS = 100
+
+        # 解析 ts_code 列表
+        ts_code_list = [c.strip() for c in ts_code.split(",") if c.strip()]
+
+        # 记录所有股票的数据
+        all_dataframes = []
+        total_records = 0
+
+        for code in ts_code_list:
+            logger.info(f"Fetching balancesheet for {code}")
+            code_dataframes = []
+            current_end_date = end_date
+            batch_count = 0
+
+            while True:
+                batch_count += 1
+                # 构建API参数
+                api_params = {
+                    "ts_code": code,
+                    "fields": "ts_code,ann_date,f_ann_date,end_date,comp_type,report_type,end_type,"
+                              "total_share,cap_rese,undistr_porfit,surplus_rese,special_rese,"
+                              "money_cap,trad_asset,notes_receiv,accounts_receiv,oth_receiv,"
+                              "prepayment,div_receiv,int_receiv,inventories,amor_exp,nca_within_1y,"
+                              "sett_rsrv,loanto_oth_bank_fi,premium_receiv,reinsur_receiv,"
+                              "reinsur_res_receiv,pur_resale_fa,oth_cur_assets,total_cur_assets,"
+                              "fa_avail_for_sale,htm_invest,lt_eqt_invest,invest_real_estate,"
+                              "time_deposits,oth_assets,lt_rec,fix_assets,cip,const_materials,"
+                              "fixed_assets_disp,produc_bio_assets,oil_and_gas_assets,intan_assets,"
+                              "r_and_d,goodwill,lt_amor_exp,defer_tax_assets,decr_in_disbur,oth_nca,"
+                              "total_nca,cash_reser_cb,depos_in_oth_bfi,prec_metals,deriv_assets,"
+                              "rr_reins_une_prem,rr_reins_outstd_cla,rr_reins_lins_liab,"
+                              "rr_reins_lthins_liab,refund_depos,ph_pledge_loans,refund_cap_depos,"
+                              "indept_acct_assets,client_depos,client_prov,transac_seat_fee,"
+                              "invest_as_receiv,total_assets,lt_borr,st_borr,cb_borr,depos_ib_deposits,"
+                              "loan_oth_bank,trading_fl,notes_payable,acct_payable,adv_receipts,"
+                              "sold_for_repur_fa,comm_payable,payroll_payable,taxes_payable,"
+                              "int_payable,div_payable,oth_payable,acc_exp,deferred_inc,"
+                              "st_bonds_payable,payable_to_reinsurer,rsrv_insur_cont,acting_trading_sec,"
+                              "acting_uw_sec,non_cur_liab_due_1y,oth_cur_liab,total_cur_liab,"
+                              "bond_payable,lt_payable,specific_payables,estimated_liab,defer_tax_liab,"
+                              "defer_inc_non_cur_liab,oth_ncl,total_ncl,depos_oth_bfi,deriv_liab,"
+                              "depos,agency_bus_liab,oth_liab,prem_receiv_adva,depos_received,ph_invest,"
+                              "reser_une_prem,reser_outstd_claims,reser_lins_liab,reser_lthins_liab,"
+                              "indept_acc_liab,pledge_borr,indem_payable,policy_div_payable,total_liab,"
+                              "treasury_share,ordin_risk_reser,forex_differ,invest_loss_unconf,"
+                              "minority_int,total_hldr_eqy_exc_min_int,total_hldr_eqy_inc_min_int,"
+                              "total_liab_hldr_eqy,lt_payroll_payable,oth_comp_income,oth_eqt_tools,"
+                              "oth_eqt_tools_p_shr,lending_funds,acc_receivable,st_fin_payable,"
+                              "payables,hfs_assets,hfs_sales,cost_fin_assets,fair_value_fin_assets,"
+                              "cip_total,oth_pay_total,long_pay_total,debt_invest,oth_debt_invest,"
+                              "oth_eq_invest,oth_illiq_fin_assets,oth_eq_ppbond,receiv_financing,"
+                              "use_right_assets,lease_liab,contract_assets,contract_liab,"
+                              "accounts_receiv_bill,accounts_pay,oth_rcv_total,fix_assets_total,update_flag",
+                }
+                if start_date:
+                    api_params["start_date"] = start_date
+                if current_end_date:
+                    api_params["end_date"] = current_end_date.replace("-", "") if isinstance(current_end_date, str) else current_end_date
+
+                df = self._call_api("balancesheet", **api_params)
+
+                if df.empty:
+                    logger.info(f"  Batch {batch_count}: No data returned, stopping")
+                    break
+
+                # 记录原始数据条数
+                batch_records = len(df)
+                logger.info(f"  Batch {batch_count}: Fetched {batch_records} records")
+
+                # 将 end_date 转换为时间序列格式 end_date_time
+                df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+
+                # 列名映射（资产负债表字段保持原名，只需处理时间字段）
+                column_mapping = {
+                    "ts_code": "ts_code",
+                    "ann_date": "ann_date",
+                    "f_ann_date": "f_ann_date",
+                    "end_date": "end_date",
+                    "end_date_time": "end_date_time",
+                }
+
+                df = convert_to_standard_columns(df, column_mapping)
+
+                code_dataframes.append(df)
+
+                # 检查是否需要继续获取更早的数据
+                if batch_records == TUSHARE_MAX_RECORDS and start_date is None:
+                    # 获取当前批次中最早的报告期
+                    earliest_date = df["end_date"].min()
+                    logger.info(f"  Batch {batch_count}: Max limit reached, fetching earlier data before {earliest_date}")
+                    current_end_date = earliest_date
+                    continue
+                else:
+                    break
+
+            # 合并该股票的数据
+            if code_dataframes:
+                # 过滤掉空DataFrame和全NA的DataFrame，并删除每个DataFrame中的全NA列
+                valid_dataframes = []
+                for df in code_dataframes:
+                    if df.empty:
+                        continue
+                    # 检查是否有至少一个非NA值
+                    if df.dropna(how='all').empty:
+                        continue
+                    # 删除全NA的列
+                    df_clean = df.dropna(axis=1, how='all')
+                    if not df_clean.empty:
+                        valid_dataframes.append(df_clean)
+
+                if valid_dataframes:
+                    code_df = pd.concat(valid_dataframes, ignore_index=True, sort=False)
+                    all_dataframes.append(code_df)
+                    total_records += len(code_df)
+                    logger.info(f"  {code}: Total {len(code_df)} records")
+
+        # 合并所有股票的数据
+        if not all_dataframes:
+            logger.warning("No balancesheet data returned from Tushare")
+            return pd.DataFrame(columns=BalancesheetSchema.get_required_columns())
+
+        # 合并DataFrame
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        # 清理：删除全NA的列
+        final_df = final_df.dropna(axis=1, how='all')
+
+        # 去重（按ts_code和end_date_time）
+        final_df = final_df.drop_duplicates(subset=["ts_code", "end_date"]).sort_values(
+            ["ts_code", "end_date"]
+        ).reset_index(drop=True)
+
+        # 验证数据格式
+        final_df = validate_dataframe(final_df, BalancesheetSchema, provider_name=self.name)
+
+        logger.info(f"Total fetched {len(final_df)} balancesheet records")
         return final_df

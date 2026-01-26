@@ -1039,6 +1039,49 @@ class FinanceDataHub:
         """
         return await self.ops.get_cashflow(ts_code, start_date, end_date)
 
+    def get_balancesheet(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取上市公司资产负债表数据（同步方法）
+
+        Args:
+            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 资产负债表数据，包含 ts_code, end_date_time 及所有资产负债表字段
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_balancesheet('600519.SH', '2020-03-31', '2024-12-31')
+            >>> print(data[['ts_code', 'end_date', 'total_assets', 'total_liab']])
+        """
+        return asyncio.run(self.get_balancesheet_async(ts_code, start_date, end_date))
+
+    async def get_balancesheet_async(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取上市公司资产负债表数据（异步方法）
+
+        Args:
+            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
+            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 资产负债表数据
+        """
+        return await self.ops.get_balancesheet(ts_code, start_date, end_date)
+
     # ============================================================================
     # 资源管理
     # ============================================================================

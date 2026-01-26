@@ -520,3 +520,194 @@ COMMENT ON COLUMN cashflow.net_profit IS '净利润';
 COMMENT ON COLUMN cashflow.n_cashflow_act IS '经营活动产生的现金流量净额';
 COMMENT ON COLUMN cashflow.n_cashflow_inv_act IS '投资活动产生的现金流量净额';
 COMMENT ON COLUMN cashflow.n_cash_flows_fnc_act IS '筹资活动产生的现金流量净额';
+
+-- 上市公司资产负债表数据表
+CREATE TABLE IF NOT EXISTS balancesheet (
+    ts_code VARCHAR(20) NOT NULL,                        -- TS代码
+    ann_date VARCHAR(8),                                 -- 公告日期
+    f_ann_date VARCHAR(8),                               -- 实际公告日期
+    end_date VARCHAR(8),                                 -- 报告期
+    end_date_time TIMESTAMPTZ NOT NULL,                  -- 报告期（时间序列格式，用于增量更新）
+    comp_type VARCHAR(4),                                -- 公司类型
+    report_type VARCHAR(4),                              -- 报表类型
+    end_type VARCHAR(4),                                 -- 报告期类型
+    -- 流动资产
+    total_share DECIMAL(20,4),                           -- 期末总股本
+    cap_rese DECIMAL(20,4),                              -- 资本公积金
+    undistr_porfit DECIMAL(20,4),                        -- 未分配利润
+    surplus_rese DECIMAL(20,4),                          -- 盈余公积金
+    special_rese DECIMAL(20,4),                          -- 专项储备
+    money_cap DECIMAL(20,4),                             -- 货币资金
+    trad_asset DECIMAL(20,4),                            -- 交易性金融资产
+    notes_receiv DECIMAL(20,4),                          -- 应收票据
+    accounts_receiv DECIMAL(20,4),                       -- 应收账款
+    oth_receiv DECIMAL(20,4),                            -- 其他应收款
+    prepayment DECIMAL(20,4),                            -- 预付款项
+    div_receiv DECIMAL(20,4),                            -- 应收股利
+    int_receiv DECIMAL(20,4),                            -- 应收利息
+    inventories DECIMAL(20,4),                           -- 存货
+    amor_exp DECIMAL(20,4),                              -- 待摊费用
+    nca_within_1y DECIMAL(20,4),                         -- 一年内到期的非流动资产
+    sett_rsrv DECIMAL(20,4),                             -- 结算备付金
+    loanto_oth_bank_fi DECIMAL(20,4),                    -- 拆出资金
+    premium_receiv DECIMAL(20,4),                        -- 应收保费
+    reinsur_receiv DECIMAL(20,4),                        -- 应收分保账款
+    reinsur_res_receiv DECIMAL(20,4),                    -- 应收分保合同准备金
+    pur_resale_fa DECIMAL(20,4),                         -- 买入返售金融资产
+    oth_cur_assets DECIMAL(20,4),                        -- 其他流动资产
+    total_cur_assets DECIMAL(20,4),                      -- 流动资产合计
+    -- 非流动资产
+    fa_avail_for_sale DECIMAL(20,4),                     -- 可供出售金融资产
+    htm_invest DECIMAL(20,4),                            -- 持有至到期投资
+    lt_eqt_invest DECIMAL(20,4),                         -- 长期股权投资
+    invest_real_estate DECIMAL(20,4),                    -- 投资性房地产
+    time_deposits DECIMAL(20,4),                         -- 定期存款
+    oth_assets DECIMAL(20,4),                            -- 其他资产
+    lt_rec DECIMAL(20,4),                                -- 长期应收款
+    fix_assets DECIMAL(20,4),                            -- 固定资产
+    cip DECIMAL(20,4),                                   -- 在建工程
+    const_materials DECIMAL(20,4),                       -- 工程物资
+    fixed_assets_disp DECIMAL(20,4),                     -- 固定资产清理
+    produc_bio_assets DECIMAL(20,4),                     -- 生产性生物资产
+    oil_and_gas_assets DECIMAL(20,4),                    -- 油气资产
+    intan_assets DECIMAL(20,4),                          -- 无形资产
+    r_and_d DECIMAL(20,4),                               -- 研发支出
+    goodwill DECIMAL(20,4),                              -- 商誉
+    lt_amor_exp DECIMAL(20,4),                           -- 长期待摊费用
+    defer_tax_assets DECIMAL(20,4),                      -- 递延所得税资产
+    decr_in_disbur DECIMAL(20,4),                        -- 发放贷款及垫款
+    oth_nca DECIMAL(20,4),                               -- 其他非流动资产
+    total_nca DECIMAL(20,4),                             -- 非流动资产合计
+    -- 银行/保险特有资产
+    cash_reser_cb DECIMAL(20,4),                         -- 现金及存放中央银行款项
+    depos_in_oth_bfi DECIMAL(20,4),                      -- 存放同业和其它金融机构款项
+    prec_metals DECIMAL(20,4),                           -- 贵金属
+    deriv_assets DECIMAL(20,4),                          -- 衍生金融资产
+    rr_reins_une_prem DECIMAL(20,4),                     -- 应收分保未到期责任准备金
+    rr_reins_outstd_cla DECIMAL(20,4),                   -- 应收分保未决赔款准备金
+    rr_reins_lins_liab DECIMAL(20,4),                    -- 应收分保寿险责任准备金
+    rr_reins_lthins_liab DECIMAL(20,4),                  -- 应收分保长期健康险责任准备金
+    refund_depos DECIMAL(20,4),                          -- 存出保证金
+    ph_pledge_loans DECIMAL(20,4),                       -- 保户质押贷款
+    refund_cap_depos DECIMAL(20,4),                      -- 存出资本保证金
+    indept_acct_assets DECIMAL(20,4),                    -- 独立账户资产
+    client_depos DECIMAL(20,4),                          -- 其中：客户资金存款
+    client_prov DECIMAL(20,4),                           -- 其中：客户备付金
+    transac_seat_fee DECIMAL(20,4),                      -- 其中:交易席位费
+    invest_as_receiv DECIMAL(20,4),                      -- 应收款项类投资
+    -- 资产总计
+    total_assets DECIMAL(20,4),                          -- 资产总计
+    -- 流动负债
+    lt_borr DECIMAL(20,4),                               -- 长期借款
+    st_borr DECIMAL(20,4),                               -- 短期借款
+    cb_borr DECIMAL(20,4),                               -- 向中央银行借款
+    depos_ib_deposits DECIMAL(20,4),                     -- 吸收存款及同业存放
+    loan_oth_bank DECIMAL(20,4),                         -- 拆入资金
+    trading_fl DECIMAL(20,4),                            -- 交易性金融负债
+    notes_payable DECIMAL(20,4),                         -- 应付票据
+    acct_payable DECIMAL(20,4),                          -- 应付账款
+    adv_receipts DECIMAL(20,4),                          -- 预收款项
+    sold_for_repur_fa DECIMAL(20,4),                     -- 卖出回购金融资产款
+    comm_payable DECIMAL(20,4),                          -- 应付手续费及佣金
+    payroll_payable DECIMAL(20,4),                       -- 应付职工薪酬
+    taxes_payable DECIMAL(20,4),                         -- 应交税费
+    int_payable DECIMAL(20,4),                           -- 应付利息
+    div_payable DECIMAL(20,4),                           -- 应付股利
+    oth_payable DECIMAL(20,4),                           -- 其他应付款
+    acc_exp DECIMAL(20,4),                               -- 预提费用
+    deferred_inc DECIMAL(20,4),                          -- 递延收益
+    st_bonds_payable DECIMAL(20,4),                      -- 应付短期债券
+    payable_to_reinsurer DECIMAL(20,4),                  -- 应付分保账款
+    rsrv_insur_cont DECIMAL(20,4),                       -- 保险合同准备金
+    acting_trading_sec DECIMAL(20,4),                    -- 代理买卖证券款
+    acting_uw_sec DECIMAL(20,4),                         -- 代理承销证券款
+    non_cur_liab_due_1y DECIMAL(20,4),                   -- 一年内到期的非流动负债
+    oth_cur_liab DECIMAL(20,4),                          -- 其他流动负债
+    total_cur_liab DECIMAL(20,4),                        -- 流动负债合计
+    -- 非流动负债
+    bond_payable DECIMAL(20,4),                          -- 应付债券
+    lt_payable DECIMAL(20,4),                            -- 长期应付款
+    specific_payables DECIMAL(20,4),                     -- 专项应付款
+    estimated_liab DECIMAL(20,4),                        -- 预计负债
+    defer_tax_liab DECIMAL(20,4),                        -- 递延所得税负债
+    defer_inc_non_cur_liab DECIMAL(20,4),                -- 递延收益-非流动负债
+    oth_ncl DECIMAL(20,4),                               -- 其他非流动负债
+    total_ncl DECIMAL(20,4),                             -- 非流动负债合计
+    -- 银行/保险特有负债
+    depos_oth_bfi DECIMAL(20,4),                         -- 同业和其它金融机构存放款项
+    deriv_liab DECIMAL(20,4),                            -- 衍生金融负债
+    depos DECIMAL(20,4),                                 -- 吸收存款
+    agency_bus_liab DECIMAL(20,4),                       -- 代理业务负债
+    oth_liab DECIMAL(20,4),                              -- 其他负债
+    prem_receiv_adva DECIMAL(20,4),                      -- 预收保费
+    depos_received DECIMAL(20,4),                        -- 存入保证金
+    ph_invest DECIMAL(20,4),                             -- 保户储金及投资款
+    reser_une_prem DECIMAL(20,4),                        -- 未到期责任准备金
+    reser_outstd_claims DECIMAL(20,4),                   -- 未决赔款准备金
+    reser_lins_liab DECIMAL(20,4),                       -- 寿险责任准备金
+    reser_lthins_liab DECIMAL(20,4),                     -- 长期健康险责任准备金
+    indept_acc_liab DECIMAL(20,4),                       -- 独立账户负债
+    pledge_borr DECIMAL(20,4),                           -- 其中:质押借款
+    indem_payable DECIMAL(20,4),                         -- 应付赔付款
+    policy_div_payable DECIMAL(20,4),                    -- 应付保单红利
+    -- 负债合计
+    total_liab DECIMAL(20,4),                            -- 负债合计
+    -- 股东权益
+    treasury_share DECIMAL(20,4),                        -- 减:库存股
+    ordin_risk_reser DECIMAL(20,4),                      -- 一般风险准备
+    forex_differ DECIMAL(20,4),                          -- 外币报表折算差额
+    invest_loss_unconf DECIMAL(20,4),                    -- 未确认的投资损失
+    minority_int DECIMAL(20,4),                          -- 少数股东权益
+    total_hldr_eqy_exc_min_int DECIMAL(20,4),            -- 股东权益合计(不含少数股东权益)
+    total_hldr_eqy_inc_min_int DECIMAL(20,4),            -- 股东权益合计(含少数股东权益)
+    total_liab_hldr_eqy DECIMAL(20,4),                   -- 负债及股东权益总计
+    -- 新增字段
+    lt_payroll_payable DECIMAL(20,4),                    -- 长期应付职工薪酬
+    oth_comp_income DECIMAL(20,4),                       -- 其他综合收益
+    oth_eqt_tools DECIMAL(20,4),                         -- 其他权益工具
+    oth_eqt_tools_p_shr DECIMAL(20,4),                   -- 其他权益工具(优先股)
+    lending_funds DECIMAL(20,4),                         -- 融出资金
+    acc_receivable DECIMAL(20,4),                        -- 应收款项
+    st_fin_payable DECIMAL(20,4),                        -- 应付短期融资款
+    payables DECIMAL(20,4),                              -- 应付款项
+    hfs_assets DECIMAL(20,4),                            -- 持有待售的资产
+    hfs_sales DECIMAL(20,4),                             -- 持有待售的负债
+    cost_fin_assets DECIMAL(20,4),                       -- 以摊余成本计量的金融资产
+    fair_value_fin_assets DECIMAL(20,4),                 -- 以公允价值计量且其变动计入其他综合收益的金融资产
+    cip_total DECIMAL(20,4),                             -- 在建工程(合计)(元)
+    oth_pay_total DECIMAL(20,4),                         -- 其他应付款(合计)(元)
+    long_pay_total DECIMAL(20,4),                        -- 长期应付款(合计)(元)
+    debt_invest DECIMAL(20,4),                           -- 债权投资(元)
+    oth_debt_invest DECIMAL(20,4),                       -- 其他债权投资(元)
+    oth_eq_invest DECIMAL(20,4),                         -- 其他权益工具投资(元)
+    oth_illiq_fin_assets DECIMAL(20,4),                  -- 其他非流动金融资产(元)
+    oth_eq_ppbond DECIMAL(20,4),                         -- 其他权益工具:永续债(元)
+    receiv_financing DECIMAL(20,4),                      -- 应收款项融资
+    use_right_assets DECIMAL(20,4),                      -- 使用权资产
+    lease_liab DECIMAL(20,4),                            -- 租赁负债
+    contract_assets DECIMAL(20,4),                       -- 合同资产
+    contract_liab DECIMAL(20,4),                         -- 合同负债
+    accounts_receiv_bill DECIMAL(20,4),                  -- 应收票据及应收账款
+    accounts_pay DECIMAL(20,4),                          -- 应付票据及应付账款
+    oth_rcv_total DECIMAL(20,4),                         -- 其他应收款(合计)（元）
+    fix_assets_total DECIMAL(20,4),                      -- 固定资产(合计)(元)
+    update_flag VARCHAR(4),                              -- 更新标志
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts_code, end_date_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_balancesheet_end_date ON balancesheet(end_date_time);
+CREATE INDEX IF NOT EXISTS idx_balancesheet_ann_date ON balancesheet(ann_date);
+CREATE INDEX IF NOT EXISTS idx_balancesheet_ts_code ON balancesheet(ts_code);
+
+COMMENT ON TABLE balancesheet IS '上市公司资产负债表数据表';
+COMMENT ON COLUMN balancesheet.ts_code IS 'TS代码';
+COMMENT ON COLUMN balancesheet.ann_date IS '公告日期';
+COMMENT ON COLUMN balancesheet.f_ann_date IS '实际公告日期';
+COMMENT ON COLUMN balancesheet.end_date IS '报告期';
+COMMENT ON COLUMN balancesheet.end_date_time IS '报告期（时间序列格式，用于增量更新）';
+COMMENT ON COLUMN balancesheet.comp_type IS '公司类型';
+COMMENT ON COLUMN balancesheet.total_assets IS '资产总计';
+COMMENT ON COLUMN balancesheet.total_liab IS '负债合计';
+COMMENT ON COLUMN balancesheet.total_hldr_eqy_exc_min_int IS '股东权益合计(不含少数股东权益)';

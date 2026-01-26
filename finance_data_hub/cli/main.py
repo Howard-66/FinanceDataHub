@@ -179,6 +179,8 @@ def update(
 
       - cashflow: 上市公司现金流量表数据（经营活动、投资活动、筹资活动现金流量）
 
+      - balancesheet: 上市公司资产负债表数据（资产、负债、股东权益）
+
     财务数据使用说明:
     - 需要指定 --symbols 参数指定股票代码（支持逗号分隔多只股票）
     - 支持 --start-date 和 --end-date 指定报告期范围
@@ -640,6 +642,61 @@ async def _run_smart_download(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新现金流量表数据失败: {str(e)}")
+                    raise
+
+    # 资产负债表数据处理
+    if data_type == "balancesheet":
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - 资产负债表数据（上市公司资产、负债和股东权益）")
+            console.print("  - 按股票代码获取历史财务数据")
+            console.print("")
+
+        # 获取股票列表（不更新，仅查询）
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            if not symbol_list:
+                symbols_db = await updater.data_ops.get_symbol_list()
+                symbol_list = symbols_db
+                if not quiet and symbol_list:
+                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+
+            if not symbol_list:
+                if not quiet:
+                    console.print("[yellow]数据库中没有股票信息，请先运行 fdh-cli update --dataset basic[/yellow]")
+                else:
+                    console.print("[yellow]没有股票可更新[/yellow]")
+                return 0
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("股票"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取资产负债表数据...", total=len(symbol_list))
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current)
+
+                try:
+                    count = await updater.update_balancesheet(
+                        symbols=symbol_list,
+                        start_date=None,  # 智能下载
+                        end_date=end_date,
+                        force_update=False,
+                        progress_callback=progress_callback,
+                    )
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条资产负债表数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条资产负债表数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新资产负债表数据失败: {str(e)}")
                     raise
 
     if not quiet:
