@@ -1425,7 +1425,8 @@ class DataUpdater:
                 logger.warning("No industry classify data, please update classify first")
                 return 0
 
-            l1_codes = classify_data["industry_code"].tolist()
+            # 使用 index_code（完整的指数代码，如 801780.SI）而不是 industry_code（如 801780）
+            l1_codes = classify_data["index_code"].tolist()
             logger.info(f"Found {len(l1_codes)} level-1 industries")
 
             total_industries = len(l1_codes)
@@ -1463,7 +1464,7 @@ class DataUpdater:
                         asset_class="index",
                         data_type="sw_member",
                         method_name="get_sw_industry_members",
-                        index_code=l1_code_item,
+                        l1_code=l1_code_item,
                     )
 
                     if data is not None and not data.empty:

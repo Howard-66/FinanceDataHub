@@ -43,7 +43,10 @@
       "Bash(/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/.venv/bin/python:*)",
       "Bash(pip install:*)",
       "Bash(uv pip install:*)",
-      "Bash(docker compose ps)"
+      "Bash(docker compose ps)",
+      "Bash(python3:*)",
+      "Bash(PGPASSWORD=postgres psql:*)",
+      "Bash(fdh-cli config show:*)"
     ],
     "deny": [],
     "ask": []
