@@ -888,7 +888,6 @@ COMMENT ON COLUMN sw_industry_classify.src IS '行业分类来源：SW2014（申
 
 -- 申万行业成分股表
 CREATE TABLE IF NOT EXISTS sw_industry_member (
-    index_code VARCHAR(30) NOT NULL,              -- 指数代码，如801010
     l1_code VARCHAR(30) NOT NULL,                 -- 一级行业代码，如801010
     l1_name VARCHAR(100) NOT NULL,                -- 一级行业名称
     l2_code VARCHAR(30) NOT NULL,                 -- 二级行业代码，如801010.SI
@@ -906,7 +905,6 @@ CREATE TABLE IF NOT EXISTS sw_industry_member (
     PRIMARY KEY (l3_code, ts_code)
 );
 
-CREATE INDEX IF NOT EXISTS idx_sw_member_index_code ON sw_industry_member(index_code);
 CREATE INDEX IF NOT EXISTS idx_sw_member_l1 ON sw_industry_member(l1_code);
 CREATE INDEX IF NOT EXISTS idx_sw_member_l2 ON sw_industry_member(l2_code);
 CREATE INDEX IF NOT EXISTS idx_sw_member_l3 ON sw_industry_member(l3_code);
@@ -915,7 +913,6 @@ CREATE INDEX IF NOT EXISTS idx_sw_member_in_date ON sw_industry_member(in_date);
 CREATE INDEX IF NOT EXISTS idx_sw_member_out_date ON sw_industry_member(out_date);
 
 COMMENT ON TABLE sw_industry_member IS '申万行业成分股表 - 存储申万行业分类的成分股票';
-COMMENT ON COLUMN sw_industry_member.index_code IS '指数代码，如801010';
 COMMENT ON COLUMN sw_industry_member.l1_code IS '一级行业代码，如801010';
 COMMENT ON COLUMN sw_industry_member.l1_name IS '一级行业名称';
 COMMENT ON COLUMN sw_industry_member.l2_code IS '二级行业代码，如801010.SI';

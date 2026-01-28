@@ -8,7 +8,6 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pathlib import Path
 import time
-import pandas as pd
 from loguru import logger
 
 from finance_data_hub.router.smart_router import SmartRouter
@@ -1413,96 +1412,70 @@ class DataUpdater:
         )
 
         try:
-            # 如果没有指定一级行业代码，先获取所有一级行业
-            if not l1_code:
-                # 确保行业分类已下载
-                classify_data = self.router.route(
-                    asset_class="index",
-                    data_type="sw_classify",
-                    method_name="get_sw_industry_classify",
-                    level="L1",
-                    src="SW2021",
-                )
+            # 获取所有一级行业列表
+            classify_data = self.router.route(
+                asset_class="index",
+                data_type="sw_classify",
+                method_name="get_sw_industry_classify",
+                level="L1",
+                src="SW2021",
+            )
 
-                if classify_data is None or classify_data.empty:
-                    logger.warning("No industry classify data, please update classify first")
-                    return 0
+            if classify_data is None or classify_data.empty:
+                logger.warning("No industry classify data, please update classify first")
+                return 0
 
-                l1_codes = classify_data["industry_code"].tolist()
-                logger.info(f"Found {len(l1_codes)} level-1 industries")
-            else:
-                l1_codes = [l1_code]
+            l1_codes = classify_data["industry_code"].tolist()
+            logger.info(f"Found {len(l1_codes)} level-1 industries")
 
             total_industries = len(l1_codes)
             total_records = 0
+            new_records = 0
+            skipped_records = 0
             completed = 0
 
-            # 预先获取所有L2和L3行业数据（只获取一次）
-            l2_data = self.router.route(
-                asset_class="index",
-                data_type="sw_classify",
-                method_name="get_sw_industry_classify",
-                level="L2",
-                src="SW2021",
-            )
-
-            l3_data = self.router.route(
-                asset_class="index",
-                data_type="sw_classify",
-                method_name="get_sw_industry_classify",
-                level="L3",
-                src="SW2021",
-            )
-
-            if l3_data is None or l3_data.empty:
-                logger.warning("No L3 industry classify data")
-                return 0
-
-            logger.info(f"Found {len(l3_data)} L3 industries total")
+            # 如果不是强制更新，获取数据库中已有的L1行业列表
+            existing_l1_codes = set()
+            if not force_update:
+                try:
+                    all_members = await self.data_ops.get_sw_industry_members()
+                    if all_members is not None and not all_members.empty:
+                        existing_l1_codes = set(all_members["l1_code"].unique())
+                        logger.info(f"Found {len(existing_l1_codes)} L1 industries with existing member data")
+                except Exception as e:
+                    logger.warning(f"Could not query existing data: {str(e)}, will re-download all")
+                    existing_l1_codes = set()
 
             for l1_code_item in l1_codes:
                 try:
-                    # 步骤1: 筛选属于当前一级行业的所有二级行业
-                    l2_codes = l2_data[l2_data["parent_code"] == l1_code_item]["industry_code"].tolist() if l2_data is not None and not l2_data.empty else []
-
-                    if not l2_codes:
-                        # 如果没有L2数据，直接跳过
+                    # 跳过已存在的L1行业
+                    if not force_update and l1_code_item in existing_l1_codes:
+                        skipped_records += 1
+                        logger.info(f"Skipping L1 {l1_code_item} - already exists")
                         completed += 1
                         if progress_callback:
                             progress_callback(completed, total_industries)
                         continue
 
-                    # 步骤2: 筛选属于这些二级行业的所有三级行业
-                    l3_codes = l3_data[l3_data["parent_code"].isin(l2_codes)]["industry_code"].tolist()
+                    # 直接按L1行业代码获取所有成分股
+                    logger.info(f"Fetching members for L1 {l1_code_item}...")
+                    data = self.router.route(
+                        asset_class="index",
+                        data_type="sw_member",
+                        method_name="get_sw_industry_members",
+                        index_code=l1_code_item,
+                    )
 
-                    if not l3_codes:
-                        completed += 1
-                        if progress_callback:
-                            progress_callback(completed, total_industries)
-                        continue
-
-                    logger.info(f"L1 {l1_code_item}: found {len(l2_codes)} L2, {len(l3_codes)} L3 industries")
-
-                    # 步骤3: 获取每个三级行业的成分股
-                    industry_data = []
-                    for l3_code in l3_codes:
-                        data = self.router.route(
-                            asset_class="index",
-                            data_type="sw_member",
-                            method_name="get_sw_industry_members",
-                            index_code=l3_code,  # Tushare API uses index_code
-                        )
-                        if data is not None and not data.empty:
-                            industry_data.append(data)
-
-                        # API限流
-                        time.sleep(0.3)
-
-                    if industry_data:
-                        all_data = pd.concat(industry_data, ignore_index=True)
-                        inserted = await self.data_ops.insert_sw_industry_member_batch(all_data)
+                    if data is not None and not data.empty:
+                        inserted = await self.data_ops.insert_sw_industry_member_batch(data)
                         total_records += inserted
-                        logger.info(f"Industry {l1_code_item}: inserted {inserted} member records")
+                        new_records += len(data)
+                        logger.info(f"L1 {l1_code_item}: inserted {inserted} member records")
+                    else:
+                        logger.warning(f"No data for L1 {l1_code_item}")
+
+                    # API限流
+                    time.sleep(0.3)
 
                 except Exception as e:
                     logger.error(f"Failed to update members for industry {l1_code_item}: {str(e)}")
@@ -1512,7 +1485,7 @@ class DataUpdater:
                 if progress_callback:
                     progress_callback(completed, total_industries)
 
-            logger.info(f"Updated total {total_records} industry member records")
+            logger.info(f"Updated total {total_records} industry member records (new: {new_records}, skipped: {skipped_records}, force: {force_update})")
             return total_records
 
         except Exception as e:

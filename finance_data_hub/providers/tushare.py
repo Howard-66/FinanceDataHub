@@ -2625,7 +2625,7 @@ class TushareProvider(BaseDataProvider):
 
         # 构建API参数
         api_params = {
-            "fields": "index_code,l1_code,l1_name,l2_code,l2_name,l3_code,l3_name,ts_code,name,in_date,out_date,is_new",
+            "fields": "l1_code,l1_name,l2_code,l2_name,l3_code,l3_name,ts_code,name,in_date,out_date,is_new",
         }
         if index_code:
             api_params["index_code"] = index_code
@@ -2649,7 +2649,6 @@ class TushareProvider(BaseDataProvider):
 
         # 列名映射（Tushare字段名与标准字段名相同）
         column_mapping = {
-            "index_code": "index_code",
             "l1_code": "l1_code",
             "l1_name": "l1_name",
             "l2_code": "l2_code",
@@ -2664,10 +2663,6 @@ class TushareProvider(BaseDataProvider):
         }
 
         df = convert_to_standard_columns(df, column_mapping)
-
-        # 如果API没有返回index_code，但我们在参数中指定了，则补充该列
-        if "index_code" not in df.columns and index_code:
-            df["index_code"] = index_code
 
         # 处理日期字段
         if "in_date" in df.columns:

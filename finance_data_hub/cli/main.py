@@ -802,15 +802,16 @@ async def _run_smart_download(
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
+            TextColumn("({task.completed}/{task.total} 行业)"),
             BarColumn(),
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("正在获取申万行业成分股...", total=100)
+            task = progress.add_task("正在获取申万行业成分股...", total=31)
 
             async with DataUpdater(settings, config_path="sources.yml") as updater:
                 def progress_callback(current, total):
-                    progress.update(task, completed=(current / total) * 100)
+                    progress.update(task, completed=current, total=total)
 
                 try:
                     count = await updater.update_sw_industry_members(
@@ -818,7 +819,7 @@ async def _run_smart_download(
                         force_update=False,
                         progress_callback=progress_callback,
                     )
-                    progress.update(task, completed=100)
+                    progress.update(task, completed=31)
                     if not quiet:
                         console.print(f"[green][OK][/green] 已更新 {count} 条成分股数据")
                     else:
@@ -1246,15 +1247,16 @@ async def _run_force_update(
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
+            TextColumn("({task.completed}/{task.total} 行业)"),
             BarColumn(),
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("正在获取申万行业成分股...", total=100)
+            task = progress.add_task("正在获取申万行业成分股...", total=31)
 
             async with DataUpdater(settings, config_path="sources.yml") as updater:
                 def progress_callback(current, total):
-                    progress.update(task, completed=(current / total) * 100)
+                    progress.update(task, completed=current, total=total)
 
                 try:
                     count = await updater.update_sw_industry_members(
@@ -1262,7 +1264,7 @@ async def _run_force_update(
                         force_update=True,
                         progress_callback=progress_callback,
                     )
-                    progress.update(task, completed=100)
+                    progress.update(task, completed=31)
                     if not quiet:
                         console.print(f"[green][OK][/green] 已更新 {count} 条成分股数据")
                     else:

@@ -833,7 +833,6 @@ SwIndustryMemberSchema = DataFrameSchema(
     name="sw_industry_member",
     description="申万行业成分股",
     columns=[
-        ColumnSchema("index_code", "object", False, "指数代码"),
         ColumnSchema("l1_code", "object", False, "一级行业代码"),
         ColumnSchema("l1_name", "object", False, "一级行业名称"),
         ColumnSchema("l2_code", "object", False, "二级行业代码"),

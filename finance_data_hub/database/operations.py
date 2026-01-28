@@ -3336,15 +3336,14 @@ class DataOperations:
         # 准备插入语句
         insert_sql = """
             INSERT INTO sw_industry_member (
-                index_code, l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
+                l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
                 ts_code, name, in_date, out_date, is_new
             )
             VALUES (
-                :index_code, :l1_code, :l1_name, :l2_code, :l2_name, :l3_code, :l3_name,
+                :l1_code, :l1_name, :l2_code, :l2_name, :l3_code, :l3_name,
                 :ts_code, :name, :in_date, :out_date, :is_new
             )
             ON CONFLICT (l3_code, ts_code) DO UPDATE SET
-                index_code = EXCLUDED.index_code,
                 l1_code = EXCLUDED.l1_code,
                 l1_name = EXCLUDED.l1_name,
                 l2_code = EXCLUDED.l2_code,
