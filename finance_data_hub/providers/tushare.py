@@ -36,6 +36,7 @@ from finance_data_hub.providers.schema import (
     IncomeSchema,
     SwIndustryClassifySchema,
     SwIndustryMemberSchema,
+    SwDailySchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -2675,3 +2676,109 @@ class TushareProvider(BaseDataProvider):
 
         logger.info(f"Total fetched {len(df)} Shenwan industry member records")
         return df
+
+    def get_sw_daily(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取申万行业日线行情（自动处理Tushare 4000条记录限制）
+
+        当返回记录数等于4000时，自动继续获取更早的数据，确保获取完整历史数据。
+
+        Args:
+            ts_code: 行业代码（如801780.SI）
+            trade_date: 交易日期（YYYYMMDD格式）
+            start_date: 开始日期（YYYYMMDD格式）
+            end_date: 结束日期（YYYYMMDD格式）
+
+        Returns:
+            pd.DataFrame: 标准格式的申万行业日线行情数据
+        """
+        from datetime import timedelta
+
+        logger.info(
+            f"Fetching Shenwan industry daily data (ts_code={ts_code}, trade_date={trade_date}, "
+            f"start_date={start_date}, end_date={end_date})"
+        )
+
+        # Tushare限制：单次最大4000行
+        SW_DAILY_MAX_RECORDS = 4000
+
+        # 列名映射
+        column_mapping = {
+            "ts_code": "ts_code",
+            "trade_date": "trade_date",
+            "name": "name",
+            "open": "open",
+            "low": "low",
+            "high": "high",
+            "close": "close",
+            "change": "change",
+            "pct_change": "pct_change",
+            "vol": "vol",
+            "amount": "amount",
+            "pe": "pe",
+            "pb": "pb",
+            "float_mv": "float_mv",
+            "total_mv": "total_mv",
+        }
+
+        all_data = []
+        current_end_date = end_date
+
+        while True:
+            # 构建API参数
+            api_params = {
+                "fields": ",".join(column_mapping.keys()),
+            }
+            if ts_code:
+                api_params["ts_code"] = ts_code
+            if trade_date:
+                api_params["trade_date"] = trade_date
+            if start_date:
+                api_params["start_date"] = start_date
+            if current_end_date:
+                api_params["end_date"] = current_end_date
+
+            # 从api_params中提取fields（_call_api需要fields作为单独参数）
+            fields = api_params.pop("fields", None)
+
+            # 调用API
+            df = self._call_api("sw_daily", fields=fields, **api_params)
+
+            if df is None or df.empty:
+                logger.warning("No Shenwan daily data returned from Tushare")
+                break
+
+            # 转换列名
+            df = convert_to_standard_columns(df, column_mapping)
+
+            # 处理日期字段（trade_date格式为YYYYMMDD字符串）
+            df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
+
+            # 验证数据格式
+            df = validate_dataframe(df, SwDailySchema, provider_name=self.name)
+
+            all_data.append(df)
+            logger.info(f"Fetched {len(df)} records (total so far: {sum(len(d) for d in all_data)})")
+
+            # 检查是否需要继续获取更早数据
+            if len(df) >= SW_DAILY_MAX_RECORDS:
+                # 获取这批数据的最早日期，作为下一批的结束日期
+                earliest_date = df["trade_date"].min()
+                current_end_date = (earliest_date - timedelta(days=1)).strftime("%Y%m%d")
+                logger.info(f"Reached max records ({SW_DAILY_MAX_RECORDS}), fetching more data before {current_end_date}")
+                continue
+            else:
+                break
+
+        if all_data:
+            result_df = pd.concat(all_data, ignore_index=True)
+            logger.info(f"Total fetched {len(result_df)} Shenwan daily records")
+            return result_df
+        else:
+            return pd.DataFrame(columns=SwDailySchema.get_required_columns())

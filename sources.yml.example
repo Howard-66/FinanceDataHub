@@ -130,6 +130,11 @@ routing_strategy:
       providers: [tushare]
       fallback: false
 
+    # 申万行业日线行情
+    sw_daily:
+      providers: [tushare]
+      fallback: false
+
 # 故障转移配置
 failover:
   enabled: true

@@ -953,6 +953,49 @@ class FinanceDataHub:
         """
         return await self.ops.get_index_dailybasic(ts_code, start_date, end_date)
 
+    def get_sw_daily(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取申万行业日线行情数据（同步方法）
+
+        Args:
+            ts_code: 行业代码（如 '801780.SI' 申万农林牧渔），None表示所有行业
+            start_date: 开始日期（YYYY-MM-DD格式），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 申万行业日线行情数据，包含 ts_code, trade_date, name, open, high, low, close, change, pct_change, vol, amount, pe, pb, float_mv, total_mv 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_sw_daily('2024-01-01', '2024-12-31')
+            >>> print(data[['trade_date', 'ts_code', 'name', 'close', 'pct_change']])
+        """
+        return asyncio.run(self.get_sw_daily_async(ts_code, start_date, end_date))
+
+    async def get_sw_daily_async(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取申万行业日线行情数据（异步方法）
+
+        Args:
+            ts_code: 行业代码（如 '801780.SI'），None表示所有行业
+            start_date: 开始日期（YYYY-MM-DD格式），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式），None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 申万行业日线行情数据
+        """
+        return await self.ops.get_sw_daily(ts_code, start_date, end_date)
+
     def get_fina_indicator(
         self,
         ts_code: Optional[str] = None,

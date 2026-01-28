@@ -860,6 +860,177 @@ class DataUpdater:
             logger.exception("Failed to update index_dailybasic data")
             raise
 
+    async def update_sw_daily(
+        self,
+        ts_code: Optional[str] = None,
+        ts_code_list: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """
+        更新申万行业日线行情数据
+
+        支持的调用模式：
+        1. 指定 ts_code/tss_code_list：获取指定行业的历史数据
+        2. 指定 trade_date：获取指定日期的所有行业数据
+        3. 智能下载模式：增量更新
+
+        Args:
+            ts_code: 行业代码，如 '801780.SI'
+            ts_code_list: 行业代码列表，如 ['801780.SI', '801790.SI']
+            trade_date: 交易日期（YYYYMMDD格式）
+            start_date: 开始日期（YYYY-MM-DD格式）
+            end_date: 结束日期（YYYY-MM-DD格式）
+            force_update: 是否强制更新
+            progress_callback: 进度回调函数，接收 (current, total) 参数
+
+        Returns:
+            int: 更新的记录数
+        """
+        # 确定日期
+        # 注意：不指定start_date时，API会从最早数据开始
+        # 不指定end_date时，API会一直到最新数据
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+        # 合并单个ts_code和列表
+        if ts_code and not ts_code_list:
+            ts_code_list = [ts_code]
+        elif ts_code_list is None:
+            ts_code_list = []
+
+        logger.info(
+            f"Updating sw_daily for {ts_code_list or 'all industries'} "
+            f"(trade_date={trade_date}, start={start_date or 'full history'}, end={end_date}, force={force_update})"
+        )
+
+        try:
+            total_records = 0
+            total_industries = len(ts_code_list) if ts_code_list else 1
+
+            # 判断使用哪种模式
+            if trade_date:
+                # 指定交易日模式：获取该日期所有行业数据
+                logger.info(f"Trade date mode: fetching all industries for {trade_date}")
+                data = self.router.route(
+                    asset_class="index",
+                    data_type="sw_daily",
+                    method_name="get_sw_daily",
+                    trade_date=trade_date,
+                )
+
+                if data is not None and not data.empty:
+                    inserted = await self.data_ops.insert_sw_daily_batch(data)
+                    total_records += inserted
+                    logger.info(f"Inserted {inserted} sw_daily records for trade_date={trade_date}")
+
+            elif ts_code_list:
+                # 指定行业代码列表模式：循环获取每个行业的历史数据
+                for idx, code in enumerate(ts_code_list):
+                    # 调用进度回调
+                    if progress_callback:
+                        progress_callback(idx + 1, total_industries)
+
+                    # 不指定start_date时，API从最早数据开始
+                    api_start = start_date.replace("-", "") if start_date else None
+                    api_end = end_date.replace("-", "") if end_date else None
+
+                    logger.info(f"Industry mode: fetching {code} ({idx + 1}/{total_industries})")
+
+                    try:
+                        data = self.router.route(
+                            asset_class="index",
+                            data_type="sw_daily",
+                            method_name="get_sw_daily",
+                            ts_code=code,
+                            start_date=api_start,
+                            end_date=api_end,
+                        )
+
+                        if data is not None and not data.empty:
+                            inserted = await self.data_ops.insert_sw_daily_batch(data)
+                            total_records += inserted
+                            logger.info(f"Inserted {inserted} records for {code}")
+                        else:
+                            logger.debug(f"No data for {code}")
+                    except Exception as e:
+                        logger.error(f"Failed to fetch data for {code}: {str(e)}")
+                        continue
+
+                # 最终进度回调
+                if progress_callback:
+                    progress_callback(total_industries, total_industries)
+
+            else:
+                # 智能下载模式（不指定行业代码）
+                if force_update:
+                    # 强制更新：获取全量历史数据
+                    logger.info("Force update: fetching full history")
+                    api_start = start_date.replace("-", "") if start_date else None
+                    api_end = end_date.replace("-", "") if end_date else None
+                    data = self.router.route(
+                        asset_class="index",
+                        data_type="sw_daily",
+                        method_name="get_sw_daily",
+                        start_date=api_start,
+                        end_date=api_end,
+                    )
+
+                    if data is not None and not data.empty:
+                        inserted = await self.data_ops.insert_sw_daily_batch(data)
+                        total_records = inserted
+                else:
+                    # 智能下载：检查数据库状态
+                    latest_date = await self.data_ops.get_latest_sw_daily_date(None)
+
+                    if latest_date:
+                        # 有记录，增量更新：从最新日期的下一天到最新
+                        next_day = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
+                        if next_day.strftime("%Y-%m-%d") > end_date:
+                            logger.info("sw_daily data is already up to date")
+                            return 0
+                        api_start = next_day.strftime("%Y%m%d")
+                        api_end = end_date.replace("-", "")
+                        logger.info(f"Smart incremental: fetching from {next_day} to {end_date}")
+                        data = self.router.route(
+                            asset_class="index",
+                            data_type="sw_daily",
+                            method_name="get_sw_daily",
+                            start_date=api_start,
+                            end_date=api_end,
+                        )
+
+                        if data is not None and not data.empty:
+                            inserted = await self.data_ops.insert_sw_daily_batch(data)
+                            total_records = inserted
+                    else:
+                        # 数据库为空，获取全量历史数据
+                        logger.info("Smart download: database empty, fetching full history")
+                        api_end = end_date.replace("-", "") if end_date else None
+                        data = self.router.route(
+                            asset_class="index",
+                            data_type="sw_daily",
+                            method_name="get_sw_daily",
+                            end_date=api_end,
+                        )
+
+                        if data is not None and not data.empty:
+                            inserted = await self.data_ops.insert_sw_daily_batch(data)
+                            total_records = inserted
+
+            logger.info(f"Updated total {total_records} sw_daily records")
+            return total_records
+
+            logger.info(f"Updated {inserted_count} sw_daily records")
+            return inserted_count
+
+        except Exception as e:
+            logger.exception("Failed to update sw_daily data")
+            raise
+
     async def update_fina_indicator(
         self,
         symbols: Optional[List[str]] = None,

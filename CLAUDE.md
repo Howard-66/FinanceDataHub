@@ -62,6 +62,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 中国货币供应量M0/M1/M2数据（月度）
 - 中国PMI采购经理人指数数据（月度）
 - 大盘指数每日指标数据（日度，上证综指、深证成指、上证50、中证500等）
+- 申万行业日线行情数据（日度，申万2021版行业指数）
 - 上市公司财务指标数据（每股收益、ROE、资产负债率等，季度）
 - 上市公司现金流量表数据（经营活动、投资活动、筹资活动现金流量，季度）
 - 上市公司资产负债表数据（资产、负债、股东权益，季度）
@@ -382,6 +383,16 @@ members = await fdh.get_sw_industry_members_async(l3_code='801010')
 print(f"801010(农林牧渔)行业成分股: {len(members)} 只")
 print(members[['ts_code', 'name', 'in_date']].head(10))
 
+# 申万行业日线行情数据查询
+# 获取全部行业的历史日线数据
+sw_daily_data = await fdh.get_sw_daily_async('2024-01-01', '2024-12-31')
+print(f"申万行业日线数据: {len(sw_daily_data)} 条记录")
+print(sw_daily_data[['ts_code', 'trade_date', 'name', 'close', 'pct_change']].head())
+
+# 获取指定行业的日线数据
+sw_data = await fdh.get_sw_daily_async('2024-01-01', '2024-12-31', ts_code='801010.SI')
+print(f"801010(农林牧渔)行业日线数据: {len(sw_data)} 条记录")
+
 # 关闭连接
 await fdh.close()
 ```
@@ -443,6 +454,7 @@ print(f"建议: {freshness['recommendation']}")
 | 利润表 | `get_income()` / `get_income_async()` | ts_code, start_date, end_date (报告期) |
 | 申万行业分类 | `get_sw_industry_classify()` / `get_sw_industry_classify_async()` | level (L1/L2/L3) |
 | 申万行业成分股 | `get_sw_industry_members()` / `get_sw_industry_members_async()` | l1_code/l2_code/l3_code/ts_code |
+| 申万行业日线行情 | `get_sw_daily()` / `get_sw_daily_async()` | ts_code, start_date, end_date |
 
 **GDP数据说明**:
 - 日期格式使用季度末日期，如 `2024-03-31` 表示 2024Q1，`2024-06-30` 表示 2024Q2
@@ -536,6 +548,18 @@ print(f"建议: {freshness['recommendation']}")
 - 返回字段: `index_code`, `l1_code`, `l1_name`, `l2_code`, `l2_name`, `l3_code`, `l3_name`, `ts_code`, `name`, `in_date`, `out_date`, `is_new`
 - 数据量: 共约 5400+ 只股票的成分股数据
 
+**申万行业日线行情数据说明**:
+- 申万行业日线行情数据基于申万2021版行业分类
+- 包含 500+ 个行业指数的日线行情数据
+- 支持的查询方式:
+  - 不指定 ts_code: 获取所有行业的日线数据
+  - 指定 ts_code: 获取特定行业的日线数据，如 `get_sw_daily(ts_code='801780.SI', start_date='2024-01-01', end_date='2024-12-31')`
+- 日期格式使用交易日日期，如 `2024-01-02` 表示 2024年1月2日
+- Tushare API 单次限制 4000 条记录，系统自动处理分页获取
+- 返回字段: `ts_code`, `trade_date`, `name`, `open`, `low`, `high`, `close`, `change`, `pct_change`, `vol`, `amount`, `pe`, `pb`, `float_mv`, `total_mv`
+- 数据量: 约 500+ 指数 × 3000+ 交易日 ≈ 150万条历史数据
+- 存储: TimescaleDB 超表，支持高效时间序列查询
+
 **频率选项** (用于 `get_minute`):
 - `minute_1` - 1分钟线
 - `minute_5` - 5分钟线
@@ -628,6 +652,13 @@ fdh-cli update --dataset sw_industry_classify --force     # 强制全量更新
 fdh-cli update --dataset sw_industry_member               # 智能下载所有行业的成分股
 fdh-cli update --dataset sw_industry_member --force       # 强制全量更新
 fdh-cli update --dataset sw_industry_member --symbols 110000  # 指定一级行业代码
+
+# 更新申万行业日线行情数据
+fdh-cli update --dataset sw_daily                         # 智能增量更新（获取最新数据）
+fdh-cli update --dataset sw_daily --force                 # 强制全量更新（获取所有历史数据，约30-40分钟）
+fdh-cli update --dataset sw_daily --start-date 2024-01-01 --end-date 2024-12-31  # 指定日期范围
+fdh-cli update --dataset sw_daily --symbols 801780.SI,801790.SI  # 指定行业代码（支持多个）
+fdh-cli update --dataset sw_daily --trade-date 2024-06-28  # 获取指定交易日的所有行业数据
 ```
 
 ### 日志输出控制

@@ -848,6 +848,30 @@ SwIndustryMemberSchema = DataFrameSchema(
 )
 
 
+# 申万行业日线行情 Schema
+SwDailySchema = DataFrameSchema(
+    name="sw_daily",
+    description="申万行业日线行情",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "指数代码"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("name", "object", True, "指数名称"),
+        ColumnSchema("open", "float64", True, "开盘点位"),
+        ColumnSchema("low", "float64", True, "最低点位"),
+        ColumnSchema("high", "float64", True, "最高点位"),
+        ColumnSchema("close", "float64", True, "收盘点位"),
+        ColumnSchema("change", "float64", True, "涨跌点位"),
+        ColumnSchema("pct_change", "float64", True, "涨跌幅"),
+        ColumnSchema("vol", "float64", True, "成交量（万股）"),
+        ColumnSchema("amount", "float64", True, "成交额（万元）"),
+        ColumnSchema("pe", "float64", True, "市盈率"),
+        ColumnSchema("pb", "float64", True, "市净率"),
+        ColumnSchema("float_mv", "float64", True, "流通市值（万元）"),
+        ColumnSchema("total_mv", "float64", True, "总市值（万元）"),
+    ],
+)
+
+
 # ===========================
 # 验证函数
 # ===========================

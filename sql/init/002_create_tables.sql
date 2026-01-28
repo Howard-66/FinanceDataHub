@@ -924,3 +924,39 @@ COMMENT ON COLUMN sw_industry_member.name IS '成分股票名称';
 COMMENT ON COLUMN sw_industry_member.in_date IS '纳入日期';
 COMMENT ON COLUMN sw_industry_member.out_date IS '剔除日期';
 COMMENT ON COLUMN sw_industry_member.is_new IS '是否最新：Y-是，N-否';
+
+-- 申万行业日线行情数据表
+CREATE TABLE IF NOT EXISTS sw_daily (
+    ts_code VARCHAR(20) NOT NULL,                     -- 行业代码，如 801780.SI
+    trade_date TIMESTAMPTZ NOT NULL,                  -- 交易日期（时间序列类型）
+    name VARCHAR(100),                                -- 指数名称
+    open DECIMAL(20, 4),                              -- 开盘点位
+    low DECIMAL(20, 4),                               -- 最低点位
+    high DECIMAL(20, 4),                              -- 最高点位
+    close DECIMAL(20, 4),                             -- 收盘点位
+    change DECIMAL(20, 4),                            -- 涨跌点位
+    pct_change DECIMAL(20, 6),                        -- 涨跌幅
+    vol DECIMAL(20, 4),                               -- 成交量（万股）
+    amount DECIMAL(20, 4),                            -- 成交额（万元）
+    pe DECIMAL(20, 4),                                -- 市盈率
+    pb DECIMAL(20, 4),                                -- 市净率
+    float_mv DECIMAL(20, 4),                          -- 流通市值（万元）
+    total_mv DECIMAL(20, 4),                          -- 总市值（万元）
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts_code, trade_date)
+);
+
+COMMENT ON TABLE sw_daily IS '申万行业日线行情数据表 - 存储申万行业指数的日线行情数据（TimescaleDB超表）';
+COMMENT ON COLUMN sw_daily.ts_code IS '行业代码，如801780.SI（申万农林牧渔指数）';
+COMMENT ON COLUMN sw_daily.trade_date IS '交易日期';
+COMMENT ON COLUMN sw_daily.name IS '指数名称';
+COMMENT ON COLUMN sw_daily.open IS '开盘点位';
+COMMENT ON COLUMN sw_daily.close IS '收盘点位';
+COMMENT ON COLUMN sw_daily.pct_change IS '涨跌幅（%）';
+COMMENT ON COLUMN sw_daily.vol IS '成交量（万股）';
+COMMENT ON COLUMN sw_daily.amount IS '成交额（万元）';
+COMMENT ON COLUMN sw_daily.pe IS '市盈率';
+COMMENT ON COLUMN sw_daily.pb IS '市净率';
+COMMENT ON COLUMN sw_daily.float_mv IS '流通市值（万元）';
+COMMENT ON COLUMN sw_daily.total_mv IS '总市值（万元）';

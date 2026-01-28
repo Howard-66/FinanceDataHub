@@ -174,6 +174,7 @@ def update(
       - m: 中国货币供应量数据（M0、M1、M2）
       - pmi: 中国PMI采购经理人指数数据
       - index_dailybasic: 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）
+      - sw_daily: 申万行业日线行情数据（申万2021版行业指数）
 
       - fina_indicator: 上市公司财务指标数据（每股收益、ROE、资产负债率等）
 
@@ -191,6 +192,11 @@ def update(
         index_dailybasic使用说明:
         - 不指定--symbols时：获取当日所有指数数据（增量更新）
         - 指定--symbols时：获取该指数的历史数据（如 --symbols 000001.SH --start-date 2024-01-01 --end-date 2024-12-31）
+
+        sw_daily使用说明:
+        - 不指定--symbols时：获取所有行业的历史数据（智能更新）
+        - 指定--symbols时：获取指定行业的日线数据（如 --symbols 801780.SI --start-date 2024-01-01 --end-date 2024-12-31）
+        - 使用--trade-date参数：获取指定交易日所有行业数据（如 --trade-date 2024-06-28）
 
     更新策略:
       默认采用智能下载模式，系统会自动:
@@ -334,14 +340,14 @@ async def _run_update(
                 console.print("\n[bold yellow]使用强制更新模式[/bold yellow]")
         await _run_force_update(
             settings, asset_class, data_type, symbol_list,
-            start_date, end_date, adj, verbose, quiet
+            start_date, end_date, adj, trade_date, verbose, quiet
         )
     else:
         # 策略 3: 智能下载模式（默认）
         console.print("\n[bold yellow]使用智能下载模式[/bold yellow]")
         await _run_smart_download(
             settings, asset_class, data_type, symbol_list,
-            end_date, adj, verbose, quiet
+            end_date, adj, trade_date, start_date, verbose, quiet
         )
 
 
@@ -352,6 +358,8 @@ async def _run_smart_download(
     symbol_list: Optional[List[str]],
     end_date: Optional[str],
     adj: Optional[str],
+    trade_date: Optional[str],
+    start_date: Optional[str],
     verbose: bool,
     quiet: bool = False,
 ):
@@ -533,6 +541,54 @@ async def _run_smart_download(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
+                    raise
+
+    # 申万行业日线行情数据处理
+    if data_type == "sw_daily":
+        # 获取行业代码列表
+        ts_code_list = symbol_list  # 使用symbol_list作为行业代码列表
+
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - 申万行业日线行情数据（申万2021版行业指数）")
+            if ts_code_list:
+                console.print(f"  - 将更新 {len(ts_code_list)} 个行业指数")
+            console.print("")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(
+                "正在获取申万行业日线行情...",
+                total=len(ts_code_list) if ts_code_list else 100
+            )
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
+                try:
+                    count = await updater.update_sw_daily(
+                        ts_code_list=ts_code_list if ts_code_list else None,
+                        trade_date=trade_date,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=False,  # 智能下载模式
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=len(ts_code_list) if ts_code_list else 100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条申万行业日线行情数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条申万行业日线行情数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新申万行业日线行情数据失败: {str(e)}")
                     raise
 
     # 财务指标数据处理
@@ -961,6 +1017,7 @@ async def _run_force_update(
     start_date: Optional[str],
     end_date: Optional[str],
     adj: Optional[str],
+    trade_date: Optional[str],
     verbose: bool,
     quiet: bool = False,
 ):
@@ -1143,6 +1200,55 @@ async def _run_force_update(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
+                    raise
+
+    # 申万行业日线行情数据处理
+    if data_type == "sw_daily":
+        # 获取行业代码列表
+        ts_code_list = symbol_list  # 使用symbol_list作为行业代码列表
+
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 申万行业日线行情数据（申万2021版行业指数）")
+            if ts_code_list:
+                console.print(f"  - 将更新 {len(ts_code_list)} 个行业指数")
+            console.print("  - 使用指定的日期范围")
+            console.print("")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(
+                "正在获取申万行业日线行情...",
+                total=len(ts_code_list) if ts_code_list else 100
+            )
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
+                try:
+                    count = await updater.update_sw_daily(
+                        ts_code_list=ts_code_list if ts_code_list else None,
+                        trade_date=trade_date,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=len(ts_code_list) if ts_code_list else 100)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条申万行业日线行情数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条申万行业日线行情数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新申万行业日线行情数据失败: {str(e)}")
                     raise
 
     # 财务指标数据处理
@@ -1417,9 +1523,12 @@ async def _run_trade_date_update(
     quiet: bool = False,
 ):
     """交易日批量更新模式：使用Tushare的trade_date参数批量更新当日所有股票"""
+    # 转换日期格式从 YYYY-MM-DD (CLI格式) 到 YYYYMMDD (Tushare API格式)
+    trade_date_api = trade_date.replace("-", "")
+
     if not quiet:
         console.print("[bold]交易日批量更新策略:[/bold]")
-        console.print(f"  - 使用交易日: {trade_date}")
+        console.print(f"  - 使用交易日: {trade_date} (API格式: {trade_date_api})")
         console.print("  - 批量更新当日所有股票数据")
         console.print("  - 适用于Tushare数据源")
         console.print("")
@@ -1454,15 +1563,18 @@ async def _run_trade_date_update(
             elif data_type == "index_dailybasic":
                 # 大盘指数每日指标数据
                 method_name = "get_index_dailybasic"
+            elif data_type == "sw_daily":
+                # 申万行业日线行情数据
+                method_name = "get_sw_daily"
             else:
                 console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                 raise typer.Exit(1)
 
             # 通过路由器获取数据
-            # 注意：index_dailybasic使用asset_class="index"和data_type="dailybasic"，其他使用"stock"
-            if data_type == "index_dailybasic":
+            # 注意：index_dailybasic和sw_daily使用asset_class="index"，其他使用"stock"
+            if data_type in ["index_dailybasic", "sw_daily"]:
                 asset_class = "index"
-                router_data_type = "dailybasic"  # 路由配置中的key
+                router_data_type = "sw_daily" if data_type == "sw_daily" else "dailybasic"
             else:
                 asset_class = "stock"
                 router_data_type = data_type
@@ -1470,7 +1582,7 @@ async def _run_trade_date_update(
                 asset_class=asset_class,
                 data_type=router_data_type,
                 method_name=method_name,
-                trade_date=trade_date,
+                trade_date=trade_date_api,
             )
 
             if df.empty:
@@ -1480,10 +1592,10 @@ async def _run_trade_date_update(
             progress.update(task, description="正在插入数据库...", total=100)
 
             # 判断是股票还是指数数据
-            is_index = (data_type == "index_dailybasic")
+            is_index = (data_type in ["index_dailybasic", "sw_daily"])
             if is_index:
                 unique_codes = df["ts_code"].unique()
-                code_label = "指数"
+                code_label = "行业指数" if data_type == "sw_daily" else "指数"
             else:
                 unique_codes = df["symbol"].unique()
                 code_label = "股票"
@@ -1507,6 +1619,8 @@ async def _run_trade_date_update(
                         count = await updater.data_ops.insert_daily_basic_batch(batch_df)
                     elif data_type == "index_dailybasic":
                         count = await updater.data_ops.insert_index_dailybasic_batch(batch_df)
+                    elif data_type == "sw_daily":
+                        count = await updater.data_ops.insert_sw_daily_batch(batch_df)
                     else:
                         console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                         raise typer.Exit(1)
