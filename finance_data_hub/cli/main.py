@@ -555,16 +555,25 @@ async def _run_smart_download(
                 console.print(f"  - 将更新 {len(ts_code_list)} 个行业指数")
             console.print("")
 
+        # 如果没有指定行业列表，获取申万行业分类列表中的行业数量
+        industry_count = len(ts_code_list) if ts_code_list else None
+        if industry_count is None:
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                # 获取申万行业分类列表（包含L1/L2/L3全部层级）
+                industry_classify = await updater.data_ops.get_sw_industry_classify(level=None)
+                industry_count = len(industry_classify) if industry_classify is not None else 511
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
+            SymbolCountColumn("行业指数"),
             TimeElapsedColumn(),
             console=console,
         ) as progress:
             task = progress.add_task(
                 "正在获取申万行业日线行情...",
-                total=len(ts_code_list) if ts_code_list else 100
+                total=industry_count if industry_count else 511
             )
 
             async with DataUpdater(settings, config_path="sources.yml") as updater:
