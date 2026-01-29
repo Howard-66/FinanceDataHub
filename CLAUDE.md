@@ -651,7 +651,6 @@ fdh-cli update --dataset sw_industry_classify --force     # 强制全量更新
 # 更新申万行业成分股数据（按一级行业逐个下载）
 fdh-cli update --dataset sw_industry_member               # 智能下载所有行业的成分股
 fdh-cli update --dataset sw_industry_member --force       # 强制全量更新
-fdh-cli update --dataset sw_industry_member --symbols 110000  # 指定一级行业代码
 
 # 更新申万行业日线行情数据
 fdh-cli update --dataset sw_daily                         # 智能增量更新（获取最新数据）

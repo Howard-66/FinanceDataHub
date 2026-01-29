@@ -1216,6 +1216,7 @@ class FinanceDataHub:
         l1_code: Optional[str] = None,
         l2_code: Optional[str] = None,
         l3_code: Optional[str] = None,
+        ts_code: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取申万行业成分股
@@ -1224,6 +1225,7 @@ class FinanceDataHub:
             l1_code: 一级行业代码
             l2_code: 二级行业代码
             l3_code: 三级行业代码
+            ts_code: 股票代码，如 '600519.SH'，用于查询股票所属的行业
 
         Returns:
             Optional[pd.DataFrame]: 申万行业成分股数据
@@ -1234,14 +1236,17 @@ class FinanceDataHub:
             >>> members = fdh.get_sw_industry_members(l1_code="801010")
             >>> # 获取某三级行业下的成分股
             >>> members = fdh.get_sw_industry_members(l3_code="801010.SI")
+            >>> # 查询股票所属行业
+            >>> members = fdh.get_sw_industry_members(ts_code="600519.SH")
         """
-        return asyncio.run(self.get_sw_industry_members_async(l1_code, l2_code, l3_code))
+        return asyncio.run(self.get_sw_industry_members_async(l1_code, l2_code, l3_code, ts_code))
 
     async def get_sw_industry_members_async(
         self,
         l1_code: Optional[str] = None,
         l2_code: Optional[str] = None,
         l3_code: Optional[str] = None,
+        ts_code: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取申万行业成分股（异步方法）
@@ -1250,11 +1255,12 @@ class FinanceDataHub:
             l1_code: 一级行业代码
             l2_code: 二级行业代码
             l3_code: 三级行业代码
+            ts_code: 股票代码，如 '600519.SH'，用于查询股票所属的行业
 
         Returns:
             Optional[pd.DataFrame]: 申万行业成分股数据
         """
-        return await self.ops.get_sw_industry_members(l1_code, l2_code, l3_code)
+        return await self.ops.get_sw_industry_members(l1_code, l2_code, l3_code, ts_code)
 
     # ============================================================================
     # 资源管理

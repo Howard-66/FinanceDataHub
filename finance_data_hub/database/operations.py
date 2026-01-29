@@ -3589,6 +3589,7 @@ class DataOperations:
         l1_code: Optional[str] = None,
         l2_code: Optional[str] = None,
         l3_code: Optional[str] = None,
+        ts_code: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         查询申万行业成分股
@@ -3597,6 +3598,7 @@ class DataOperations:
             l1_code: 一级行业代码
             l2_code: 二级行业代码
             l3_code: 三级行业代码
+            ts_code: 股票代码，如 '600519.SH'，用于查询股票所属的行业
 
         Returns:
             Optional[pd.DataFrame]: 申万行业成分股数据
@@ -3618,6 +3620,9 @@ class DataOperations:
         if l3_code:
             query += " AND l3_code = :l3_code"
             params["l3_code"] = l3_code
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
 
         query += " ORDER BY l1_code, l2_code, l3_code, ts_code"
 
