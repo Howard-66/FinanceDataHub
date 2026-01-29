@@ -131,8 +131,11 @@ class DatabaseManager:
     async def close(self) -> None:
         """关闭数据库连接"""
         if self._engine:
-            await self._engine.dispose()
-            logger.info("Database connections closed")
+            try:
+                await self._engine.dispose()
+                logger.info("Database connections closed")
+            except Exception as e:
+                logger.warning(f"Error closing database connections: {e}")
 
     async def __aenter__(self) -> "DatabaseManager":
         """异步上下文管理器入口"""

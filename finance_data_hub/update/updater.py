@@ -968,20 +968,74 @@ class DataUpdater:
                 # 智能下载模式（不指定行业代码）
                 if force_update:
                     # 强制更新：获取全量历史数据
+                    # 先获取行业列表，以便显示进度
                     logger.info("Force update: fetching full history")
                     api_start = start_date.replace("-", "") if start_date else None
                     api_end = end_date.replace("-", "") if end_date else None
-                    data = self.router.route(
-                        asset_class="index",
-                        data_type="sw_daily",
-                        method_name="get_sw_daily",
-                        start_date=api_start,
-                        end_date=api_end,
-                    )
 
-                    if data is not None and not data.empty:
-                        inserted = await self.data_ops.insert_sw_daily_batch(data)
-                        total_records = inserted
+                    # 获取行业列表用于进度显示
+                    industry_list = await self.data_ops.get_sw_industry_list()
+
+                    # 如果数据库中的sw_daily表为空，尝试获取申万行业分类列表
+                    if not industry_list:
+                        logger.info("sw_daily table is empty, fetching industry classify list...")
+                        # 获取所有层级（L1/L2/L3）
+                        industry_classify = await self.data_ops.get_sw_industry_classify(level=None)
+                        if industry_classify is not None and not industry_classify.empty:
+                            # 使用index_code作为行业代码
+                            industry_list = industry_classify['index_code'].tolist()
+                            logger.info(f"Found {len(industry_list)} industries from classify table")
+
+                    if industry_list:
+                        total_industries = len(industry_list)
+                        logger.info(f"Will fetch data for {total_industries} industries")
+
+                        for idx, industry in enumerate(industry_list):
+                            # 调用进度回调
+                            if progress_callback:
+                                progress_callback(idx + 1, total_industries)
+
+                            try:
+                                data = self.router.route(
+                                    asset_class="index",
+                                    data_type="sw_daily",
+                                    method_name="get_sw_daily",
+                                    ts_code=industry,
+                                    start_date=api_start,
+                                    end_date=api_end,
+                                )
+
+                                if data is not None and not data.empty:
+                                    inserted = await self.data_ops.insert_sw_daily_batch(data)
+                                    total_records += inserted
+                                    logger.debug(f"Inserted {inserted} records for {industry}")
+                            except Exception as e:
+                                logger.error(f"Failed to fetch data for {industry}: {str(e)}")
+                                continue
+
+                        # 最终进度回调
+                        if progress_callback:
+                            progress_callback(total_industries, total_industries)
+                    else:
+                        # 没有行业列表，一次性获取全量数据
+                        logger.warning("No industry list found, fetching all data at once")
+                        if progress_callback:
+                            progress_callback(1, 1)  # 标记开始
+
+                        data = self.router.route(
+                            asset_class="index",
+                            data_type="sw_daily",
+                            method_name="get_sw_daily",
+                            start_date=api_start,
+                            end_date=api_end,
+                        )
+
+                        if data is not None and not data.empty:
+                            inserted = await self.data_ops.insert_sw_daily_batch(data)
+                            total_records = inserted
+
+                        if progress_callback:
+                            progress_callback(1, 1)  # 标记完成
                 else:
                     # 智能下载：检查数据库状态
                     latest_date = await self.data_ops.get_latest_sw_daily_date(None)

@@ -1636,11 +1636,9 @@ class DataOperations:
             records = batch_df[columns].to_dict(orient="records")
 
             # 转换日期为datetime对象（PostgreSQL TIMESTAMPTZ格式）
+            # 使用统一的日期规范化函数，确保添加Asia/Shanghai时区
             for record in records:
-                if isinstance(record["trade_date"], pd.Timestamp):
-                    record["trade_date"] = record["trade_date"].to_pydatetime()
-                elif isinstance(record["trade_date"], str):
-                    record["trade_date"] = pd.to_datetime(record["trade_date"]).to_pydatetime()
+                record["trade_date"] = _normalize_datetime_for_db(record["trade_date"], "daily")
 
             async with self.db_manager._engine.begin() as conn:
                 await conn.execute(text(insert_sql), records)
@@ -1668,6 +1666,10 @@ class DataOperations:
         Returns:
             Optional[pd.DataFrame]: 指数每日指标数据
         """
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
         # 将字符串日期转换为带时区的datetime对象
         start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
         end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
@@ -1704,6 +1706,17 @@ class DataOperations:
             return None
 
         data = pd.DataFrame([row._asdict() for row in rows])
+
+        # 处理 trade_date 时区：直接转换为 Asia/Shanghai
+        if "trade_date" in data.columns and not data.empty:
+            trade_dates = pd.to_datetime(data["trade_date"])
+            if trade_dates.dt.tz is not None:
+                # 已经是 tz-aware，直接转换时区
+                data["trade_date"] = trade_dates.dt.tz_convert("Asia/Shanghai")
+            else:
+                # 无时区信息，本地化
+                data["trade_date"] = trade_dates.dt.tz_localize("Asia/Shanghai")
+
         return data
 
         if row and row.latest_date:
@@ -1790,11 +1803,9 @@ class DataOperations:
             records = batch_df[columns].to_dict(orient="records")
 
             # 转换日期为datetime对象（PostgreSQL TIMESTAMPTZ格式）
+            # 使用统一的日期规范化函数，确保添加Asia/Shanghai时区
             for record in records:
-                if isinstance(record["trade_date"], pd.Timestamp):
-                    record["trade_date"] = record["trade_date"].to_pydatetime()
-                elif isinstance(record["trade_date"], str):
-                    record["trade_date"] = pd.to_datetime(record["trade_date"]).to_pydatetime()
+                record["trade_date"] = _normalize_datetime_for_db(record["trade_date"], "daily")
 
             async with self.db_manager._engine.begin() as conn:
                 await conn.execute(text(insert_sql), records)
@@ -1822,6 +1833,10 @@ class DataOperations:
         Returns:
             Optional[pd.DataFrame]: 申万行业日线行情数据
         """
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
         # 将字符串日期转换为带时区的datetime对象
         start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
         end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
@@ -1857,6 +1872,17 @@ class DataOperations:
             return None
 
         data = pd.DataFrame([row._asdict() for row in rows])
+
+        # 处理 trade_date 时区：直接转换为 Asia/Shanghai
+        if "trade_date" in data.columns and not data.empty:
+            trade_dates = pd.to_datetime(data["trade_date"])
+            if trade_dates.dt.tz is not None:
+                # 已经是 tz-aware，直接转换时区
+                data["trade_date"] = trade_dates.dt.tz_convert("Asia/Shanghai")
+            else:
+                # 无时区信息，本地化
+                data["trade_date"] = trade_dates.dt.tz_localize("Asia/Shanghai")
+
         return data
 
     async def get_latest_sw_daily_date(self, ts_code: Optional[str] = None) -> Optional[str]:
@@ -3467,6 +3493,25 @@ class DataOperations:
             rows = result.fetchall()
 
         return [row.industry_code for row in rows if row.industry_code]
+
+    async def get_sw_industry_list(self) -> List[str]:
+        """
+        获取 sw_daily 表中所有不重复的行业代码列表
+
+        Returns:
+            List[str]: 行业代码列表（如 ['801010.SI', '801020.SI', ...]）
+        """
+        query = """
+            SELECT DISTINCT ts_code
+            FROM sw_daily
+            ORDER BY ts_code
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query))
+            rows = result.fetchall()
+
+        return [row.ts_code for row in rows if row.ts_code]
 
     # ===========================
     # 申万行业成分股数据操作
