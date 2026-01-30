@@ -2028,7 +2028,7 @@ class DataOperations:
         insert_sql = f"""
             INSERT INTO income ({col_names})
             VALUES ({placeholders})
-            ON CONFLICT (ts_code, end_date_time) DO NOTHING
+            ON CONFLICT (ts_code, end_date_time) DO UPDATE SET updated_at = NOW()
         """
 
         async with self.db_manager._engine.begin() as conn:
@@ -2441,7 +2441,7 @@ class DataOperations:
         insert_sql = f"""
             INSERT INTO income ({col_names})
             VALUES ({placeholders})
-            ON CONFLICT (ts_code, end_date_time) DO NOTHING
+            ON CONFLICT (ts_code, end_date_time) DO UPDATE SET updated_at = NOW()
         """
 
         async with self.db_manager._engine.begin() as conn:
@@ -2850,7 +2850,7 @@ class DataOperations:
         insert_sql = f"""
             INSERT INTO income ({col_names})
             VALUES ({placeholders})
-            ON CONFLICT (ts_code, end_date_time) DO NOTHING
+            ON CONFLICT (ts_code, end_date_time) DO UPDATE SET updated_at = NOW()
         """
 
         async with self.db_manager._engine.begin() as conn:
@@ -3287,7 +3287,7 @@ class DataOperations:
         insert_sql = f"""
             INSERT INTO income ({col_names})
             VALUES ({placeholders})
-            ON CONFLICT (ts_code, end_date_time) DO NOTHING
+            ON CONFLICT (ts_code, end_date_time) DO UPDATE SET updated_at = NOW()
         """
 
         async with self.db_manager._engine.begin() as conn:
