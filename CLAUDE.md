@@ -381,7 +381,10 @@ print(f"申万三级行业数量: {len(l3_data)} 条")
 # 申万行业成分股数据查询（按三级行业查询成分股）
 members = await fdh.get_sw_industry_members_async(l3_code='801010')
 print(f"801010(农林牧渔)行业成分股: {len(members)} 只")
-print(members[['ts_code', 'name', 'in_date']].head(10))
+print(members[['l1_code', 'l2_code', 'l3_code', 'ts_code', 'name', 'in_date']].head(10))
+# 按股票查询成分股所属申万行业三级分类
+ticker_industry = wait fdh.get_sw_industry_members_async(ts_code='600519.SH')
+print(ticker_industry[['ts_code', 'name', 'l1_code', 'l1_name', 'l2_code', 'l2_name', 'l3_code', 'l3_name']].head(10))
 
 # 申万行业日线行情数据查询
 # 获取全部行业的历史日线数据
