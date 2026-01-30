@@ -2058,6 +2058,10 @@ class DataOperations:
         Returns:
             pd.DataFrame: 利润表数据
         """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
         query = """
             SELECT * FROM income WHERE 1=1
         """
@@ -2067,13 +2071,13 @@ class DataOperations:
             query += " AND ts_code = :ts_code"
             params["ts_code"] = ts_code
 
-        if start_date:
+        if start_dt:
             query += " AND end_date_time >= :start_date"
-            params["start_date"] = start_date
+            params["start_date"] = start_dt
 
-        if end_date:
+        if end_dt:
             query += " AND end_date_time <= :end_date"
-            params["end_date"] = end_date
+            params["end_date"] = end_dt
 
         query += " ORDER BY ts_code, end_date_time DESC"
 
@@ -2471,6 +2475,10 @@ class DataOperations:
         Returns:
             pd.DataFrame: 利润表数据
         """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
         query = """
             SELECT * FROM income WHERE 1=1
         """
@@ -2480,13 +2488,13 @@ class DataOperations:
             query += " AND ts_code = :ts_code"
             params["ts_code"] = ts_code
 
-        if start_date:
+        if start_dt:
             query += " AND end_date_time >= :start_date"
-            params["start_date"] = start_date
+            params["start_date"] = start_dt
 
-        if end_date:
+        if end_dt:
             query += " AND end_date_time <= :end_date"
-            params["end_date"] = end_date
+            params["end_date"] = end_dt
 
         query += " ORDER BY ts_code, end_date_time DESC"
 
@@ -2880,6 +2888,10 @@ class DataOperations:
         Returns:
             pd.DataFrame: 利润表数据
         """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
         query = """
             SELECT * FROM income WHERE 1=1
         """
@@ -2889,13 +2901,13 @@ class DataOperations:
             query += " AND ts_code = :ts_code"
             params["ts_code"] = ts_code
 
-        if start_date:
+        if start_dt:
             query += " AND end_date_time >= :start_date"
-            params["start_date"] = start_date
+            params["start_date"] = start_dt
 
-        if end_date:
+        if end_dt:
             query += " AND end_date_time <= :end_date"
-            params["end_date"] = end_date
+            params["end_date"] = end_dt
 
         query += " ORDER BY ts_code, end_date_time DESC"
 
@@ -3317,6 +3329,10 @@ class DataOperations:
         Returns:
             pd.DataFrame: 利润表数据
         """
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
         query = """
             SELECT * FROM income WHERE 1=1
         """
@@ -3326,13 +3342,13 @@ class DataOperations:
             query += " AND ts_code = :ts_code"
             params["ts_code"] = ts_code
 
-        if start_date:
+        if start_dt:
             query += " AND end_date_time >= :start_date"
-            params["start_date"] = start_date
+            params["start_date"] = start_dt
 
-        if end_date:
+        if end_dt:
             query += " AND end_date_time <= :end_date"
-            params["end_date"] = end_date
+            params["end_date"] = end_dt
 
         query += " ORDER BY ts_code, end_date_time DESC"
 

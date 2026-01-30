@@ -82,6 +82,8 @@ class FinanceDataHub:
         """
         self.settings = settings
         self.db_manager = DatabaseManager(settings)
+        # 同步初始化数据库引擎（确保后续查询可用）
+        _ = self.db_manager.get_engine()
         self.ops = DataOperations(self.db_manager)
         self.backend = backend
 

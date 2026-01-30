@@ -108,6 +108,49 @@ class DatabaseManager:
 
         return self._session_maker()
 
+    def get_engine(self) -> AsyncEngine:
+        """
+        获取数据库引擎（确保已初始化）
+
+        Returns:
+            AsyncEngine: 异步数据库引擎
+
+        Note:
+            如果数据库连接未初始化，会自动进行初始化（惰性初始化）
+        """
+        if self._engine is None:
+            # 构建异步数据库URL
+            database_url = self.settings.database.url
+
+            # 将 postgresql:// 转换为 postgresql+asyncpg://
+            if database_url.startswith("postgresql://"):
+                async_url = database_url.replace("postgresql://", "postgresql+asyncpg://")
+            elif database_url.startswith("postgresql+asyncpg://"):
+                async_url = database_url
+            else:
+                raise ValueError(f"Unsupported database URL: {database_url}")
+
+            # 创建异步引擎
+            self._engine = create_async_engine(
+                async_url,
+                echo=False,
+                pool_size=self.settings.database.pool_size,
+                max_overflow=self.settings.database.max_overflow,
+                pool_pre_ping=True,
+                pool_recycle=3600,
+            )
+
+            # 创建会话工厂
+            self._session_maker = async_sessionmaker(
+                self._engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            )
+
+            logger.info("Database engine initialized synchronously")
+
+        return self._engine
+
     async def execute_raw_sql(self, sql: str, params: Optional[Dict] = None) -> Any:
         """
         执行原生SQL
