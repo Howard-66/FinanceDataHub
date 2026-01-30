@@ -1302,14 +1302,18 @@ class DataUpdater:
                     )
 
                     if data is not None and not data.empty:
+                        # 统计各股票的记录数
+                        symbol_records = len(data[data['ts_code'] == symbol]) if 'ts_code' in data.columns else len(data)
+                        logger.info(f"Fetched {len(data)} total records for {symbol} (matching: {symbol_records})")
+
                         # 插入数据库
                         inserted = await self.data_ops.insert_balancesheet_batch(
                             data, batch_size=1000
                         )
                         total_records += inserted
-                        logger.info(f"Updated {inserted} balancesheet records for {symbol}")
+                        logger.info(f"Inserted {inserted} balancesheet records for {symbol}")
                     else:
-                        logger.debug(f"No balancesheet data for {symbol}")
+                        logger.warning(f"No balancesheet data returned for {symbol}")
 
                 except Exception as e:
                     logger.error(f"Failed to update balancesheet for {symbol}: {str(e)}")

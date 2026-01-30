@@ -16,7 +16,7 @@ from loguru import logger
 logger.remove()
 logger.add(
     sys.stderr,
-    level="ERROR",  # 默认只显示 ERROR 及以上，避免INFO日志刷屏
+    level="ERROR",  # 默认只显示 ERROR，便于安静输出
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
     colorize=True,
 )
@@ -77,6 +77,7 @@ def _setup_logging(verbose: bool = False):
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
         colorize=True,
     )
+    logger.debug(f"Log level set to: {log_level}")
 
 
 def version_callback(value: bool):
