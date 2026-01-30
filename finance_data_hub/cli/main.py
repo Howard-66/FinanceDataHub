@@ -1401,6 +1401,171 @@ async def _run_force_update(
                     console.print(f"[bold red]ERROR:[/bold red] 更新成分股数据失败: {str(e)}")
                     raise
 
+    # 利润表数据处理
+    if data_type == "income":
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 利润表数据（上市公司收入、成本和利润）")
+            console.print("  - 使用指定的日期范围")
+            console.print("")
+
+        # 获取股票列表（不更新，仅查询）
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            if not symbol_list:
+                symbols_db = await updater.data_ops.get_symbol_list()
+                symbol_list = symbols_db
+                if not quiet and symbol_list:
+                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+
+            if not symbol_list:
+                if not quiet:
+                    console.print("[yellow]数据库中没有股票信息，请先运行 fdh-cli update --dataset basic[/yellow]")
+                else:
+                    console.print("[yellow]没有股票可更新[/yellow]")
+                return 0
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("股票"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取利润表数据...", total=len(symbol_list))
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current)
+
+                try:
+                    count = await updater.update_income(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条利润表数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条利润表数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新利润表数据失败: {str(e)}")
+                    raise
+
+    # 现金流量表数据处理
+    if data_type == "cashflow":
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 现金流量表数据（上市公司三大活动现金流量）")
+            console.print("  - 使用指定的日期范围")
+            console.print("")
+
+        # 获取股票列表（不更新，仅查询）
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            if not symbol_list:
+                symbols_db = await updater.data_ops.get_symbol_list()
+                symbol_list = symbols_db
+                if not quiet and symbol_list:
+                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+
+            if not symbol_list:
+                if not quiet:
+                    console.print("[yellow]数据库中没有股票信息，请先运行 fdh-cli update --dataset basic[/yellow]")
+                else:
+                    console.print("[yellow]没有股票可更新[/yellow]")
+                return 0
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("股票"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取现金流量表数据...", total=len(symbol_list))
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current)
+
+                try:
+                    count = await updater.update_cashflow(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条现金流量表数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条现金流量表数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新现金流量表数据失败: {str(e)}")
+                    raise
+
+    # 资产负债表数据处理
+    if data_type == "balancesheet":
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 资产负债表数据（上市公司资产、负债和股东权益）")
+            console.print("  - 使用指定的日期范围")
+            console.print("")
+
+        # 获取股票列表（不更新，仅查询）
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            if not symbol_list:
+                symbols_db = await updater.data_ops.get_symbol_list()
+                symbol_list = symbols_db
+                if not quiet and symbol_list:
+                    console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+
+            if not symbol_list:
+                if not quiet:
+                    console.print("[yellow]数据库中没有股票信息，请先运行 fdh-cli update --dataset basic[/yellow]")
+                else:
+                    console.print("[yellow]没有股票可更新[/yellow]")
+                return 0
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("股票"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取资产负债表数据...", total=len(symbol_list))
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current)
+
+                try:
+                    count = await updater.update_balancesheet(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条资产负债表数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条资产负债表数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新资产负债表数据失败: {str(e)}")
+                    raise
+
     if not quiet:
         console.print("[bold]强制更新策略:[/bold]")
         console.print("  - 忽略数据库现有状态")
