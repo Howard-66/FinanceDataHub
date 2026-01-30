@@ -100,13 +100,11 @@ class DatabaseManager:
         Returns:
             AsyncSession: 异步数据库会话
 
-        Raises:
-            RuntimeError: 如果管理器未初始化
+        Note:
+            如果数据库连接未初始化，会自动进行初始化（惰性初始化）
         """
         if not self._session_maker:
-            raise RuntimeError(
-                "Database not initialized. Call await initialize() first."
-            )
+            await self.initialize()
 
         return self._session_maker()
 
