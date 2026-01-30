@@ -3350,7 +3350,7 @@ class DataOperations:
             query += " AND end_date_time <= :end_date"
             params["end_date"] = end_dt
 
-        query += " ORDER BY ts_code, end_date_time DESC"
+        query += " ORDER BY ts_code, end_date_time"
 
         async with self.db_manager._engine.begin() as conn:
             result = await conn.execute(text(query), params)
