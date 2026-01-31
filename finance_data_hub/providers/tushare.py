@@ -1989,11 +1989,14 @@ class TushareProvider(BaseDataProvider):
                 # 将 ann_date 和 end_date 转换为标准格式
                 # end_date 转换为时间序列格式 end_date_time
                 df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+                # ann_date 转换为时间序列格式 ann_date_time
+                df["ann_date_time"] = pd.to_datetime(df["ann_date"], format="%Y%m%d", errors="coerce")
 
                 # 列名映射（财务指标字段保持原名，只需处理时间字段）
                 column_mapping = {
                     "ts_code": "ts_code",
                     "ann_date": "ann_date",
+                    "ann_date_time": "ann_date_time",
                     "end_date": "end_date",
                     "end_date_time": "end_date_time",
                 }
@@ -2156,12 +2159,18 @@ class TushareProvider(BaseDataProvider):
 
                 # 将 end_date 转换为时间序列格式 end_date_time
                 df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+                # ann_date 转换为时间序列格式 ann_date_time
+                df["ann_date_time"] = pd.to_datetime(df["ann_date"], format="%Y%m%d", errors="coerce")
+                # f_ann_date 转换为时间序列格式 f_ann_date_time
+                df["f_ann_date_time"] = pd.to_datetime(df["f_ann_date"], format="%Y%m%d", errors="coerce")
 
                 # 列名映射（现金流量表字段保持原名，只需处理时间字段）
                 column_mapping = {
                     "ts_code": "ts_code",
                     "ann_date": "ann_date",
+                    "ann_date_time": "ann_date_time",
                     "f_ann_date": "f_ann_date",
+                    "f_ann_date_time": "f_ann_date_time",
                     "end_date": "end_date",
                     "end_date_time": "end_date_time",
                 }
@@ -2324,12 +2333,18 @@ class TushareProvider(BaseDataProvider):
 
                 # 将 end_date 转换为时间序列格式 end_date_time
                 df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+                # ann_date 转换为时间序列格式 ann_date_time
+                df["ann_date_time"] = pd.to_datetime(df["ann_date"], format="%Y%m%d", errors="coerce")
+                # f_ann_date 转换为时间序列格式 f_ann_date_time
+                df["f_ann_date_time"] = pd.to_datetime(df["f_ann_date"], format="%Y%m%d", errors="coerce")
 
                 # 列名映射（资产负债表字段保持原名，只需处理时间字段）
                 column_mapping = {
                     "ts_code": "ts_code",
                     "ann_date": "ann_date",
+                    "ann_date_time": "ann_date_time",
                     "f_ann_date": "f_ann_date",
+                    "f_ann_date_time": "f_ann_date_time",
                     "end_date": "end_date",
                     "end_date_time": "end_date_time",
                 }
@@ -2479,12 +2494,18 @@ class TushareProvider(BaseDataProvider):
 
                 # 将 end_date 转换为时间序列格式 end_date_time
                 df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+                # ann_date 转换为时间序列格式 ann_date_time
+                df["ann_date_time"] = pd.to_datetime(df["ann_date"], format="%Y%m%d", errors="coerce")
+                # f_ann_date 转换为时间序列格式 f_ann_date_time
+                df["f_ann_date_time"] = pd.to_datetime(df["f_ann_date"], format="%Y%m%d", errors="coerce")
 
                 # 列名映射（利润表字段保持原名，只需处理时间字段）
                 column_mapping = {
                     "ts_code": "ts_code",
                     "ann_date": "ann_date",
+                    "ann_date_time": "ann_date_time",
                     "f_ann_date": "f_ann_date",
+                    "f_ann_date_time": "f_ann_date_time",
                     "end_date": "end_date",
                     "end_date_time": "end_date_time",
                 }

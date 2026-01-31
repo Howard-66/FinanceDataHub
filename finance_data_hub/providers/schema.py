@@ -298,6 +298,7 @@ FinaIndicatorSchema = DataFrameSchema(
     columns=[
         ColumnSchema("ts_code", "object", False, "TS代码"),
         ColumnSchema("ann_date", "object", True, "公告日期"),
+        ColumnSchema("ann_date_time", "datetime64[ns]", True, "公告日期（时间序列格式）"),
         ColumnSchema("end_date", "object", True, "报告期"),
         ColumnSchema("end_date_time", "datetime64[ns]", False, "报告期（时间序列格式）"),
         ColumnSchema("eps", "float64", True, "基本每股收益"),
@@ -404,7 +405,9 @@ CashflowSchema = DataFrameSchema(
     columns=[
         ColumnSchema("ts_code", "object", False, "TS代码"),
         ColumnSchema("ann_date", "object", True, "公告日期"),
+        ColumnSchema("ann_date_time", "datetime64[ns]", True, "公告日期（时间序列格式）"),
         ColumnSchema("f_ann_date", "object", True, "实际公告日期"),
+        ColumnSchema("f_ann_date_time", "datetime64[ns]", True, "实际公告日期（时间序列格式）"),
         ColumnSchema("end_date", "object", True, "报告期"),
         ColumnSchema("end_date_time", "datetime64[ns]", False, "报告期（时间序列格式）"),
         ColumnSchema("comp_type", "object", True, "公司类型"),
@@ -516,7 +519,9 @@ BalancesheetSchema = DataFrameSchema(
     columns=[
         ColumnSchema("ts_code", "object", False, "TS代码"),
         ColumnSchema("ann_date", "object", True, "公告日期"),
+        ColumnSchema("ann_date_time", "datetime64[ns]", True, "公告日期（时间序列格式）"),
         ColumnSchema("f_ann_date", "object", True, "实际公告日期"),
+        ColumnSchema("f_ann_date_time", "datetime64[ns]", True, "实际公告日期（时间序列格式）"),
         ColumnSchema("end_date", "object", True, "报告期"),
         ColumnSchema("end_date_time", "datetime64[ns]", False, "报告期（时间序列格式）"),
         ColumnSchema("comp_type", "object", True, "公司类型"),
@@ -694,7 +699,9 @@ IncomeSchema = DataFrameSchema(
     columns=[
         ColumnSchema("ts_code", "object", False, "TS代码"),
         ColumnSchema("ann_date", "object", True, "公告日期"),
+        ColumnSchema("ann_date_time", "datetime64[ns]", True, "公告日期（时间序列格式）"),
         ColumnSchema("f_ann_date", "object", True, "实际公告日期"),
+        ColumnSchema("f_ann_date_time", "datetime64[ns]", True, "实际公告日期（时间序列格式）"),
         ColumnSchema("end_date", "object", True, "报告期"),
         ColumnSchema("end_date_time", "datetime64[ns]", False, "报告期（时间序列格式）"),
         ColumnSchema("comp_type", "object", True, "公司类型"),

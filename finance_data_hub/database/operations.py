@@ -1993,7 +1993,7 @@ class DataOperations:
             row_data = {}
             for col in df.columns:
                 val = row.get(col)
-                if col == "end_date_time":
+                if col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
                     # 时间字段需要时区感知的datetime
                     if pd.notna(val):
                         try:
@@ -2180,13 +2180,13 @@ class DataOperations:
 
         # 构建INSERT语句
         columns_str = ", ".join([
-            "ts_code", "ann_date", "end_date", "end_date_time"
+            "ts_code", "ann_date", "ann_date_time", "end_date", "end_date_time"
         ] + indicator_columns)
-        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "end_date", "end_date_time"] + indicator_columns])
+        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "ann_date_time", "end_date", "end_date_time"] + indicator_columns])
 
         # ON CONFLICT部分
         update_parts = []
-        for col in ["ann_date", "end_date"] + indicator_columns:
+        for col in ["ann_date", "ann_date_time", "end_date"] + indicator_columns:
             update_parts.append(f"{col} = EXCLUDED.{col}")
         update_str = ", ".join(update_parts)
 
@@ -2201,7 +2201,7 @@ class DataOperations:
         total_inserted = 0
 
         # 所有需要插入的列名
-        all_columns = ["ts_code", "ann_date", "end_date", "end_date_time"] + indicator_columns
+        all_columns = ["ts_code", "ann_date", "ann_date_time", "end_date", "end_date_time"] + indicator_columns
 
         # 可能包含大数值的字段（需要clip到安全范围）
         large_value_columns = {
@@ -2227,7 +2227,7 @@ class DataOperations:
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
-                    elif key == "end_date_time" or isinstance(value, pd.Timestamp):
+                    elif key in ("end_date_time", "ann_date_time") or isinstance(value, pd.Timestamp):
                         record[key] = _normalize_datetime_for_db(value, data_type="daily")
                     elif key in large_value_columns and isinstance(value, (int, float)):
                         # Clip大数值到DECIMAL(20,4)的安全范围
@@ -2410,7 +2410,7 @@ class DataOperations:
             row_data = {}
             for col in df.columns:
                 val = row.get(col)
-                if col == "end_date_time":
+                if col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
                     # 时间字段需要时区感知的datetime
                     if pd.notna(val):
                         try:
@@ -2589,13 +2589,13 @@ class DataOperations:
 
         # 构建INSERT语句
         columns_str = ", ".join([
-            "ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"
+            "ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"
         ] + cashflow_columns)
-        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"] + cashflow_columns])
+        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"] + cashflow_columns])
 
         # ON CONFLICT部分
         update_parts = []
-        for col in ["ann_date", "f_ann_date", "end_date"] + cashflow_columns:
+        for col in ["ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date"] + cashflow_columns:
             update_parts.append(f"{col} = EXCLUDED.{col}")
         update_str = ", ".join(update_parts)
 
@@ -2610,7 +2610,7 @@ class DataOperations:
         total_inserted = 0
 
         # 所有需要插入的列名
-        all_columns = ["ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"] + cashflow_columns
+        all_columns = ["ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"] + cashflow_columns
 
         # 可能包含大数值的字段（需要clip到安全范围）
         large_value_columns = {
@@ -2641,7 +2641,7 @@ class DataOperations:
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
-                    elif key == "end_date_time" or isinstance(value, pd.Timestamp):
+                    elif key in ("end_date_time", "ann_date_time", "f_ann_date_time") or isinstance(value, pd.Timestamp):
                         record[key] = _normalize_datetime_for_db(value, data_type="daily")
                     elif key in large_value_columns and isinstance(value, (int, float)):
                         # Clip大数值到DECIMAL(20,4)的安全范围
@@ -2823,7 +2823,7 @@ class DataOperations:
             row_data = {}
             for col in df.columns:
                 val = row.get(col)
-                if col == "end_date_time":
+                if col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
                     # 时间字段需要时区感知的datetime
                     if pd.notna(val):
                         try:
@@ -2866,7 +2866,7 @@ class DataOperations:
                 try:
                     await conn.execute(text(insert_sql), row)
                 except Exception as e:
-                    logger.debug(f"Skipping duplicate/invalid income record: {e}")
+                    logger.warning(f"Skipping duplicate/invalid income record: {e}")
                     continue
 
         return len(rows_to_insert)
@@ -3010,13 +3010,13 @@ class DataOperations:
 
         # 构建INSERT语句
         columns_str = ", ".join([
-            "ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"
+            "ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"
         ] + balancesheet_columns)
-        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"] + balancesheet_columns])
+        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"] + balancesheet_columns])
 
         # ON CONFLICT部分
         update_parts = []
-        for col in ["ann_date", "f_ann_date", "end_date"] + balancesheet_columns:
+        for col in ["ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date"] + balancesheet_columns:
             update_parts.append(f"{col} = EXCLUDED.{col}")
         update_str = ", ".join(update_parts)
 
@@ -3031,7 +3031,7 @@ class DataOperations:
         total_inserted = 0
 
         # 所有需要插入的列名
-        all_columns = ["ts_code", "ann_date", "f_ann_date", "end_date", "end_date_time"] + balancesheet_columns
+        all_columns = ["ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"] + balancesheet_columns
 
         # 可能包含大数值的字段（需要clip到安全范围）
         large_value_columns = {
@@ -3069,7 +3069,7 @@ class DataOperations:
                                     row_data[col] = None
                             else:
                                 row_data[col] = None
-                        elif col == "end_date_time":
+                        elif col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
                             # 时间字段需要转换为带时区的datetime
                             val = row.get(col)
                             if pd.notna(val):
@@ -3264,7 +3264,7 @@ class DataOperations:
             row_data = {}
             for col in df.columns:
                 val = row.get(col)
-                if col == "end_date_time":
+                if col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
                     # 时间字段需要时区感知的datetime
                     if pd.notna(val):
                         try:
