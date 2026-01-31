@@ -281,86 +281,86 @@ fdh = FinanceDataHub(
 )
 
 # 直接使用 await（推荐方式）
-daily_data = await fdh.get_daily_async(['600519.SH', '000858.SZ'], '2024-01-01', '2024-12-31')
+daily_data = await fdh.get_daily_async(ts_code=['600519.SH', '000858.SZ'], start_date='2024-01-01', end_date='2024-12-31')
 print(f"日线数据: {len(daily_data)} 条记录")
 print(daily_data.head())
 
 # 分钟数据查询
 minute_data = await fdh.get_minute_async(
-    ['600519.SH'],
-    '2024-11-01',
-    '2024-11-30',
-    'minute_5'
+    ts_code=['600519.SH'],
+    start_date='2024-11-01',
+    end_date='2024-11-30',
+    freq='minute_5'
 )
 print(f"5分钟数据: {len(minute_data)} 条记录")
 
 # 每日基本面查询
 basic_data = await fdh.get_daily_basic_async(
-    ['600519.SH'],
-    '2024-01-01',
-    '2024-12-31'
+    ts_code=['600519.SH'],
+    start_date='2024-01-01',
+    end_date='2024-12-31'
 )
 print(f"每日基本面: {len(basic_data)} 条记录")
 
 # 复权因子查询
 adj_data = await fdh.get_adj_factor_async(
-    ['600519.SH'],
-    '2020-01-01',
-    '2024-12-31'
+    ts_code=['600519.SH'],
+    start_date='2020-01-01',
+    end_date='2024-12-31'
 )
 print(f"复权因子: {len(adj_data)} 条记录")
 
 # 股票基本信息查询
-info = await fdh.get_basic_async(['600519.SH', '000858.SZ'])
+info = await fdh.get_basic_async(ts_code=['600519.SH', '000858.SZ'])
 print(f"股票信息: {len(info)} 条记录")
 
 # 高周期数据查询（自动聚合）
-weekly = await fdh.get_weekly_async(['600519.SH'], '2024-01-01', '2024-12-31')
-monthly = await fdh.get_monthly_async(['600519.SH'], '2024-01-01', '2024-12-31')
+weekly = await fdh.get_weekly_async(ts_code=['600519.SH'], start_date='2024-01-01', end_date='2024-12-31')
+monthly = await fdh.get_monthly_async(ts_code=['600519.SH'], start_date='2024-01-01', end_date='2024-12-31')
 
 # GDP宏观经济数据查询（使用季度末日期，如 2024-03-31 表示 2024Q1）
-gdp_data = await fdh.get_cn_gdp_async('2020-03-31', '2024-12-31')
+gdp_data = await fdh.get_cn_gdp_async(start_date='2020-03-31', end_date='2024-12-31')
 print(f"GDP数据: {len(gdp_data)} 条记录")
 print(gdp_data.head())
 
 # PPI宏观经济数据查询（使用月份末日期，如 2024-01-31 表示 2024年1月）
-ppi_data = await fdh.get_cn_ppi_async('2020-01-31', '2024-12-31')
+ppi_data = await fdh.get_cn_ppi_async(start_date='2020-01-31', end_date='2024-12-31')
 print(f"PPI数据: {len(ppi_data)} 条记录")
 print(ppi_data.head())
 
 # 货币供应量数据查询（使用月份末日期，如 2024-01-31 表示 2024年1月）
-m_data = await fdh.get_cn_m_async('2020-01-31', '2024-12-31')
+m_data = await fdh.get_cn_m_async(start_date='2020-01-31', end_date='2024-12-31')
 print(f"货币供应量数据: {len(m_data)} 条记录")
 print(m_data.head())
 
 # PMI采购经理人指数数据查询（使用月份末日期，如 2024-01-31 表示 2024年1月）
-pmi_data = await fdh.get_cn_pmi_async('2020-01-31', '2024-12-31')
+pmi_data = await fdh.get_cn_pmi_async(start_date='2020-01-31', end_date='2024-12-31')
 print(f"PMI数据: {len(pmi_data)} 条记录")
 print(pmi_data[['time', 'pmi010000', 'pmi020100', 'pmi030000']])
 
 # 大盘指数每日指标数据查询
 # 支持的指数：上证综指(000001.SH)、深证成指(399001.SZ)、上证50(000016.SH)、中证500(000905.SH)、中小板指(399005.SZ)、创业板指(399006.SZ)
-index_data = await fdh.get_index_dailybasic_async('000001.SH', '2024-01-01', '2024-12-31')
+index_data = await fdh.get_index_dailybasic_async(ts_code='000001.SH', start_date='2024-01-01', end_date='2024-12-31')
 print(f"上证综指每日指标: {len(index_data)} 条记录")
 print(index_data[['trade_date', 'total_mv', 'pe', 'pb', 'turnover_rate']])
 
 # 上市公司财务指标数据查询（使用报告期日期，如 2024-03-31 表示 2024Q1）
-fina_data = await fdh.get_fina_indicator_async('600519.SH', '2020-03-31', '2024-12-31')
+fina_data = await fdh.get_fina_indicator_async(ts_code='600519.SH', start_date='2020-03-31', end_date='2024-12-31')
 print(f"贵州茅台财务指标: {len(fina_data)} 条记录")
 print(fina_data[['ts_code', 'end_date', 'eps', 'roe', 'debt_to_assets', 'turn_days']].head())
 
 # 上市公司现金流量表数据查询（使用报告期日期，如 2024-03-31 表示 2024Q1）
-cashflow_data = await fdh.get_cashflow_async('600519.SH', '2020-03-31', '2024-12-31')
+cashflow_data = await fdh.get_cashflow_async(ts_code='600519.SH', start_date='2020-03-31', end_date='2024-12-31')
 print(f"贵州茅台现金流量表: {len(cashflow_data)} 条记录")
 print(cashflow_data[['ts_code', 'end_date', 'net_profit', '经营活动产生的现金流量净额', '投资活动产生的现金流量净额', '筹资活动产生的现金流量净额']].head())
 
 # 上市公司资产负债表数据查询（使用报告期日期，如 2024-03-31 表示 2024Q1）
-balancesheet_data = await fdh.get_balancesheet_async('600519.SH', '2020-03-31', '2024-12-31')
+balancesheet_data = await fdh.get_balancesheet_async(ts_code='600519.SH', start_date='2020-03-31', end_date='2024-12-31')
 print(f"贵州茅台资产负债表: {len(balancesheet_data)} 条记录")
 print(balancesheet_data[['ts_code', 'end_date', 'total_assets', 'total_liab', 'total_hldr_eqy_exc_min_int']].head())
 
 # 上市公司利润表数据查询（使用报告期日期，如 2024-03-31 表示 2024Q1）
-income_data = await fdh.get_income_async('600519.SH', '2020-03-31', '2024-12-31')
+income_data = await fdh.get_income_async(ts_code='600519.SH', start_date='2020-03-31', end_date='2024-12-31')
 print(f"贵州茅台利润表: {len(income_data)} 条记录")
 print(income_data[['ts_code', 'end_date', 'total_revenue', 'n_income', 'ebit']].head())
 
@@ -388,12 +388,12 @@ print(ticker_industry[['ts_code', 'name', 'l1_code', 'l1_name', 'l2_code', 'l2_n
 
 # 申万行业日线行情数据查询
 # 获取全部行业的历史日线数据
-sw_daily_data = await fdh.get_sw_daily_async('2024-01-01', '2024-12-31')
+sw_daily_data = await fdh.get_sw_daily_async(start_date='2024-01-01', end_date='2024-12-31')
 print(f"申万行业日线数据: {len(sw_daily_data)} 条记录")
 print(sw_daily_data[['ts_code', 'trade_date', 'name', 'close', 'pct_change']].head())
 
 # 获取指定行业的日线数据
-sw_data = await fdh.get_sw_daily_async('2024-01-01', '2024-12-31', ts_code='801010.SI')
+sw_data = await fdh.get_sw_daily_async(start_date='2024-01-01', end_date='2024-12-31', ts_code='801010.SI')
 print(f"801010(农林牧渔)行业日线数据: {len(sw_data)} 条记录")
 
 # 关闭连接
@@ -411,13 +411,13 @@ settings = get_settings()
 fdh = FinanceDataHub(settings, backend="postgresql")
 
 # 方式1: 使用同步方法（自动处理事件循环）
-daily_data = fdh.get_daily(['600519.SH', '000858.SZ'], '2024-01-01', '2024-12-31')
+daily_data = fdh.get_daily(ts_code=['600519.SH', '000858.SZ'], start_date='2024-01-01', end_date='2024-12-31')
 print(f"日线数据: {len(daily_data)} 条记录")
 
 # 方式2: 使用异步方法
 async def get_data():
-    daily = await fdh.get_daily_async(['600519.SH'], '2024-01-01', '2024-12-31')
-    minute = await fdh.get_minute_async(['600519.SH'], '2024-11-01', '2024-11-30', 'minute_5')
+    daily = await fdh.get_daily_async(ts_code=['600519.SH'], start_date='2024-01-01', end_date='2024-12-31')
+    minute = await fdh.get_minute_async(ts_code=['600519.SH'], start_date='2024-11-01', end_date='2024-11-30', freq='minute_5')
     await fdh.close()
     return daily, minute
 
@@ -430,7 +430,7 @@ print(f"分钟数据: {len(minute_data)} 条")
 
 ```python
 # 检查数据新鲜度
-freshness = await fdh.check_data_freshness(['600519.SH'], 'daily')
+freshness = await fdh.check_data_freshness(ts_code=['600519.SH'], 'daily')
 print(f"可用提供商: {freshness['available_providers']}")
 print(f"建议: {freshness['recommendation']}")
 ```
