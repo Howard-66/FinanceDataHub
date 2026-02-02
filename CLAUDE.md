@@ -577,7 +577,13 @@ fdh-cli update --dataset daily --trade-date 2024-11-27
 
 # 使用 --frequency 参数（向后兼容）
 fdh-cli update --dataset basic            # 股票基本信息
-fdh-cli update --dataset adj_factor       # 复权因子
+
+# 更新复权因子
+fdh-cli update --dataset adj_factor         # 智能增量更新
+fdh-cli update --dataset adj_factor --force # 强制全量更新
+fdh-cli update --dataset adj_factor --symbols 600519.SH,600900.SH
+fdh-cli update --dataset adj_factor --start-date 2025-12-26 --end-date 2025-12-31 # 指定日期范围
+fdh-cli update --dataset adj_factor --trade-date 2025-12-31 # 指定交易日全股票更新
 
 # 更新GDP宏观经济数据
 fdh-cli update --dataset gdp                # 智能增量更新

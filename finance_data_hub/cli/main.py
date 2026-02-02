@@ -1778,6 +1778,9 @@ async def _run_trade_date_update(
             elif data_type == "sw_daily":
                 # 申万行业日线行情数据
                 method_name = "get_sw_daily"
+            elif data_type == "adj_factor":
+                # 复权因子数据
+                method_name = "get_adj_factor"
             else:
                 console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                 raise typer.Exit(1)
@@ -1833,6 +1836,8 @@ async def _run_trade_date_update(
                         count = await updater.data_ops.insert_index_dailybasic_batch(batch_df)
                     elif data_type == "sw_daily":
                         count = await updater.data_ops.insert_sw_daily_batch(batch_df)
+                    elif data_type == "adj_factor":
+                        count = await updater.data_ops.insert_adj_factor_batch(batch_df)
                     else:
                         console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                         raise typer.Exit(1)
