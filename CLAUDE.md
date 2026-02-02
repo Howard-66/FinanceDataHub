@@ -431,7 +431,7 @@ print(f"建议: {freshness['recommendation']}")
 |----------|------|---------|
 | 日线 | `get_daily()` / `get_daily_async()` | symbols, start_date, end_date |
 | 分钟 | `get_minute()` / `get_minute_async()` | symbols, start_date, end_date, frequency |
-| 每日基本面 | `get_daily_basic()` / `get_daily_basic_async()` | symbols, start_date, end_date |
+| 每日基本面 | `get_daily_basic()` / `get_daily_basic_async()` | symbols (可选), start_date (可选), end_date (可选) |
 | 复权因子 | `get_adj_factor()` / `get_adj_factor_async()` | symbols (可选), start_date (可选), end_date (可选) |
 | 基本信息 | `get_basic()` / `get_basic_async()` | symbols (可选，None表示所有) |
 | 周线 | `get_weekly()` / `get_weekly_async()` | symbols, start_date, end_date |
