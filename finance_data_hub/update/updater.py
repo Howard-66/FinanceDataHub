@@ -33,6 +33,33 @@ def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
     return date_str.replace("-", "")[:6]
 
 
+def _convert_to_quarter_format(date_str: Optional[str]) -> Optional[str]:
+    """
+    将 YYYY-MM-DD 格式转换为 YYYYQn 格式
+
+    Args:
+        date_str: YYYY-MM-DD 格式日期，如 "2024-03-31" 表示 Q1
+
+    Returns:
+        YYYYQn 格式季度字符串，如 "2024Q1"，或 None
+    """
+    if not date_str:
+        return None
+    # 解析日期，提取月份确定季度
+    month = int(date_str[5:7])
+    year = date_str[:4]
+
+    # 根据月份确定季度
+    if month <= 3:
+        return f"{year}Q1"
+    elif month <= 6:
+        return f"{year}Q2"
+    elif month <= 9:
+        return f"{year}Q3"
+    else:
+        return f"{year}Q4"
+
+
 class DataUpdater:
     """数据更新器"""
 
@@ -654,8 +681,8 @@ class DataUpdater:
                 asset_class="macro",  # GDP属于宏观经济数据
                 data_type="gdp",
                 method_name="get_gdp_data",
-                start_q=actual_start_date,
-                end_q=end_date,
+                start_q=_convert_to_quarter_format(actual_start_date),
+                end_q=_convert_to_quarter_format(end_date),
             )
 
             if data is None or data.empty:
