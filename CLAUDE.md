@@ -604,6 +604,7 @@ fdh-cli update --dataset index_dailybasic   # 智能增量更新
 fdh-cli update --dataset index_dailybasic --force  # 强制全量更新
 fdh-cli update --dataset index_dailybasic --start-date 2024-01-01 --end-date 2024-12-31  # 指定日期范围
 fdh-cli update --dataset index_dailybasic --symbols 000001.SH  # 指定指数代码
+fdh-cli update --dataset index_dailybasic --trade-date 2024-11-27  # 获取指定交易日所有指数数据
 
 # 更新财务指标数据
 fdh-cli update --dataset fina_indicator                    # 智能增量更新（需要指定股票）

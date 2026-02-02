@@ -193,6 +193,7 @@ def update(
         index_dailybasic使用说明:
         - 不指定--symbols时：获取当日所有指数数据（增量更新）
         - 指定--symbols时：获取该指数的历史数据（如 --symbols 000001.SH --start-date 2024-01-01 --end-date 2024-12-31）
+        - 使用--trade-date参数：获取指定交易日所有指数数据（如 --trade-date 2024-11-27）
 
         sw_daily使用说明:
         - 不指定--symbols时：获取所有行业的历史数据（智能更新）

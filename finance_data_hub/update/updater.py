@@ -753,6 +753,7 @@ class DataUpdater:
     async def update_index_dailybasic(
         self,
         ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         force_update: bool = False,
@@ -763,26 +764,58 @@ class DataUpdater:
         支持的指数：上证综指（000001.SH）、深证成指（399001.SZ）、上证50（000016.SH）、
         中证500（000905.SH）、中小板指（399005.SZ）、创业板指（399006.SZ）
 
+        支持的调用模式：
+        1. 指定 trade_date：获取指定交易日所有指数数据
+        2. 指定 ts_code：获取指定指数的历史数据
+        3. 智能下载模式：增量更新（不指定ts_code和trade_date时）
+
         Args:
             ts_code: 指数代码，None表示所有支持的指数
+            trade_date: 交易日期（YYYYMMDD格式），优先级高于ts_code
             start_date: 开始日期（YYYY-MM-DD格式），仅当指定ts_code时有效
             end_date: 结束日期，None表示到最新
             force_update: 是否强制更新（忽略数据库状态）
 
         Returns:
             int: 更新的记录数
+
+        Raises:
+            ValueError: 当 trade_date 与 start_date 或 end_date 同时指定时
         """
+        # 参数互斥检查
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date cannot be used with start_date or end_date")
         # 确定日期
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
         logger.info(
-            f"Updating index_dailybasic for {ts_code or 'all indexes'} from {start_date or 'smart'} to {end_date} (force={force_update})"
+            f"Updating index_dailybasic for {ts_code or 'all indexes'} (trade_date={trade_date}, start={start_date or 'smart'}, end={end_date}, force={force_update})"
         )
 
         try:
             # 判断使用哪种模式
-            if ts_code:
+            # 1. 交易日模式（优先级最高）
+            if trade_date:
+                logger.info(f"Trade date mode: fetching all indexes for {trade_date}")
+                data = self.router.route(
+                    asset_class="index",
+                    data_type="dailybasic",
+                    method_name="get_index_dailybasic",
+                    trade_date=trade_date,
+                    ts_code=ts_code,  # 如果同时指定了ts_code，API会过滤
+                )
+
+                if data is None or data.empty:
+                    logger.warning(f"No index_dailybasic data received for trade_date={trade_date}")
+                    return 0
+
+                inserted_count = await self.data_ops.insert_index_dailybasic_batch(data)
+                logger.info(f"Updated {inserted_count} index_dailybasic records for trade_date={trade_date}")
+                return inserted_count
+
+            # 2. 指定指数代码模式
+            elif ts_code:
                 # 指定了指数代码，使用历史数据模式
                 if not start_date:
                     start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
