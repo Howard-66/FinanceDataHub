@@ -42,6 +42,20 @@ from finance_data_hub.providers.schema import (
 )
 
 
+# 支持的指数代码列表（模块级别常量）
+SUPPORTED_INDEX_CODES = [
+    "000001.SH",  # 上证综指
+    "000016.SH",  # 上证50
+    "000300.SH",  # 沪深300
+    "000905.SH",  # 中证500
+    "399001.SZ",  # 深证成指
+    "399005.SZ",  # 中小板指
+    "399006.SZ",  # 创业板指
+    "399300.SZ",  # 沪深300
+    "399905.SZ",  # 中证500
+]
+
+
 @register_provider("tushare")
 class TushareProvider(BaseDataProvider):
     """
@@ -1737,19 +1751,6 @@ class TushareProvider(BaseDataProvider):
         logger.info(f"Fetched {len(df)} PMI records")
         return df
 
-    # 支持的指数代码列表
-    SUPPORTED_INDEX_CODES = [
-        "000001.SH",  # 上证综指
-        "000016.SH",  # 上证50
-        "000300.SH",  # 沪深300
-        "000905.SH",  # 中证500
-        "399001.SZ",  # 深证成指
-        "399005.SZ",  # 中小板指
-        "399006.SZ",  # 创业板指
-        "399300.SZ",  # 沪深300
-        "399905.SZ",  # 中证500
-    ]
-
     def get_index_dailybasic(
         self,
         ts_code: Optional[str] = None,
@@ -1844,7 +1845,7 @@ class TushareProvider(BaseDataProvider):
             index_codes = [c.strip() for c in ts_code.split(",") if c.strip()]
         else:
             # 没有指定ts_code时，使用所有支持的指数
-            index_codes = self.SUPPORTED_INDEX_CODES
+            index_codes = SUPPORTED_INDEX_CODES
             logger.info(f"No ts_code specified, using supported indexes: {index_codes}")
 
         # 对每个指数代码查询数据

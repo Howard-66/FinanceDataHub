@@ -14,6 +14,7 @@ from finance_data_hub.router.smart_router import SmartRouter
 from finance_data_hub.database.manager import DatabaseManager
 from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.config import Settings
+from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES
 
 
 class DataUpdater:
@@ -864,29 +865,32 @@ class DataUpdater:
 
     async def update_index_dailybasic(
         self,
-        ts_code: Optional[str] = None,
+        ts_code_list: Optional[List[str]] = None,
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         force_update: bool = False,
+        progress_callback: Optional[callable] = None,
     ) -> int:
         """
         更新大盘指数每日指标数据
 
-        支持的指数：上证综指（000001.SH）、深证成指（399001.SZ）、上证50（000016.SH）、
-        中证500（000905.SH）、中小板指（399005.SZ）、创业板指（399006.SZ）
+        支持的指数：上证综指（000001.SH）、上证50（000016.SH）、沪深300（000300.SH）、
+        中证500（000905.SH）、深证成指（399001.SZ）、中小板指（399005.SZ）、
+        创业板指（399006.SZ）、沪深300（399300.SZ）、中证500（399905.SZ）
 
         支持的调用模式：
         1. 指定 trade_date：获取指定交易日所有指数数据
-        2. 指定 ts_code：获取指定指数的历史数据
-        3. 智能下载模式：增量更新（不指定ts_code和trade_date时）
+        2. 指定 ts_code_list：获取指定指数的历史数据
+        3. 智能下载模式：增量更新（不指定ts_code_list和trade_date时）
 
         Args:
-            ts_code: 指数代码，None表示所有支持的指数
-            trade_date: 交易日期（YYYYMMDD格式），优先级高于ts_code
-            start_date: 开始日期（YYYY-MM-DD格式），仅当指定ts_code时有效
+            ts_code_list: 指数代码列表，None表示所有支持的指数
+            trade_date: 交易日期（YYYYMMDD格式），优先级高于ts_code_list
+            start_date: 开始日期（YYYY-MM-DD格式），None表示全量历史数据
             end_date: 结束日期，None表示到最新
             force_update: 是否强制更新（忽略数据库状态）
+            progress_callback: 进度回调函数，接收 (current, total) 参数
 
         Returns:
             int: 更新的记录数
@@ -901,11 +905,19 @@ class DataUpdater:
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
+        # 默认支持的指数列表（使用TushareProvider中定义的权威列表）
+        # 合并单个ts_code和列表
+        if ts_code_list is None:
+            ts_code_list = SUPPORTED_INDEX_CODES
+
         logger.info(
-            f"Updating index_dailybasic for {ts_code or 'all indexes'} (trade_date={trade_date}, start={start_date or 'smart'}, end={end_date}, force={force_update})"
+            f"Updating index_dailybasic for {len(ts_code_list)} indexes (trade_date={trade_date}, start={start_date or 'full'}, end={end_date}, force={force_update})"
         )
 
         try:
+            total_records = 0
+            total_indexes = len(ts_code_list)
+
             # 判断使用哪种模式
             # 1. 交易日模式（优先级最高）
             if trade_date:
@@ -915,7 +927,7 @@ class DataUpdater:
                     data_type="dailybasic",
                     method_name="get_index_dailybasic",
                     trade_date=trade_date,
-                    ts_code=ts_code,  # 如果同时指定了ts_code，API会过滤
+                    ts_code=None,  # 获取所有指数
                 )
 
                 if data is None or data.empty:
@@ -926,80 +938,66 @@ class DataUpdater:
                 logger.info(f"Updated {inserted_count} index_dailybasic records for trade_date={trade_date}")
                 return inserted_count
 
-            # 2. 指定指数代码模式
-            elif ts_code:
-                # 指定了指数代码，使用历史数据模式
-                if not start_date:
-                    start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-                    logger.info(f"No start_date specified, defaulting to {start_date}")
+            # 2. 指定指数代码列表模式或智能下载模式
+            # 遍历每个指数
+            for idx, ts_code in enumerate(ts_code_list):
+                try:
+                    # 智能下载逻辑：确定该指数的实际起始日期
+                    symbol_start_date = start_date
 
-                logger.info(f"Historical mode: fetching {ts_code} data from {start_date} to {end_date}")
+                    if not force_update and not start_date:
+                        # 查询数据库中该指数的最新记录
+                        latest_date = await self.data_ops.get_latest_index_dailybasic_date(ts_code)
 
-                api_start = start_date.replace("-", "") if start_date else None
-                api_end = end_date.replace("-", "") if end_date else None
+                        if latest_date:
+                            # 有记录，计算下一个交易日
+                            next_day = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
+                            symbol_start_date = next_day.strftime("%Y-%m-%d")
+                            if symbol_start_date > end_date:
+                                logger.debug(f"Skipping {ts_code} - already up to date")
+                                if progress_callback:
+                                    progress_callback(idx + 1, total_indexes)
+                                continue
+                            logger.debug(f"Smart incremental: {ts_code} from {symbol_start_date}")
+                        else:
+                            # 新指数，智能下载模式：传None让API获取全量数据
+                            symbol_start_date = None
+                            logger.debug(f"Smart download: {ts_code} - fetching full history")
+                    elif force_update:
+                        # 强制更新模式
+                        logger.debug(f"Force update: {ts_code} from {symbol_start_date or 'beginning'}")
 
-                data = self.router.route(
-                    asset_class="index",
-                    data_type="dailybasic",
-                    method_name="get_index_dailybasic",
-                    ts_code=ts_code,
-                    start_date=api_start,
-                    end_date=api_end,
-                )
-            else:
-                # 未指定指数代码，智能下载模式
-                if force_update:
-                    # 强制更新：获取全量历史数据（从最早到最新）
-                    logger.info("Force update: fetching full history")
-                    api_start = start_date.replace("-", "") if start_date else None
+                    api_start = symbol_start_date.replace("-", "") if symbol_start_date else None
                     api_end = end_date.replace("-", "") if end_date else None
+
+                    logger.info(f"Fetching {ts_code} ({idx + 1}/{total_indexes})")
+
                     data = self.router.route(
                         asset_class="index",
                         data_type="dailybasic",
                         method_name="get_index_dailybasic",
+                        ts_code=ts_code,
                         start_date=api_start,
                         end_date=api_end,
                     )
-                else:
-                    # 智能下载：检查数据库状态
-                    latest_date = await self.data_ops.get_latest_index_dailybasic_date(None)
 
-                    if latest_date:
-                        # 有记录，增量更新：从最新日期的下一天到最新
-                        next_day = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
-                        if next_day.strftime("%Y-%m-%d") > end_date:
-                            logger.info("Index dailybasic data is already up to date")
-                            return 0
-                        api_start = next_day.strftime("%Y%m%d")
-                        api_end = end_date.replace("-", "")
-                        logger.info(f"Smart incremental: fetching from {next_day} to {end_date}")
-                        data = self.router.route(
-                            asset_class="index",
-                            data_type="dailybasic",
-                            method_name="get_index_dailybasic",
-                            start_date=api_start,
-                            end_date=api_end,
-                        )
+                    if data is not None and not data.empty:
+                        inserted = await self.data_ops.insert_index_dailybasic_batch(data)
+                        total_records += inserted
+                        logger.info(f"Inserted {inserted} records for {ts_code}")
                     else:
-                        # 数据库为空，获取全量历史数据
-                        logger.info("Smart download: database empty, fetching full history")
-                        api_end = end_date.replace("-", "") if end_date else None
-                        data = self.router.route(
-                            asset_class="index",
-                            data_type="dailybasic",
-                            method_name="get_index_dailybasic",
-                            end_date=api_end,
-                        )
+                        logger.debug(f"No data for {ts_code}")
 
-            if data is None or data.empty:
-                logger.warning("No index_dailybasic data received")
-                return 0
+                    # 调用进度回调
+                    if progress_callback:
+                        progress_callback(idx + 1, total_indexes)
 
-            # 插入数据库
-            inserted_count = await self.data_ops.insert_index_dailybasic_batch(data)
+                except Exception as e:
+                    logger.error(f"Failed to fetch data for {ts_code}: {str(e)}")
+                    continue
 
-            logger.info(f"Updated {inserted_count} index_dailybasic records")
-            return inserted_count
+            logger.info(f"Updated total {total_records} index_dailybasic records")
+            return total_records
 
         except Exception as e:
             logger.exception("Failed to update index_dailybasic data")

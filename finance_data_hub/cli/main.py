@@ -28,6 +28,8 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, TaskProgressColumn, ProgressColumn
 from rich.text import Text
 from rich.syntax import Syntax
+
+from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES
 from rich import print as rprint
 
 from finance_data_hub.config import get_settings, reload_settings
@@ -514,27 +516,38 @@ async def _run_smart_download(
         if not quiet:
             console.print("[bold]智能下载策略:[/bold]")
             console.print("  - 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）")
-            console.print("  - 自动获取最新数据")
+            if ts_code_list:
+                console.print(f"  - 将更新 {len(ts_code_list)} 个指数")
+            else:
+                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_CODES)} 个指数")
             console.print("")
+
+        # 确定要更新的指数列表
+        index_count = len(ts_code_list) if ts_code_list else len(SUPPORTED_INDEX_CODES)
 
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
+            SymbolCountColumn("指数"),
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("正在获取指数每日指标数据...", total=100)
+            task = progress.add_task("正在获取指数每日指标数据...", total=index_count)
 
             async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
                 try:
                     count = await updater.update_index_dailybasic(
-                        ts_code=ts_code_list[0] if ts_code_list else None,
+                        ts_code_list=ts_code_list if ts_code_list else SUPPORTED_INDEX_CODES,
                         start_date=None,  # 智能下载
                         end_date=end_date,
                         force_update=False,
+                        progress_callback=progress_callback,
                     )
-                    progress.update(task, completed=100)
+                    progress.update(task, completed=index_count)
                     if not quiet:
                         console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
                     else:
@@ -1183,26 +1196,38 @@ async def _run_force_update(
             console.print("[bold]强制更新策略:[/bold]")
             console.print("  - 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）")
             console.print("  - 使用指定的日期范围")
+            if ts_code_list:
+                console.print(f"  - 将更新 {len(ts_code_list)} 个指数")
+            else:
+                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_CODES)} 个指数")
             console.print("")
+
+        # 确定要更新的指数列表
+        index_count = len(ts_code_list) if ts_code_list else len(SUPPORTED_INDEX_CODES)
 
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
+            SymbolCountColumn("指数"),
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("正在获取指数每日指标数据...", total=100)
+            task = progress.add_task("正在获取指数每日指标数据...", total=index_count)
 
             async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
                 try:
                     count = await updater.update_index_dailybasic(
-                        ts_code=ts_code_list[0] if ts_code_list else None,
+                        ts_code_list=ts_code_list if ts_code_list else SUPPORTED_INDEX_CODES,
                         start_date=start_date,
                         end_date=end_date,
                         force_update=True,
+                        progress_callback=progress_callback,
                     )
-                    progress.update(task, completed=100)
+                    progress.update(task, completed=index_count)
                     if not quiet:
                         console.print(f"[green][OK][/green] 已更新 {count} 条指数每日指标数据")
                     else:

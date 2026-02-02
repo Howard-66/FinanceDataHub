@@ -2136,6 +2136,36 @@ class DataOperations:
 
         return [row.ts_code for row in rows]
 
+    async def get_latest_index_dailybasic_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+        """
+        获取最新的大盘指数每日指标日期
+
+        Args:
+            ts_code: 指数代码（如000001.SH），None表示任意指数
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(trade_date) as latest_date
+            FROM index_dailybasic
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None
+
     # ============================================================================
     # 财务指标数据操作
     # ============================================================================
