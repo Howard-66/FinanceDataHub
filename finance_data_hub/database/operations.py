@@ -702,15 +702,18 @@ class DataOperations:
         return total_inserted
 
     async def get_adj_factor(
-        self, symbols: List[str], start_date: str, end_date: str
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取指定时间范围内的复权因子
 
         Args:
-            symbols: 股票代码列表
-            start_date: 开始日期 (YYYY-MM-DD)
-            end_date: 结束日期 (YYYY-MM-DD)
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
 
         Returns:
             Optional[pd.DataFrame]: 复权因子数据，包含 time, symbol, adj_factor 列
@@ -719,26 +722,46 @@ class DataOperations:
         if self.db_manager._engine is None:
             await self.db_manager.initialize()
 
-        start_dt = _normalize_datetime_for_db(start_date, "adj_factor")
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "adj_factor")
+        # 构建动态查询条件
+        conditions = []
+        params = {}
 
-        query = text("""
+        # symbols 条件
+        if symbols:
+            conditions.append("symbol = ANY(:symbols)")
+            params["symbols"] = symbols
+
+        # start_date 条件
+        if start_date:
+            start_dt = _normalize_datetime_for_db(start_date, "adj_factor")
+            conditions.append("time >= :start_date")
+            params["start_date"] = start_dt
+        else:
+            params["start_date"] = None
+
+        # end_date 条件
+        if end_date:
+            end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "adj_factor")
+            conditions.append("time <= :end_date")
+            params["end_date"] = end_dt
+        else:
+            params["end_date"] = None
+
+        # 如果没有任何条件，返回空结果
+        if not conditions:
+            return None
+
+        where_clause = " AND ".join(conditions)
+
+        query = text(f"""
             SELECT time, symbol, adj_factor
             FROM adj_factor
-            WHERE symbol = ANY(:symbols)
-            AND time BETWEEN :start_date AND :end_date
+            WHERE {where_clause}
             ORDER BY symbol, time
         """)
 
         async with self.db_manager._engine.begin() as conn:
-            result = await conn.execute(
-                query,
-                {
-                    "symbols": symbols,
-                    "start_date": start_dt,
-                    "end_date": end_dt,
-                },
-            )
+            result = await conn.execute(query, params)
             rows = result.fetchall()
 
         if not rows:

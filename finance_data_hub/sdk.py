@@ -391,54 +391,72 @@ class FinanceDataHub:
 
     def get_adj_factor(
         self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取复权因子数据（同步方法）
 
         Args:
-            symbols: 股票代码列表
-            start_date: 开始日期 (YYYY-MM-DD)
-            end_date: 结束日期 (YYYY-MM-DD)
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
 
         Returns:
             Optional[pd.DataFrame]: 复权因子数据，包含 time, symbol, adj_factor 列
 
+        Note:
+            symbols、start_date、end_date 不能同时为 None，否则返回空数据框
+
         Example:
             >>> fdh = FinanceDataHub(settings)
+            >>> # 指定股票和日期范围
             >>> data = fdh.get_adj_factor(['600519.SH'], '2020-01-01', '2024-12-31')
+            >>> # 仅指定股票，获取全部历史数据
+            >>> data = fdh.get_adj_factor(['600519.SH'])
+            >>> # 仅指定日期范围，获取所有股票在该范围内的数据
+            >>> data = fdh.get_adj_factor(start_date='2020-01-01', end_date='2024-12-31')
             >>> print(data.head())
         """
         return asyncio.run(self.get_adj_factor_async(symbols, start_date, end_date))
 
     async def get_adj_factor_async(
         self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取复权因子数据（异步方法）
 
         Args:
-            symbols: 股票代码列表
-            start_date: 开始日期 (YYYY-MM-DD)
-            end_date: 结束日期 (YYYY-MM-DD)
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
 
         Returns:
             Optional[pd.DataFrame]: 复权因子数据
+
+        Note:
+            symbols、start_date、end_date 不能同时为 None，否则返回空数据框
         """
-        freshness = await self.check_data_freshness(symbols, "adj_factor")
+        # 验证参数：不能三个同时为空
+        if symbols is None and start_date is None and end_date is None:
+            logger.warning("get_adj_factor: symbols, start_date, and end_date cannot all be None")
+            return None
+
+        freshness = await self.check_data_freshness(symbols if symbols else ["ALL"], "adj_factor")
         self._log_routing_decision(
             "adj_factor",
-            symbols,
+            symbols if symbols else ["ALL"],
             "Query from PostgreSQL",
             f"Available providers: {', '.join(freshness.get('available_providers', []))}"
         )
 
-        return await self.ops.get_adj_factor(symbols, start_date, end_date)
+        # 处理空列表为None
+        symbols_param = symbols if symbols else None
+        return await self.ops.get_adj_factor(symbols_param, start_date, end_date)
 
     def get_basic(
         self,

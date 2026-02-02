@@ -286,11 +286,19 @@ print(f"每日基本面: {len(basic_data)} 条记录")
 
 # 复权因子查询
 adj_data = await fdh.get_adj_factor_async(
-    ts_code=['600519.SH'],
+    symbols=['600519.SH'],
     start_date='2020-01-01',
     end_date='2024-12-31'
 )
 print(f"复权因子: {len(adj_data)} 条记录")
+
+# 复权因子查询 - 仅指定股票，获取全部历史数据
+adj_all = await fdh.get_adj_factor_async(symbols=['600519.SH'])
+print(f"复权因子全部历史: {len(adj_all)} 条记录")
+
+# 复权因子查询 - 仅指定日期范围，获取所有股票在该范围内的数据
+adj_range = await fdh.get_adj_factor_async(start_date='2024-01-01', end_date='2024-12-31')
+print(f"复权因子指定范围: {len(adj_range)} 条记录")
 
 # 股票基本信息查询
 info = await fdh.get_basic_async(ts_code=['600519.SH', '000858.SZ'])
@@ -424,7 +432,7 @@ print(f"建议: {freshness['recommendation']}")
 | 日线 | `get_daily()` / `get_daily_async()` | symbols, start_date, end_date |
 | 分钟 | `get_minute()` / `get_minute_async()` | symbols, start_date, end_date, frequency |
 | 每日基本面 | `get_daily_basic()` / `get_daily_basic_async()` | symbols, start_date, end_date |
-| 复权因子 | `get_adj_factor()` / `get_adj_factor_async()` | symbols, start_date, end_date |
+| 复权因子 | `get_adj_factor()` / `get_adj_factor_async()` | symbols (可选), start_date (可选), end_date (可选) |
 | 基本信息 | `get_basic()` / `get_basic_async()` | symbols (可选，None表示所有) |
 | 周线 | `get_weekly()` / `get_weekly_async()` | symbols, start_date, end_date |
 | 月线 | `get_monthly()` / `get_monthly_async()` | symbols, start_date, end_date |
