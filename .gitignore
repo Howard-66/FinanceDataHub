@@ -234,6 +234,11 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# OpenSpec
+.agent/
+.claude/
+openspec/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
