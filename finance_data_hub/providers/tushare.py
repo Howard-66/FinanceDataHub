@@ -863,20 +863,59 @@ class TushareProvider(BaseDataProvider):
         symbol: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         获取复权因子（自动处理Tushare 6000条记录限制）
 
         当返回记录数等于6000时，自动继续获取更早的数据，确保获取完整历史数据。
+        当提供trade_date参数时，批量获取指定交易日所有股票的复权因子。
 
         Args:
             symbol: 股票代码（例如 "600519.SH"），None表示全部
             start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD）
             end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD）
+            trade_date: 交易日期（YYYY-MM-DD 或 YYYYMMDD），批量获取当日所有股票复权因子
 
         Returns:
             pd.DataFrame: 包含symbol, time, adj_factor的DataFrame
         """
+        # 交易日模式：直接获取指定交易日数据
+        if trade_date:
+            logger.info(f"Trade date mode: fetching adj_factor for {trade_date}")
+
+            # 转换日期格式
+            trade_date_clean = trade_date.replace("-", "")
+
+            # 构建参数
+            kwargs = {}
+            if symbol:
+                kwargs["ts_code"] = symbol
+            kwargs["trade_date"] = trade_date_clean
+
+            df = self._call_api("adj_factor", **kwargs)
+
+            if df.empty:
+                logger.warning(f"No adj_factor data for trade_date={trade_date}")
+                return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+            # 列名映射
+            column_mapping = {
+                "ts_code": "symbol",
+                "trade_date": "time",
+                "adj_factor": "adj_factor",
+            }
+
+            df = convert_to_standard_columns(df, column_mapping)
+
+            # 转换时间格式
+            df["time"] = pd.to_datetime(df["time"], format="%Y%m%d")
+            df = df.sort_values("time").reset_index(drop=True)
+
+            logger.info(f"Fetched {len(df)} adj_factor records for trade_date={trade_date}")
+            return df
+
+        # 原有逻辑：按日期范围获取
         logger.info(
             f"Fetching adj factor for symbol={symbol}, "
             f"start_date={start_date}, end_date={end_date}"

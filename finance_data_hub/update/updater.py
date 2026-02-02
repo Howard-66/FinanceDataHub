@@ -105,21 +105,60 @@ class DataUpdater:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         adj: Optional[str] = None,
+        trade_date: Optional[str] = None,
         force_update: bool = False,
     ) -> int:
         """
         更新日线数据
+
+        支持的调用模式：
+        1. 指定 trade_date：批量获取指定交易日所有股票数据
+        2. 指定 symbols/日期范围：逐个股票获取历史数据
+        3. 智能下载模式（默认）：自动增量更新
 
         Args:
             symbols: 股票代码列表，None表示全部
             start_date: 开始日期，None表示智能下载（查询数据库自动计算）
             end_date: 结束日期，为None时使用今天
             adj: 复权类型
+            trade_date: 交易日期（YYYY-MM-DD格式），批量获取当日所有股票数据
             force_update: 是否强制更新（忽略数据库状态）
 
         Returns:
             int: 更新的记录数
+
+        Raises:
+            ValueError: 当 trade_date 与 start_date 或 end_date 同时指定时
         """
+        # 参数互斥检查
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date cannot be used with start_date or end_date")
+
+        # 交易日模式：批量获取当日所有股票数据
+        if trade_date:
+            logger.info(f"Trade date mode: fetching all stocks for {trade_date}")
+
+            # 转换日期格式（CLI传入 YYYY-MM-DD，API需要 YYYYMMDD）
+            trade_date_api = trade_date.replace("-", "")
+
+            data = self.router.route(
+                asset_class="stock",
+                data_type="daily",
+                method_name="get_daily_data",
+                symbol=None,  # 获取所有股票
+                trade_date=trade_date_api,
+                adj=adj,
+            )
+
+            if data is None or data.empty:
+                logger.warning(f"No daily data received for trade_date={trade_date}")
+                return 0
+
+            inserted_count = await self.data_ops.insert_symbol_daily_batch(data, batch_size=1000)
+            logger.info(f"Updated {inserted_count} daily records for trade_date={trade_date}")
+            return inserted_count
+
+        # 原有逻辑：按股票逐个获取
         if not symbols:
             # 如果没有指定股票，获取所有股票
             symbols = await self.data_ops.get_symbol_list()
@@ -291,20 +330,58 @@ class DataUpdater:
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
         force_update: bool = False,
     ) -> int:
         """
         更新每日指标数据
 
+        支持的调用模式：
+        1. 指定 trade_date：批量获取指定交易日所有股票数据
+        2. 指定 symbols/日期范围：逐个股票获取历史数据
+        3. 智能下载模式（默认）：自动增量更新
+
         Args:
             symbols: 股票代码列表
             start_date: 开始日期，None表示智能下载
             end_date: 结束日期
+            trade_date: 交易日期（YYYY-MM-DD格式），批量获取当日所有股票数据
             force_update: 是否强制更新（忽略数据库状态）
 
         Returns:
             int: 更新的记录数
+
+        Raises:
+            ValueError: 当 trade_date 与 start_date 或 end_date 同时指定时
         """
+        # 参数互斥检查
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date cannot be used with start_date or end_date")
+
+        # 交易日模式：批量获取当日所有股票数据
+        if trade_date:
+            logger.info(f"Trade date mode: fetching all stocks for {trade_date}")
+
+            # 转换日期格式（CLI传入 YYYY-MM-DD，API需要 YYYYMMDD）
+            trade_date_api = trade_date.replace("-", "")
+
+            data = self.router.route(
+                asset_class="stock",
+                data_type="daily_basic",
+                method_name="get_daily_basic",
+                symbol=None,  # 获取所有股票
+                trade_date=trade_date_api,
+            )
+
+            if data is None or data.empty:
+                logger.warning(f"No daily_basic data received for trade_date={trade_date}")
+                return 0
+
+            inserted_count = await self.data_ops.insert_daily_basic_batch(data, batch_size=1000)
+            logger.info(f"Updated {inserted_count} daily_basic records for trade_date={trade_date}")
+            return inserted_count
+
+        # 原有逻辑：按股票逐个获取
         if not symbols:
             symbols = await self.data_ops.get_symbol_list()
 
@@ -379,20 +456,55 @@ class DataUpdater:
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
         force_update: bool = False,
     ) -> int:
         """
         更新复权因子数据
 
+        支持的调用模式：
+        1. 指定 trade_date：批量获取指定交易日所有股票复权因子
+        2. 指定 symbols/日期范围：逐个股票获取历史数据
+        3. 智能下载模式（默认）：自动增量更新
+
         Args:
             symbols: 股票代码列表，None表示全部
             start_date: 开始日期，None表示智能下载
             end_date: 结束日期
+            trade_date: 交易日期（YYYY-MM-DD格式），批量获取当日所有股票复权因子
             force_update: 是否强制更新（忽略数据库状态）
 
         Returns:
             int: 更新的记录数
+
+        Raises:
+            ValueError: 当 trade_date 与 start_date 或 end_date 同时指定时
         """
+        # 参数互斥检查
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date cannot be used with start_date or end_date")
+
+        # 交易日模式：批量获取当日所有股票复权因子
+        if trade_date:
+            logger.info(f"Trade date mode: fetching adj_factor for {trade_date}")
+
+            data = self.router.route(
+                asset_class="stock",
+                data_type="adj_factor",
+                method_name="get_adj_factor",
+                symbol=None,  # 获取所有股票
+                trade_date=trade_date,
+            )
+
+            if data is None or data.empty:
+                logger.warning(f"No adj_factor data received for trade_date={trade_date}")
+                return 0
+
+            inserted_count = await self.data_ops.insert_adj_factor_batch(data, batch_size=1000)
+            logger.info(f"Updated {inserted_count} adj_factor records for trade_date={trade_date}")
+            return inserted_count
+
+        # 原有逻辑：按股票逐个获取
         if not symbols:
             # 如果没有指定股票，获取所有股票
             symbols = await self.data_ops.get_symbol_list()
