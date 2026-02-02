@@ -4,7 +4,7 @@
 集成Provider、Router和数据库操作，实现完整的数据更新流程。
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, timedelta
 from pathlib import Path
 import time
@@ -15,6 +15,22 @@ from finance_data_hub.database.manager import DatabaseManager
 from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.config import Settings
 from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES
+
+
+def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
+    """
+    将 YYYY-MM-DD 格式转换为 YYYYMM 格式
+
+    Args:
+        date_str: YYYY-MM-DD 格式日期，如 "2024-01-31"
+
+    Returns:
+        YYYYMM 格式月份字符串，如 "202401"，或 None
+    """
+    if not date_str:
+        return None
+    # 提取 YYYY-MM 部分并去掉连字符
+    return date_str.replace("-", "")[:6]
 
 
 class DataUpdater:
@@ -707,8 +723,8 @@ class DataUpdater:
                 asset_class="macro",  # PPI属于宏观经济数据
                 data_type="ppi",
                 method_name="get_ppi_data",
-                start_m=actual_start_date,
-                end_m=end_date,
+                start_m=_convert_to_month_format(actual_start_date),
+                end_m=_convert_to_month_format(end_date),
             )
 
             if data is None or data.empty:
@@ -776,8 +792,8 @@ class DataUpdater:
                 asset_class="macro",  # M属于宏观经济数据
                 data_type="m",
                 method_name="get_m_data",
-                start_m=actual_start_date,
-                end_m=end_date,
+                start_m=_convert_to_month_format(actual_start_date),
+                end_m=_convert_to_month_format(end_date),
             )
 
             if data is None or data.empty:
@@ -845,8 +861,8 @@ class DataUpdater:
                 asset_class="macro",  # PMI属于宏观经济数据
                 data_type="pmi",
                 method_name="get_pmi_data",
-                start_m=actual_start_date,
-                end_m=end_date,
+                start_m=_convert_to_month_format(actual_start_date),
+                end_m=_convert_to_month_format(end_date),
             )
 
             if data is None or data.empty:
