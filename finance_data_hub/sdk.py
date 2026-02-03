@@ -224,63 +224,81 @@ class FinanceDataHub:
 
     def get_daily(
         self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取日线 OHLCV 数据（同步方法）
 
         Args:
-            symbols: 股票代码列表
-            start_date: 开始日期 (YYYY-MM-DD)
-            end_date: 结束日期 (YYYY-MM-DD)
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
 
         Returns:
             Optional[pd.DataFrame]: 日线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
 
+        Note:
+            symbols、start_date、end_date 不能同时为 None，否则返回空数据框
+
         Example:
             >>> fdh = FinanceDataHub(settings)
+            >>> # 指定股票和日期范围
             >>> data = fdh.get_daily(['600519.SH', '000858.SZ'], '2024-01-01', '2024-12-31')
+            >>> # 仅指定股票，获取全部历史数据
+            >>> data = fdh.get_daily(['600519.SH'])
+            >>> # 仅指定日期范围，获取所有股票在该范围内的数据
+            >>> data = fdh.get_daily(start_date='2024-01-01', end_date='2024-12-31')
             >>> print(data.head())
         """
         return asyncio.run(self.get_daily_async(symbols, start_date, end_date))
 
     async def get_daily_async(
         self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取日线 OHLCV 数据（异步方法）
 
         Args:
-            symbols: 股票代码列表
-            start_date: 开始日期 (YYYY-MM-DD)
-            end_date: 结束日期 (YYYY-MM-DD)
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
 
         Returns:
             Optional[pd.DataFrame]: 日线数据
+
+        Note:
+            symbols、start_date、end_date 不能同时为 None，否则返回空数据框
         """
+        # 验证参数：不能三个同时为空
+        if symbols is None and start_date is None and end_date is None:
+            logger.warning("get_daily: symbols, start_date, and end_date cannot all be None")
+            return None
+
         # 检查数据源可用性
-        freshness = await self.check_data_freshness(symbols, "daily")
+        freshness = await self.check_data_freshness(symbols if symbols else ["ALL"], "daily")
         if freshness["is_stale"]:
             self._log_routing_decision(
                 "daily",
-                symbols,
+                symbols if symbols else ["ALL"],
                 "Query from PostgreSQL (current data)",
                 f"Latest: {freshness.get('latest_date')}, Recommendation: {freshness.get('recommendation')}"
             )
         else:
             self._log_routing_decision(
                 "daily",
-                symbols,
+                symbols if symbols else ["ALL"],
                 "Query from PostgreSQL",
                 f"Available providers: {', '.join(freshness.get('available_providers', []))}"
             )
 
-        return await self.ops.get_symbol_daily(symbols, start_date, end_date)
+        # 处理空列表为None
+        symbols_param = symbols if symbols else None
+        return await self.ops.get_symbol_daily(symbols_param, start_date, end_date)
 
     def get_minute(
         self,

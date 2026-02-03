@@ -263,13 +263,13 @@ fdh = FinanceDataHub(
 )
 
 # 直接使用 await（推荐方式）
-daily_data = await fdh.get_daily_async(ts_code=['600519.SH', '000858.SZ'], start_date='2024-01-01', end_date='2024-12-31')
+daily_data = await fdh.get_daily_async(symbols=['600519.SH', '000858.SZ'], start_date='2024-01-01', end_date='2024-12-31')
 print(f"日线数据: {len(daily_data)} 条记录")
 print(daily_data.head())
 
 # 分钟数据查询
 minute_data = await fdh.get_minute_async(
-    ts_code=['600519.SH'],
+    symbols=['600519.SH'],
     start_date='2024-11-01',
     end_date='2024-11-30',
     freq='minute_5'
@@ -278,7 +278,7 @@ print(f"5分钟数据: {len(minute_data)} 条记录")
 
 # 每日基本面查询
 basic_data = await fdh.get_daily_basic_async(
-    ts_code=['600519.SH'],
+    symbols=['600519.SH'],
     start_date='2024-01-01',
     end_date='2024-12-31'
 )
@@ -301,11 +301,11 @@ adj_range = await fdh.get_adj_factor_async(start_date='2024-01-01', end_date='20
 print(f"复权因子指定范围: {len(adj_range)} 条记录")
 
 # 股票基本信息查询
-info = await fdh.get_basic_async(ts_code=['600519.SH', '000858.SZ'])
+info = await fdh.get_basic_async(symbols=['600519.SH', '000858.SZ'])
 print(f"股票信息: {len(info)} 条记录")
 
 # 高周期数据查询（自动聚合）
-weekly = await fdh.get_weekly_async(ts_code=['600519.SH'], start_date='2024-01-01', end_date='2024-12-31')
+weekly = await fdh.get_weekly_async(symbols=['600519.SH'], start_date='2024-01-01', end_date='2024-12-31')
 monthly = await fdh.get_monthly_async(ts_code=['600519.SH'], start_date='2024-01-01', end_date='2024-12-31')
 
 # GDP宏观经济数据查询（使用季度末日期，如 2024-03-31 表示 2024Q1）
@@ -429,7 +429,7 @@ print(f"建议: {freshness['recommendation']}")
 
 | 数据类型 | 方法 | 参数说明 |
 |----------|------|---------|
-| 日线 | `get_daily()` / `get_daily_async()` | symbols, start_date, end_date |
+| 日线 | `get_daily()` / `get_daily_async()` | symbols (可选), start_date (可选), end_date (可选) |
 | 分钟 | `get_minute()` / `get_minute_async()` | symbols, start_date, end_date, frequency |
 | 每日基本面 | `get_daily_basic()` / `get_daily_basic_async()` | symbols (可选), start_date (可选), end_date (可选) |
 | 复权因子 | `get_adj_factor()` / `get_adj_factor_async()` | symbols (可选), start_date (可选), end_date (可选) |
@@ -565,26 +565,26 @@ print(f"建议: {freshness['recommendation']}")
 ### 数据更新命令
 
 ```bash
+# 更新股票基本信息
+fdh-cli update --dataset basic
+
+# 股票日线数据更新
+fdh-cli update --dataset daily         # 智能增量更新
+fdh-cli update --dataset daily --force # 强制全量更新
+fdh-cli update --dataset daily --symbols 600519.SH,000858.SZ
+fdh-cli update --dataset daily --start-date 2025-12-26 --end-date 2025-12-31 # 指定日期范围
+fdh-cli update --dataset daily --trade-date 2025-12-31 # 指定交易日全股票更新
+
 # 使用 --dataset 参数更新数据（推荐）
-fdh-cli update --dataset daily              # 更新日线数据
-fdh-cli update --dataset daily_basic        # 更新每日基本面
 fdh-cli update --dataset minute_1           # 更新1分钟数据
 fdh-cli update --dataset minute_5           # 更新5分钟数据
 
-# 更新指定股票
-fdh-cli update --dataset daily --symbols 600519.SH,000858.SZ
-
-# 强制全量更新
-fdh-cli update --dataset daily --force
-
-# 指定日期范围
-fdh-cli update --dataset daily --start-date 2024-01-01 --end-date 2024-12-31
-
-# 批量更新指定交易日所有股票
-fdh-cli update --dataset daily --trade-date 2024-11-27
-
-# 使用 --frequency 参数（向后兼容）
-fdh-cli update --dataset basic            # 股票基本信息
+# 更新每日基本面
+fdh-cli update --dataset daily_basic         # 智能增量更新
+fdh-cli update --dataset daily_basic --force # 强制全量更新
+fdh-cli update --dataset daily_basic --symbols 600519.SH,600900.SH
+fdh-cli update --dataset daily_basic --start-date 2025-12-26 --end-date 2025-12-31 # 指定日期范围
+fdh-cli update --dataset daily_basic --trade-date 2025-12-31 # 指定交易日全股票更新
 
 # 更新复权因子
 fdh-cli update --dataset adj_factor         # 智能增量更新
