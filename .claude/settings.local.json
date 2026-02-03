@@ -46,7 +46,8 @@
       "Bash(docker compose ps)",
       "Bash(python3:*)",
       "Bash(PGPASSWORD=postgres psql:*)",
-      "Bash(fdh-cli config show:*)"
+      "Bash(fdh-cli config show:*)",
+      "Bash(.venvScriptspython:*)"
     ],
     "deny": [],
     "ask": []

@@ -392,7 +392,8 @@ class TushareProvider(BaseDataProvider):
             logger.info(f"Batch {batch_count}: fetching data up to {current_end_date or 'latest'}")
 
             # 处理日期格式（去掉横杠）
-            start_date_clean = None  # 始终从最早开始，让API返回完整的6000条
+            # 转换日期格式（如果指定了start_date则使用，否则从最早开始以处理6000条限制）
+            start_date_clean = start_date.replace("-", "") if start_date else None
             end_date_clean = current_end_date.replace("-", "") if current_end_date else None
 
             # 根据复权类型选择API
@@ -468,6 +469,15 @@ class TushareProvider(BaseDataProvider):
                 # 获取当前批次中最早的日期
                 earliest_date = df["time"].min().date()
                 logger.info(f"Batch {batch_count}: Got {batch_records} records (max limit), fetching earlier data...")
+
+                # 如果指定了start_date，检查是否已经到达边界
+                if start_date:
+                    from datetime import datetime
+                    user_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+                    if earliest_date <= user_start:
+                        # 已经到达用户指定的起始日期，停止获取更早的数据
+                        logger.info(f"Reached user-specified start date ({start_date}), stopping pagination")
+                        break
 
                 # 计算新的结束日期（向前推1天）
                 from datetime import timedelta
@@ -587,8 +597,8 @@ class TushareProvider(BaseDataProvider):
             batch_count += 1
             logger.info(f"Batch {batch_count}: fetching {freq} data up to {current_end_date or 'latest'}")
 
-            # 转换日期格式
-            start_date_clean = None  # 始终从最早开始
+            # 转换日期格式（如果指定了start_date则使用，否则从最早开始以处理6000条限制）
+            start_date_clean = start_date.replace("-", "").replace(" ", "").replace(":", "")[:8] if start_date else None
             end_date_clean = current_end_date.replace("-", "").replace(" ", "").replace(":", "")[:8] if current_end_date else None
 
             try:
@@ -644,6 +654,15 @@ class TushareProvider(BaseDataProvider):
                 # 获取当前批次中最早的时间
                 earliest_time = df["time"].min()
                 logger.info(f"Batch {batch_count}: Got {batch_records} records (max limit), fetching earlier data...")
+
+                # 如果指定了start_date，检查是否已经到达边界
+                if start_date:
+                    from datetime import datetime
+                    user_start = datetime.strptime(start_date, "%Y-%m-%d %H:%M:%S")
+                    if earliest_time <= user_start:
+                        # 已经到达用户指定的起始时间，停止获取更早的数据
+                        logger.info(f"Reached user-specified start date ({start_date}), stopping pagination")
+                        break
 
                 # 计算新的结束时间（向前推对应的分钟数）
                 from datetime import timedelta
