@@ -1,0 +1,208 @@
+# FinanceDataHub 调度配置
+# 
+# 此文件定义了自动化数据下载和预处理任务的调度规则。
+# 支持 cron、interval 两种调度类型。
+
+scheduler:
+  timezone: "Asia/Shanghai"
+  job_store: "postgresql"         # 任务状态持久化到 PostgreSQL
+  max_concurrent_jobs: 3          # 最大并发任务数
+  misfire_grace_time: 300         # 错过执行的容忍时间（秒）
+
+jobs:
+  # ========== 数据下载任务 ==========
+  
+  # 日线数据 - 每日收盘后更新（17:00）
+  daily_update:
+    enabled: true
+    type: download
+    dataset: daily
+    schedule:
+      type: cron
+      hour: 17
+      minute: 0
+      day_of_week: "mon-fri"
+    params:
+      trade_date: "latest"        # 自动获取最新交易日
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 每日基本面 - 每日收盘后更新（17:30）
+  daily_basic_update:
+    enabled: true
+    type: download
+    dataset: daily_basic
+    schedule:
+      type: cron
+      hour: 17
+      minute: 30
+      day_of_week: "mon-fri"
+    params:
+      trade_date: "latest"
+    depends_on: [daily_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 复权因子 - 每日更新（17:15）
+  adj_factor_update:
+    enabled: true
+    type: download
+    dataset: adj_factor
+    schedule:
+      type: cron
+      hour: 17
+      minute: 15
+      day_of_week: "mon-fri"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 股票基本信息 - 每周一更新（可捕获新上市、退市等变化）
+  basic_update:
+    enabled: true
+    type: download
+    dataset: basic
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 7
+      minute: 0
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 财务数据 - 每月1号和15号更新
+  financial_update:
+    enabled: true
+    type: download
+    dataset: [fina_indicator, cashflow, balancesheet, income]
+    schedule:
+      type: cron
+      day: "1,15"
+      hour: 6
+      minute: 0
+    retry:
+      max_retries: 3
+      delay: 600
+
+  # 宏观数据 - 每月15号更新
+  macro_update:
+    enabled: true
+    type: download
+    dataset: [gdp, ppi, m, pmi]
+    schedule:
+      type: cron
+      day: 15
+      hour: 8
+      minute: 0
+    retry:
+      max_retries: 3
+      delay: 600
+
+  # 大盘指数每日指标 - 每日更新（17:40）
+  index_dailybasic_update:
+    enabled: true
+    type: download
+    dataset: index_dailybasic
+    schedule:
+      type: cron
+      hour: 17
+      minute: 40
+      day_of_week: "mon-fri"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 申万行业日线 - 每日更新（17:45）
+  sw_daily_update:
+    enabled: true
+    type: download
+    dataset: sw_daily
+    schedule:
+      type: cron
+      hour: 17
+      minute: 45
+      day_of_week: "mon-fri"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 申万行业分类 - 每月1号更新
+  sw_classify_update:
+    enabled: true
+    type: download
+    dataset: sw_industry_classify
+    schedule:
+      type: cron
+      day: 1
+      hour: 7
+      minute: 0
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 申万行业成分股 - 每月1号更新
+  sw_member_update:
+    enabled: true
+    type: download
+    dataset: sw_industry_member
+    schedule:
+      type: cron
+      day: 1
+      hour: 7
+      minute: 30
+    depends_on: [sw_classify_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # ========== 预处理任务 ==========
+  
+  # 技术指标预处理 - 每日运行（18:00）
+  daily_tech_preprocess:
+    enabled: true
+    type: preprocess
+    category: technical
+    schedule:
+      type: cron
+      hour: 18
+      minute: 0
+      day_of_week: "mon-fri"
+    params:
+      freq: [daily, weekly, monthly]
+      adjust: qfq
+      indicators:
+        ma: [5, 10, 20, 60, 120, 250]
+        macd:
+          fast: 12
+          slow: 26
+          signal: 9
+        rsi: [6, 14]
+        atr: [14]
+    depends_on: [daily_update, adj_factor_update]
+    retry:
+      max_retries: 2
+      delay: 600
+
+  # 基本面指标预处理 - 每日运行（18:30）
+  daily_fundamental_preprocess:
+    enabled: true
+    type: preprocess
+    category: fundamental
+    schedule:
+      type: cron
+      hour: 18
+      minute: 30
+      day_of_week: "mon-fri"
+    params:
+      indicators:
+        valuation_percentile:
+          metrics: [pe_ttm, pb, ps_ttm]
+          windows: [250, 500, 750, 1250]
+        f_score: {}
+    depends_on: [daily_basic_update]
+    retry:
+      max_retries: 2
+      delay: 600

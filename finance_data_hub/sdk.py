@@ -1319,6 +1319,345 @@ class FinanceDataHub:
         return await self.ops.get_sw_industry_members(l1_code, l2_code, l3_code, ts_code)
 
     # ============================================================================
+    # 复权数据与预处理数据扩展方法
+    # ============================================================================
+
+    def get_daily_adjusted(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        adjust: str = "qfq"
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取复权后的日线数据（同步方法）
+
+        支持三种复权类型：
+        - qfq: 前复权（以最新价格为基准，历史价格向下调整）
+        - hfq: 后复权（以上市首日为基准，后续价格向上调整）
+        - none: 不复权（返回原始价格和复权因子）
+
+        Args:
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            adjust: 复权类型，可选 'qfq'（前复权）, 'hfq'（后复权）, 'none'（不复权）
+
+        Returns:
+            Optional[pd.DataFrame]: 复权后的日线数据，包含 time, symbol, open, high, low, 
+                                   close, volume, amount, adj_factor, adjust_type 列
+
+        Note:
+            - 前复权价格会随时间变化（新的除权除息会影响历史价格）
+            - 后复权价格相对稳定，历史价格不会改变
+            - 技术分析通常使用前复权数据
+            - 收益率计算通常使用后复权数据
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> # 获取前复权数据（默认）
+            >>> data = fdh.get_daily_adjusted(['600519.SH'], '2024-01-01', '2024-12-31')
+            >>> # 获取后复权数据
+            >>> data = fdh.get_daily_adjusted(['600519.SH'], '2024-01-01', '2024-12-31', adjust='hfq')
+            >>> # 获取原始价格
+            >>> data = fdh.get_daily_adjusted(['600519.SH'], '2024-01-01', '2024-12-31', adjust='none')
+            >>> print(data.head())
+        """
+        return asyncio.run(self.get_daily_adjusted_async(symbols, start_date, end_date, adjust))
+
+    async def get_daily_adjusted_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        adjust: str = "qfq"
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取复权后的日线数据（异步方法）
+
+        Args:
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            adjust: 复权类型，可选 'qfq'（前复权）, 'hfq'（后复权）, 'none'（不复权）
+
+        Returns:
+            Optional[pd.DataFrame]: 复权后的日线数据
+        """
+        from finance_data_hub.preprocessing import AdjustProcessor, AdjustType
+        
+        # 验证参数
+        if symbols is None and start_date is None and end_date is None:
+            logger.warning("get_daily_adjusted: parameters cannot all be None")
+            return None
+        
+        if adjust not in ('qfq', 'hfq', 'none'):
+            raise ValueError(f"Invalid adjust type: {adjust}. Must be 'qfq', 'hfq', or 'none'")
+        
+        # 获取原始日线数据（包含 adj_factor）
+        symbols_param = symbols if symbols else None
+        df = await self.ops.get_symbol_daily(symbols_param, start_date, end_date)
+        
+        if df is None or df.empty:
+            return df
+        
+        # 如果不需要复权，直接返回
+        if adjust == 'none':
+            df['adjust_type'] = 'none'
+            return df
+        
+        # 应用复权处理
+        processor = AdjustProcessor()
+        adjust_type = AdjustType(adjust)
+        result = processor.adjust(df, adjust_type)
+        
+        self._log_routing_decision(
+            "daily_adjusted",
+            symbols if symbols else ["ALL"],
+            f"Query from PostgreSQL with {adjust} adjustment",
+            f"Processed {len(result)} records"
+        )
+        
+        return result
+
+    def get_processed_daily(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        indicators: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取预处理后的日线数据（含技术指标，同步方法）
+
+        从 processed_daily_qfq 表查询预处理数据，包含：
+        - 前复权 OHLCV 数据
+        - 均线指标：MA5, MA10, MA20, MA60, MA120, MA250
+        - MACD 指标：DIF, DEA, HIST
+        - RSI 指标：RSI6, RSI14
+        - ATR 指标：ATR14
+
+        Args:
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            indicators: 需要的指标列表，None表示返回全部可用指标
+                       可选: ['ma_5', 'ma_10', 'ma_20', 'ma_60', 'ma_120', 'ma_250',
+                              'macd_dif', 'macd_dea', 'macd_hist', 
+                              'rsi_6', 'rsi_14', 'atr_14']
+
+        Returns:
+            Optional[pd.DataFrame]: 预处理后的日线数据
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> # 获取全部指标
+            >>> data = fdh.get_processed_daily(['600519.SH'], '2024-01-01', '2024-12-31')
+            >>> # 只获取 MACD 和 RSI
+            >>> data = fdh.get_processed_daily(
+            ...     ['600519.SH'], '2024-01-01', '2024-12-31',
+            ...     indicators=['macd_dif', 'macd_dea', 'macd_hist', 'rsi_14']
+            ... )
+        """
+        return asyncio.run(self.get_processed_daily_async(symbols, start_date, end_date, indicators))
+
+    async def get_processed_daily_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        indicators: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取预处理后的日线数据（异步方法）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期
+            end_date: 结束日期
+            indicators: 需要的指标列表
+
+        Returns:
+            Optional[pd.DataFrame]: 预处理后的日线数据
+        """
+        # TODO: 实现从 processed_daily_qfq 表查询
+        # 当前返回 None，待数据表创建后实现
+        logger.warning("get_processed_daily: Table not yet available. Run SQL migration first.")
+        return None
+
+    def get_processed_weekly(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        indicators: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取预处理后的周线数据（含技术指标，同步方法）
+
+        从 processed_weekly_qfq 表查询预处理数据。
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期
+            end_date: 结束日期
+            indicators: 需要的指标列表
+
+        Returns:
+            Optional[pd.DataFrame]: 预处理后的周线数据
+        """
+        return asyncio.run(self.get_processed_weekly_async(symbols, start_date, end_date, indicators))
+
+    async def get_processed_weekly_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        indicators: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """获取预处理后的周线数据（异步方法）"""
+        logger.warning("get_processed_weekly: Table not yet available. Run SQL migration first.")
+        return None
+
+    def get_processed_monthly(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        indicators: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取预处理后的月线数据（含技术指标，同步方法）
+
+        从 processed_monthly_qfq 表查询预处理数据。
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期
+            end_date: 结束日期
+            indicators: 需要的指标列表
+
+        Returns:
+            Optional[pd.DataFrame]: 预处理后的月线数据
+        """
+        return asyncio.run(self.get_processed_monthly_async(symbols, start_date, end_date, indicators))
+
+    async def get_processed_monthly_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        indicators: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """获取预处理后的月线数据（异步方法）"""
+        logger.warning("get_processed_monthly: Table not yet available. Run SQL migration first.")
+        return None
+
+    def get_fundamental_indicators(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        indicators: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取基本面指标数据（同步方法）
+
+        从 fundamental_indicators 表查询基本面指标，包含：
+        - 估值分位：PE/PB/PS 的 1年/2年/3年/5年 历史分位数
+        - F-Score：Piotroski 财务质量评分 (0-9)
+
+        Args:
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            indicators: 需要的指标列表，None表示返回全部
+                       可选: ['pe_ttm_pct_250d', 'pb_pct_250d', ..., 'f_score', ...]
+
+        Returns:
+            Optional[pd.DataFrame]: 基本面指标数据
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> # 获取估值分位和 F-Score
+            >>> data = fdh.get_fundamental_indicators(['600519.SH'], '2024-01-01', '2024-12-31')
+            >>> # 只获取 F-Score
+            >>> data = fdh.get_fundamental_indicators(
+            ...     ['600519.SH'], '2024-01-01', '2024-12-31',
+            ...     indicators=['f_score']
+            ... )
+        """
+        return asyncio.run(self.get_fundamental_indicators_async(symbols, start_date, end_date, indicators))
+
+    async def get_fundamental_indicators_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        indicators: Optional[List[str]] = None
+    ) -> Optional[pd.DataFrame]:
+        """获取基本面指标数据（异步方法）"""
+        logger.warning("get_fundamental_indicators: Table not yet available. Run SQL migration first.")
+        return None
+
+    def calculate_indicators(
+        self,
+        df: pd.DataFrame,
+        indicators: List[str],
+        adjust: str = "qfq"
+    ) -> pd.DataFrame:
+        """
+        实时计算技术指标
+
+        对输入的 DataFrame 进行复权处理并计算技术指标。
+        用于实时计算场景，不依赖预处理数据表。
+
+        Args:
+            df: 输入数据，需包含 symbol, time, open, high, low, close, adj_factor 列
+            indicators: 需要计算的指标列表
+                       支持: 'ma_5', 'ma_10', 'ma_20', 'ma_60', 'macd', 'rsi_14', 'atr_14'
+            adjust: 复权类型，'qfq'（前复权）或 'hfq'（后复权）
+
+        Returns:
+            pd.DataFrame: 添加指标列后的 DataFrame
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> raw_data = fdh.get_daily(['600519.SH'], '2024-01-01', '2024-12-31')
+            >>> data_with_indicators = fdh.calculate_indicators(
+            ...     raw_data,
+            ...     indicators=['ma_20', 'macd', 'rsi_14', 'atr_14']
+            ... )
+            >>> print(data_with_indicators[['close', 'ma_20', 'rsi_14']].tail())
+        """
+        from finance_data_hub.preprocessing import AdjustProcessor, AdjustType
+        from finance_data_hub.preprocessing import PreprocessPipeline
+        
+        if df is None or df.empty:
+            return df
+        
+        # 创建预处理流水线
+        pipeline = PreprocessPipeline()
+        pipeline.set_data(df)
+        
+        # 应用复权
+        if adjust in ('qfq', 'hfq'):
+            pipeline.adjust(AdjustType(adjust))
+        
+        # 添加指标
+        for indicator in indicators:
+            try:
+                pipeline.add_indicator(indicator)
+            except KeyError:
+                logger.warning(f"Unknown indicator: {indicator}, skipping")
+        
+        # 执行流水线
+        result = pipeline.run()
+        
+        logger.info(f"Calculated {len(indicators)} indicators for {len(result)} records")
+        return result
+
+    # ============================================================================
     # 资源管理
     # ============================================================================
 

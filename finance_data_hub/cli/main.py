@@ -45,6 +45,10 @@ app = typer.Typer(
     rich_markup_mode="rich"
 )
 
+# 导入并注册 schedule 子命令
+from finance_data_hub.cli.schedule import schedule_app
+app.add_typer(schedule_app, name="schedule", help="调度器管理命令")
+
 console = Console()
 
 
