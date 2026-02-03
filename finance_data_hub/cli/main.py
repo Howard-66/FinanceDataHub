@@ -929,18 +929,19 @@ async def _run_smart_download(
             console=console,
         ) as progress:
             try:
-                # 如果没有指定symbol，先更新股票列表
+                # 如果没有指定symbol，从数据库获取股票列表
                 if not symbol_list:
-                    if not quiet:
-                        console.print("[yellow]先更新股票列表...[/yellow]")
-                    basic_count = await updater.update_stock_basic()
-                    if not quiet:
-                        console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
-
                     symbols_db = await updater.data_ops.get_symbol_list()
-                    symbol_list = symbols_db
-                    if not quiet:
-                        console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+                    if symbols_db:
+                        symbol_list = symbols_db
+                        if not quiet:
+                            console.print(f"[yellow]从数据库获取到 {len(symbol_list)} 只股票[/yellow]\n")
+                    else:
+                        if not quiet:
+                            console.print("[bold red]数据库中没有股票列表，请先执行: fdh-cli update --dataset basic[/bold red]")
+                        else:
+                            console.print("[bold red]请先执行: fdh-cli update --dataset basic[/bold red]")
+                        return 0
 
                 total_updated = 0
                 total_errors = 0
@@ -1611,18 +1612,19 @@ async def _run_force_update(
             console=console,
         ) as progress:
             try:
-                # 如果没有指定symbol，先更新股票列表
+                # 如果没有指定symbol，从数据库获取股票列表
                 if not symbol_list:
-                    if not quiet:
-                        console.print("[yellow]先更新股票列表...[/yellow]")
-                    basic_count = await updater.update_stock_basic()
-                    if not quiet:
-                        console.print(f"[green][OK][/green] 更新了 {basic_count} 条股票基本信息")
-
                     symbols_db = await updater.data_ops.get_symbol_list()
-                    symbol_list = symbols_db
-                    if not quiet:
-                        console.print(f"[yellow]将更新 {len(symbol_list)} 只股票[/yellow]\n")
+                    if symbols_db:
+                        symbol_list = symbols_db
+                        if not quiet:
+                            console.print(f"[yellow]从数据库获取到 {len(symbol_list)} 只股票[/yellow]\n")
+                    else:
+                        if not quiet:
+                            console.print("[bold red]数据库中没有股票列表，请先执行: fdh-cli update --dataset basic[/bold red]")
+                        else:
+                            console.print("[bold red]请先执行: fdh-cli update --dataset basic[/bold red]")
+                        return 0
 
                 total_updated = 0
                 total_errors = 0
