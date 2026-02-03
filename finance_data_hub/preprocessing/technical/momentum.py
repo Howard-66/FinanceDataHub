@@ -178,12 +178,14 @@ class RSIIndicator(BaseIndicator):
             # 处理极端情况
             rsi = rsi.replace([np.inf, -np.inf], np.nan)
             
-            return rsi
+            return pd.Series(rsi.values, index=group.index)
         
-        result[self.name] = (
-            df.groupby("symbol", group_keys=False)
-            .apply(calc_rsi)
-        )
+        # 按股票分组计算，使用 transform 方式
+        rsi_values = []
+        for _, group in df.groupby("symbol", sort=False):
+            rsi_values.append(calc_rsi(group))
+        
+        result[self.name] = pd.concat(rsi_values)
         
         return result
 

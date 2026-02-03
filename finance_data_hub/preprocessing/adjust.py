@@ -184,6 +184,10 @@ class AdjustProcessor:
         Returns:
             复权后的 DataFrame
         """
+        # 空 DataFrame 处理
+        if df.empty:
+            return df.copy()
+            
         if isinstance(adjust_type, str):
             adjust_type = AdjustType(adjust_type)
             

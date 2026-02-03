@@ -91,12 +91,14 @@ class ATRIndicator(BaseIndicator):
             # ATR = TR 的 EMA
             atr = tr.ewm(span=self.period, adjust=False).mean()
             
-            return atr
+            return pd.Series(atr.values, index=group.index)
         
-        result[self.name] = (
-            df.groupby("symbol", group_keys=False)
-            .apply(calc_atr)
-        )
+        # 按股票分组计算
+        atr_values = []
+        for _, group in df.groupby("symbol", sort=False):
+            atr_values.append(calc_atr(group))
+        
+        result[self.name] = pd.concat(atr_values)
         
         return result
 
@@ -134,12 +136,14 @@ class TRIndicator(BaseIndicator):
             tr3 = (low - prev_close).abs()
             
             tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-            return tr
+            return pd.Series(tr.values, index=group.index)
         
-        result[self.name] = (
-            df.groupby("symbol", group_keys=False)
-            .apply(calc_tr)
-        )
+        # 按股票分组计算
+        tr_values = []
+        for _, group in df.groupby("symbol", sort=False):
+            tr_values.append(calc_tr(group))
+        
+        result[self.name] = pd.concat(tr_values)
         
         return result
 

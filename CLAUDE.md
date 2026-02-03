@@ -17,12 +17,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 当前开发状态
 
-**阶段**: Phase 3 已完成 ✅
+**阶段**: Phase 4 进行中 🔄
 - ✅ Phase 1 - 环境搭建与配置管理（已完成）
 - ✅ Phase 2 - 核心批处理流程（已完成）
 - ✅ Phase 2.5 - 高周期数据聚合（已完成）
 - ✅ Phase 3 - 数据访问与查询层（已完成）
-- 📋 下一阶段：Phase 4 - ETL与流式处理
+- 🔄 Phase 4 - 调度与预处理模块（进行中）
 
 ### Phase 3 完成情况
 
@@ -190,7 +190,32 @@ routing_strategy:
 - [x] 支持 Jupyter Notebook 环境
 - [x] 编写完整文档和测试
 
-### Phase 4: 流式处理与高级特性 📋 规划中
+### Phase 4: 调度与预处理模块 🔄 进行中
+
+**4.1 调度模块** ✅ 已完成
+- [x] 设计 `schedules.yml` 配置格式
+- [x] 实现 `scheduler/` 模块（models, engine, executor, manager）
+- [x] 实现 CLI `fdh-cli schedule` 命令
+
+**4.2 预处理模块** ✅ 已完成
+- [x] 实现复权处理（qfq/hfq）
+- [x] 实现周期重采样（weekly/monthly）
+- [x] 实现技术指标（MA/EMA/MACD/RSI/ATR）
+- [x] 实现基本面指标（估值分位/F-Score）
+- [x] 创建预处理数据表 SQL
+
+**4.3 SDK 扩展** ✅ 已完成
+- [x] `get_daily_adjusted()` - 复权数据获取
+- [x] `get_processed_daily/weekly/monthly()` - 预处理数据获取
+- [x] `get_fundamental_indicators()` - 基本面指标获取
+- [x] `calculate_indicators()` - 实时指标计算
+
+**4.4 待完成**
+- [ ] 运行 SQL 迁移创建预处理数据表
+- [ ] 完善 `ProcessedDataStorage` 数据库操作
+- [ ] 编写单元测试和集成测试
+
+### Phase 5: 流式处理与高级特性 📋 规划中
 - [ ] 在 `xtquant_helper` 服务中增加 WebSocket 接口
 - [ ] 实现流式 `Provider` 连接 WebSocket
 - [ ] 实现数据到 Redis Pub/Sub 的发布
@@ -225,17 +250,41 @@ routing_strategy:
 
 ## 常用开发命令
 
-（实施后将在此添加实际命令）
-
 ```bash
-# 构建和运行
-# TODO: 添加 docker-compose, CLI 等命令
+# 安装依赖
+uv sync
 
-# 测试
-# TODO: 添加 pytest 命令
+# ========== 数据下载命令 ==========
+# 更新日线数据
+fdh-cli update --dataset daily --trade-date 2024-01-15
 
-# 代码质量
-# TODO: 添加 black, flake8, mypy 等命令
+# 更新每日基本面
+fdh-cli update --dataset daily_basic --trade-date 2024-01-15
+
+# 更新股票基本信息
+fdh-cli update --dataset basic
+
+# ========== 调度命令 ==========
+# 列出所有调度任务
+fdh-cli schedule list
+
+# 手动执行任务
+fdh-cli schedule run --job daily_update
+fdh-cli schedule run --job basic_update
+
+# 启动/停止调度器
+fdh-cli schedule start
+fdh-cli schedule stop
+
+# 查看调度状态
+fdh-cli schedule status
+
+# ========== 测试命令 ==========
+uv run pytest tests/ -v
+
+# ========== 代码质量 ==========
+uv run ruff check .
+uv run ruff format .
 ```
 
 ## 重要设计决策
@@ -388,6 +437,106 @@ print(f"801010(农林牧渔)行业日线数据: {len(sw_data)} 条记录")
 
 # 关闭连接
 await fdh.close()
+```
+
+### 复权数据与技术指标（Phase 4 新增）
+
+```python
+from finance_data_hub import FinanceDataHub
+from finance_data_hub.config import get_settings
+
+settings = get_settings()
+fdh = FinanceDataHub(settings)
+
+# ========== 复权数据查询 ==========
+
+# 获取前复权数据（默认，适合技术分析）
+qfq_data = await fdh.get_daily_adjusted_async(
+    symbols=['600519.SH'],
+    start_date='2024-01-01',
+    end_date='2024-12-31',
+    adjust='qfq'
+)
+print(f"前复权数据: {len(qfq_data)} 条")
+
+# 获取后复权数据（适合收益率计算）
+hfq_data = await fdh.get_daily_adjusted_async(
+    symbols=['600519.SH'],
+    start_date='2020-01-01',
+    end_date='2024-12-31',
+    adjust='hfq'
+)
+print(f"后复权数据: {len(hfq_data)} 条")
+
+# 获取原始数据（不复权）
+raw_data = await fdh.get_daily_adjusted_async(
+    symbols=['600519.SH'],
+    start_date='2024-01-01',
+    end_date='2024-12-31',
+    adjust='none'
+)
+print(f"原始数据: {len(raw_data)} 条")
+
+# ========== 实时计算技术指标 ==========
+
+# 获取原始日线数据
+daily_data = fdh.get_daily(['600519.SH'], '2024-01-01', '2024-12-31')
+
+# 实时计算技术指标（支持 ma_*, ema_*, macd, rsi_*, atr_*）
+data_with_indicators = fdh.calculate_indicators(
+    daily_data,
+    indicators=['ma_20', 'ma_60', 'macd', 'rsi_14', 'atr_14'],
+    adjust='qfq'
+)
+print(data_with_indicators[['close', 'ma_20', 'macd_dif', 'rsi_14', 'atr_14']].tail())
+
+await fdh.close()
+```
+
+### 预处理流水线使用示例
+
+```python
+from finance_data_hub.preprocessing import (
+    PreprocessPipeline, 
+    AdjustType, 
+    ResampleFreq
+)
+from finance_data_hub import FinanceDataHub
+from finance_data_hub.config import get_settings
+
+settings = get_settings()
+fdh = FinanceDataHub(settings)
+
+# 获取原始数据
+raw_data = fdh.get_daily(['600519.SH', '000858.SZ'], '2023-01-01', '2024-12-31')
+
+# 创建预处理流水线（链式调用）
+pipeline = PreprocessPipeline()
+result = (
+    pipeline
+    .set_data(raw_data)
+    .adjust(AdjustType.QFQ)           # 前复权
+    .add_indicator("ma_20")           # 20日均线
+    .add_indicator("ma_60")           # 60日均线
+    .add_indicator("macd")            # MACD
+    .add_indicator("rsi_14")          # RSI
+    .run()
+)
+print(result[['time', 'symbol', 'close', 'ma_20', 'macd_dif', 'rsi_14']].tail(10))
+
+# 带重采样的流水线
+pipeline = PreprocessPipeline()
+pipeline.set_data(raw_data)
+pipeline.adjust(AdjustType.QFQ)
+pipeline.add_indicators(["ma_20", "macd", "rsi_14"])
+pipeline.resample(ResampleFreq.WEEKLY)
+pipeline.resample(ResampleFreq.MONTHLY)
+
+# 获取多周期数据
+results = pipeline.run_with_resample()
+print(f"日线: {len(results['daily'])} 条")
+print(f"周线: {len(results['weekly'])} 条")
+print(f"月线: {len(results['monthly'])} 条")
 ```
 
 ### 在普通 Python 脚本中使用
