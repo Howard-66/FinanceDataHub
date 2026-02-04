@@ -100,8 +100,7 @@ COMMENT ON TABLE symbol_tick IS 'Tick数据表 - 存储逐笔交易数据（Time
 CREATE TABLE IF NOT EXISTS adj_factor (
     time TIMESTAMPTZ NOT NULL,                -- 日期
     symbol VARCHAR(20) NOT NULL,              -- 股票代码
-    adj_factor DECIMAL(20,10) NOT NULL,       -- 复权因子
-    adj_type VARCHAR(10),                     -- 复权类型：qfq-前复权，hfq-后复权
+    adj_factor DECIMAL(20,10) NOT NULL,       -- 复权因子（Tushare统一复权因子，用于前复权/后复权计算）
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (symbol, time)
