@@ -25,7 +25,7 @@ import sys
 from ..scheduler import ScheduleManager
 from ..config import get_settings
 
-console = Console()
+console = Console(legacy_windows=False)
 
 # 创建子应用
 schedule_app = typer.Typer(
@@ -342,13 +342,13 @@ def run_job(
         
         # 显示执行结果
         if log.status == "completed":
-            console.print(f"[green]✓ 任务执行成功[/green]")
+            console.print(f"[green][OK] 任务执行成功[/green]")
             if log.records_processed:
                 console.print(f"  处理记录: {log.records_processed}")
             if log.symbols_count:
                 console.print(f"  处理股票: {log.symbols_count}")
         elif log.status == "failed":
-            console.print(f"[red]✗ 任务执行失败[/red]")
+            console.print(f"[red][FAILED] 任务执行失败[/red]")
             if log.error_message:
                 console.print(f"  错误: {log.error_message}")
         else:

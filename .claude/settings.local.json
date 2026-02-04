@@ -47,7 +47,10 @@
       "Bash(python3:*)",
       "Bash(PGPASSWORD=postgres psql:*)",
       "Bash(fdh-cli config show:*)",
-      "Bash(.venvScriptspython:*)"
+      "Bash(.venvScriptspython:*)",
+      "Bash(.venv\\\\Scripts\\\\python.exe:*)",
+      "Bash(.venvScriptspython.exe -c:*)",
+      "Bash(fdh-cli schedule run:*)"
     ],
     "deny": [],
     "ask": []

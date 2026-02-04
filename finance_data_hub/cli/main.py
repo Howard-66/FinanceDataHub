@@ -8,6 +8,15 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 import asyncio
 import sys
+import os
+
+# 强制 Windows 控制台使用 UTF-8 编码
+if sys.platform == "win32":
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    # 启用 Windows 终端的 UTF-8 模式
+    if "WT_SESSION" in os.environ:
+        os.environ["PYTHONUTF8"] = "1"
+    os.system("chcp 65001 > nul 2>&1") if 0 else None  # 静默设置代码页
 
 # 必须在任何其他模块导入之前配置日志
 from loguru import logger
@@ -49,7 +58,17 @@ app = typer.Typer(
 from finance_data_hub.cli.schedule import schedule_app
 app.add_typer(schedule_app, name="schedule", help="调度器管理命令")
 
-console = Console()
+console = Console(legacy_windows=False)
+
+
+def get_spinner():
+    """获取与平台兼容的 spinner 文本
+
+    在 Windows 上使用 ASCII spinner 避免编码问题
+    """
+    if sys.platform == "win32":
+        return SpinnerColumn(spinner_name="line")
+    return SpinnerColumn()
 
 
 class SymbolCountColumn(ProgressColumn):
@@ -64,7 +83,7 @@ class SymbolCountColumn(ProgressColumn):
         completed = task.completed
         total = task.total if task.total > 0 else 1
         if completed == 0 and total == 100:
-            return Text("—", style="dim")
+            return Text("-", style="dim")
         return Text(f"已下载 {completed:.0f}/{total:.0f} {self.symbol_type}", style="bold cyan")
 
 
@@ -381,7 +400,7 @@ async def _run_smart_download(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -416,7 +435,7 @@ async def _run_smart_download(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -451,7 +470,7 @@ async def _run_smart_download(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -486,7 +505,7 @@ async def _run_smart_download(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -530,7 +549,7 @@ async def _run_smart_download(
         index_count = len(ts_code_list) if ts_code_list else len(SUPPORTED_INDEX_CODES)
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("指数"),
@@ -583,7 +602,7 @@ async def _run_smart_download(
                 industry_count = len(industry_classify) if industry_classify is not None else 511
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("行业指数"),
@@ -643,7 +662,7 @@ async def _run_smart_download(
                 return 0
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -698,7 +717,7 @@ async def _run_smart_download(
                 return 0
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -753,7 +772,7 @@ async def _run_smart_download(
                 return 0
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -808,7 +827,7 @@ async def _run_smart_download(
                 return 0
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -848,7 +867,7 @@ async def _run_smart_download(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -884,7 +903,7 @@ async def _run_smart_download(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             TextColumn("({task.completed}/{task.total} 行业)"),
             BarColumn(),
@@ -925,7 +944,7 @@ async def _run_smart_download(
     # 初始化更新器
     async with DataUpdater(settings, config_path="sources.yml") as updater:
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -1061,7 +1080,7 @@ async def _run_force_update(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -1096,7 +1115,7 @@ async def _run_force_update(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -1131,7 +1150,7 @@ async def _run_force_update(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -1166,7 +1185,7 @@ async def _run_force_update(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -1211,7 +1230,7 @@ async def _run_force_update(
         index_count = len(ts_code_list) if ts_code_list else len(SUPPORTED_INDEX_CODES)
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("指数"),
@@ -1267,7 +1286,7 @@ async def _run_force_update(
                     console.print(f"[yellow]将更新 {industry_count} 个行业指数（L1+L2+L3）[/yellow]\n")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("行业指数"),
@@ -1327,7 +1346,7 @@ async def _run_force_update(
                 return 0
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -1367,7 +1386,7 @@ async def _run_force_update(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TimeElapsedColumn(),
@@ -1403,7 +1422,7 @@ async def _run_force_update(
             console.print("")
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             TextColumn("({task.completed}/{task.total} 行业)"),
             BarColumn(),
@@ -1457,7 +1476,7 @@ async def _run_force_update(
                 return 0
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -1512,7 +1531,7 @@ async def _run_force_update(
                 return 0
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -1567,7 +1586,7 @@ async def _run_force_update(
                 return 0
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -1608,7 +1627,7 @@ async def _run_force_update(
     # 初始化更新器
     async with DataUpdater(settings, config_path="sources.yml") as updater:
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             SymbolCountColumn("股票"),
@@ -1762,7 +1781,7 @@ async def _run_trade_date_update(
         await updater.initialize()
 
         with Progress(
-            SpinnerColumn(),
+            get_spinner(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
