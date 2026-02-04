@@ -10,9 +10,6 @@ CREATE TABLE IF NOT EXISTS symbol_daily (
     close DECIMAL(20,6),                      -- 收盘价
     volume BIGINT,                            -- 成交量
     amount DECIMAL(30,6),                     -- 成交额
-    adj_factor DECIMAL(20,10),                -- 复权因子
-    open_interest BIGINT,                     -- 持仓量（期货）
-    settle DECIMAL(20,6),                     -- 结算价（期货）
     change_pct DECIMAL(10,6),                 -- 涨跌幅
     change_amount DECIMAL(20,6),              -- 涨跌额
     created_at TIMESTAMPTZ DEFAULT NOW(),

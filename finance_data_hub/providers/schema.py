@@ -68,6 +68,7 @@ StockBasicSchema = DataFrameSchema(
 
 
 # 日线行情数据 Schema
+# 注意: 复权因子存储在独立的 adj_factor 表中，不在此表中
 DailyDataSchema = DataFrameSchema(
     name="daily_data",
     description="日线行情数据",
@@ -80,9 +81,6 @@ DailyDataSchema = DataFrameSchema(
         ColumnSchema("close", "float64", False, "收盘价"),
         ColumnSchema("volume", "int64", False, "成交量"),
         ColumnSchema("amount", "float64", False, "成交额"),
-        ColumnSchema("adj_factor", "float64", True, "复权因子"),
-        ColumnSchema("open_interest", "float64", True, "持仓量（期货）"),
-        ColumnSchema("settle", "float64", True, "结算价（期货）"),
         ColumnSchema("change_pct", "float64", True, "涨跌幅(%)"),
         ColumnSchema("change_amount", "float64", True, "涨跌额"),
     ],

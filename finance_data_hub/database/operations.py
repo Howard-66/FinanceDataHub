@@ -93,13 +93,11 @@ class DataOperations:
         insert_sql = """
             INSERT INTO symbol_daily (
                 time, symbol, open, high, low, close,
-                volume, amount, adj_factor, open_interest,
-                settle, change_pct, change_amount
+                volume, amount, change_pct, change_amount
             )
             VALUES (
                 :time, :symbol, :open, :high, :low, :close,
-                :volume, :amount, :adj_factor, :open_interest,
-                :settle, :change_pct, :change_amount
+                :volume, :amount, :change_pct, :change_amount
             )
             ON CONFLICT (symbol, time) DO UPDATE SET
                 open = EXCLUDED.open,
@@ -108,9 +106,6 @@ class DataOperations:
                 close = EXCLUDED.close,
                 volume = EXCLUDED.volume,
                 amount = EXCLUDED.amount,
-                adj_factor = EXCLUDED.adj_factor,
-                open_interest = EXCLUDED.open_interest,
-                settle = EXCLUDED.settle,
                 change_pct = EXCLUDED.change_pct,
                 change_amount = EXCLUDED.change_amount,
                 updated_at = NOW()
@@ -136,9 +131,6 @@ class DataOperations:
 
             # 确保所有必需字段都存在，缺失的字段设置为None
             required_fields = {
-                "adj_factor": None,
-                "open_interest": None,
-                "settle": None,
                 "change_pct": None,
                 "change_amount": None,
             }
@@ -146,6 +138,13 @@ class DataOperations:
                 for field, default_value in required_fields.items():
                     if field not in record:
                         record[field] = default_value
+
+            # 清理DataFrame中不属于symbol_daily表的字段
+            valid_fields = {"time", "symbol", "open", "high", "low", "close", "volume", "amount", "change_pct", "change_amount"}
+            for record in records:
+                invalid_fields = [key for key in record.keys() if key not in valid_fields]
+                for key in invalid_fields:
+                    del record[key]
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)
