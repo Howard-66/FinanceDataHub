@@ -164,6 +164,34 @@ jobs:
       max_retries: 3
       delay: 300
 
+  # 交易日历 - 每月1号更新（获取未来一年的交易日历）
+  trade_cal_update:
+    enabled: true
+    type: download
+    dataset: trade_cal
+    schedule:
+      type: cron
+      day: 1
+      hour: 6
+      minute: 30
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 指数成分权重 - 每月1号更新（沪深300、中证500等）
+  index_weight_update:
+    enabled: true
+    type: download
+    dataset: index_weight
+    schedule:
+      type: cron
+      day: 1
+      hour: 8
+      minute: 30
+    retry:
+      max_retries: 3
+      delay: 300
+
   # ========== 预处理任务 ==========
   
   # 技术指标预处理 - 每日运行（18:00）
