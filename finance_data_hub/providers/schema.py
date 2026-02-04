@@ -876,6 +876,24 @@ SwDailySchema = DataFrameSchema(
 
 
 # ===========================
+# 交易日历 Schema
+# ===========================
+
+
+# 交易日历 Schema
+TradeCalSchema = DataFrameSchema(
+    name="trade_cal",
+    description="交易日历数据",
+    columns=[
+        ColumnSchema("exchange", "object", False, "交易所代码（SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE）"),
+        ColumnSchema("cal_date", "datetime64[ns]", False, "日历日期"),
+        ColumnSchema("is_open", "int64", False, "是否交易（0-休市，1-交易）"),
+        ColumnSchema("pretrade_date", "datetime64[ns]", True, "上一个交易日"),
+    ],
+)
+
+
+# ===========================
 # 验证函数
 # ===========================
 

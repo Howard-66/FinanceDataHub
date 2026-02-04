@@ -14,7 +14,7 @@ from finance_data_hub.router.smart_router import SmartRouter
 from finance_data_hub.database.manager import DatabaseManager
 from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.config import Settings
-from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES
+from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES, SUPPORTED_EXCHANGES
 
 
 def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
@@ -1820,6 +1820,112 @@ class DataUpdater:
 
         except Exception as e:
             logger.exception("Failed to update industry members")
+            raise
+
+    async def update_trade_cal(
+        self,
+        exchange_list: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """
+        更新交易日历数据
+
+        支持的交易所：SSE(上交所)、SZSE(深交所)、CFFEX(中金所)、SHFE(上期所)、
+        CZCE(郑商所)、DCE(大商所)、INE(上能源)
+
+        支持的调用模式：
+        1. 智能下载模式：增量更新（不指定exchange_list和date参数时）
+        2. 指定交易所列表：获取指定交易所的日历数据
+        3. 强制更新模式：强制重新获取所有数据
+
+        Args:
+            exchange_list: 交易所代码列表，None表示所有支持的交易所
+            start_date: 开始日期（YYYY-MM-DD格式），None表示全量历史数据
+            end_date: 结束日期，None表示到最新
+            force_update: 是否强制更新（忽略数据库状态）
+            progress_callback: 进度回调函数，接收 (current, total) 参数
+
+        Returns:
+            int: 更新的记录数
+        """
+        # 注意：交易日历数据不设置默认 end_date，传递 None 让 API 返回全量历史数据
+        # Tushare API 支持 start_date/end_date 为 None，返回所有数据
+
+        # 默认使用所有支持的交易所
+        if exchange_list is None:
+            exchange_list = SUPPORTED_EXCHANGES
+
+        logger.info(
+            f"Updating trade_cal for {len(exchange_list)} exchanges "
+            f"(start={start_date or 'full'}, end={end_date or 'latest available'}, force={force_update})"
+        )
+
+        try:
+            total_records = 0
+            total_exchanges = len(exchange_list)
+
+            for idx, exchange in enumerate(exchange_list):
+                try:
+                    # 智能下载逻辑：确定该交易所的实际起始日期
+                    exch_start_date = start_date
+
+                    if not force_update and not start_date:
+                        # 查询数据库中该交易所的最新记录
+                        latest_date = await self.data_ops.get_latest_trade_cal_date(exchange)
+
+                        if latest_date:
+                            # 有记录，计算下一天
+                            next_day = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
+                            exch_start_date = next_day.strftime("%Y-%m-%d")
+                            # end_date 为 None 时表示获取全量数据，不需要跳过
+                            if end_date and exch_start_date > end_date:
+                                logger.debug(f"Skipping {exchange} - already up to date")
+                                if progress_callback:
+                                    progress_callback(idx + 1, total_exchanges)
+                                continue
+                            logger.debug(f"Smart incremental: {exchange} from {exch_start_date}")
+                        else:
+                            # 新交易所，获取全量数据
+                            exch_start_date = None
+                            logger.debug(f"Smart download: {exchange} - fetching full history")
+                    elif force_update:
+                        logger.debug(f"Force update: {exchange} from {exch_start_date or 'beginning'}")
+
+                    logger.info(f"Fetching {exchange} ({idx + 1}/{total_exchanges})")
+
+                    # 调用API获取数据
+                    data = self.router.route(
+                        asset_class="market",
+                        data_type="trade_cal",
+                        method_name="get_trade_cal",
+                        exchange=exchange,
+                        start_date=exch_start_date,
+                        end_date=end_date,
+                    )
+
+                    if data is not None and not data.empty:
+                        inserted = await self.data_ops.insert_trade_cal_batch(data)
+                        total_records += inserted
+                        logger.info(f"Inserted {inserted} records for {exchange}")
+                    else:
+                        logger.debug(f"No data for {exchange}")
+
+                    # 调用进度回调
+                    if progress_callback:
+                        progress_callback(idx + 1, total_exchanges)
+
+                except Exception as e:
+                    logger.error(f"Failed to fetch data for {exchange}: {str(e)}")
+                    continue
+
+            logger.info(f"Updated total {total_records} trade_cal records")
+            return total_records
+
+        except Exception as e:
+            logger.exception("Failed to update trade_cal data")
             raise
 
     async def close(self) -> None:

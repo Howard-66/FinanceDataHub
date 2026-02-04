@@ -1720,6 +1720,69 @@ class FinanceDataHub:
         return result
 
     # ============================================================================
+    # 交易日历数据查询
+    # ============================================================================
+
+    def get_trade_cal(
+        self,
+        exchange: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        is_open: Optional[int] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取交易日历数据（同步方法）
+
+        Args:
+            exchange: 交易所代码，用于指定查询的单一交易所
+                     支持的交易所：
+                     - 'SSE': 上交所
+                     - 'SZSE': 深交所
+                     - 'CFFEX': 中金所
+                     - 'SHFE': 上期所
+                     - 'CZCE': 郑商所
+                     - 'DCE': 大商所
+                     - 'INE': 上能源
+                     None：返回所有交易所数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
+            is_open: 是否交易日（0-休市，1-交易），None表示全部
+
+        Returns:
+            Optional[pd.DataFrame]: 交易日历数据，包含 exchange, cal_date, is_open, pretrade_date 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> # 获取上交所2024年的交易日历
+            >>> cal = fdh.get_trade_cal('SSE', '2024-01-01', '2024-12-31')
+            >>> print(cal[['exchange', 'cal_date', 'is_open']])
+            >>> # 仅获取交易日
+            >>> trading_days = fdh.get_trade_cal('SSE', '2024-01-01', '2024-12-31', is_open=1)
+        """
+        return asyncio.run(self.get_trade_cal_async(exchange, start_date, end_date, is_open))
+
+    async def get_trade_cal_async(
+        self,
+        exchange: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        is_open: Optional[int] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取交易日历数据（异步方法）
+
+        Args:
+            exchange: 交易所代码（如 'SSE' 上交所），None表示所有交易所
+            start_date: 开始日期（YYYY-MM-DD格式），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式），None表示到最新
+            is_open: 是否交易日（0-休市，1-交易），None表示全部
+
+        Returns:
+            Optional[pd.DataFrame]: 交易日历数据
+        """
+        return await self.ops.get_trade_cal(exchange, start_date, end_date, is_open)
+
+    # ============================================================================
     # 资源管理
     # ============================================================================
 

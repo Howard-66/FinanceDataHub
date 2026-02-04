@@ -37,6 +37,7 @@ from finance_data_hub.providers.schema import (
     SwIndustryClassifySchema,
     SwIndustryMemberSchema,
     SwDailySchema,
+    TradeCalSchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
@@ -53,6 +54,17 @@ SUPPORTED_INDEX_CODES = [
     "399006.SZ",  # 创业板指
     "399300.SZ",  # 沪深300
     "399905.SZ",  # 中证500
+]
+
+# 支持的交易所列表（用于交易日历）
+SUPPORTED_EXCHANGES = [
+    "SSE",    # 上交所
+    "SZSE",   # 深交所
+    "CFFEX",  # 中金所
+    "SHFE",   # 上期所
+    "CZCE",   # 郑商所
+    "DCE",    # 大商所
+    "INE",    # 上能源
 ]
 
 
@@ -2862,3 +2874,97 @@ class TushareProvider(BaseDataProvider):
             return result_df
         else:
             return pd.DataFrame(columns=SwDailySchema.get_required_columns())
+
+    def get_trade_cal(
+        self,
+        exchange: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取交易日历数据
+
+        Args:
+            exchange: 交易所代码（SSE上交所, SZSE深交所, CFFEX中金所, SHFE上期所, CZCE郑商所, DCE大商所, INE上能源）
+                      None表示获取所有支持的交易所数据
+            start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD格式）
+            end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD格式）
+
+        Returns:
+            pd.DataFrame: 标准格式的交易日历数据，包含 exchange, cal_date, is_open, pretrade_date 列
+        """
+        logger.info(
+            f"Fetching trade calendar data (exchange={exchange}, start_date={start_date}, end_date={end_date})"
+        )
+
+        # 转换日期格式（去掉连字符）
+        if start_date:
+            start_date = start_date.replace("-", "")
+        if end_date:
+            end_date = end_date.replace("-", "")
+
+        # 确定要查询的交易所列表
+        if exchange:
+            exchanges = [exchange.upper()]
+        else:
+            exchanges = SUPPORTED_EXCHANGES
+
+        all_dataframes = []
+
+        for exch in exchanges:
+            logger.info(f"Fetching trade calendar for {exch}")
+
+            # 构建API参数
+            api_params = {
+                "exchange": exch,
+            }
+            if start_date:
+                api_params["start_date"] = start_date
+            if end_date:
+                api_params["end_date"] = end_date
+
+            # 调用API
+            df = self._call_api("trade_cal", **api_params)
+
+            if df is None or df.empty:
+                logger.warning(f"No trade calendar data returned for {exch}")
+                continue
+
+            # 列名映射（Tushare返回的列名与我们的标准列名一致）
+            column_mapping = {
+                "exchange": "exchange",
+                "cal_date": "cal_date",
+                "is_open": "is_open",
+                "pretrade_date": "pretrade_date",
+            }
+
+            df = convert_to_standard_columns(df, column_mapping)
+
+            # 转换日期格式（YYYYMMDD字符串 -> datetime）
+            df["cal_date"] = pd.to_datetime(df["cal_date"], format="%Y%m%d", errors="coerce")
+
+            # pretrade_date 可能有空值（如果当天是第一个交易日或休市日）
+            if "pretrade_date" in df.columns:
+                df["pretrade_date"] = pd.to_datetime(df["pretrade_date"], format="%Y%m%d", errors="coerce")
+
+            # is_open 转换为整数
+            df["is_open"] = pd.to_numeric(df["is_open"], errors="coerce").fillna(0).astype(int)
+
+            # 验证数据格式
+            df = validate_dataframe(df, TradeCalSchema, provider_name=self.name)
+
+            all_dataframes.append(df)
+            logger.info(f"Fetched {len(df)} trade calendar records for {exch}")
+
+        if not all_dataframes:
+            logger.warning("No trade calendar data returned from Tushare")
+            return pd.DataFrame(columns=TradeCalSchema.get_required_columns())
+
+        # 合并所有交易所的数据
+        final_df = pd.concat(all_dataframes, ignore_index=True)
+
+        # 按交易所和日期排序
+        final_df = final_df.sort_values(["exchange", "cal_date"]).reset_index(drop=True)
+
+        logger.info(f"Total fetched {len(final_df)} trade calendar records")
+        return final_df

@@ -3765,3 +3765,183 @@ class DataOperations:
             row = result.fetchone()
 
         return row.cnt if row else 0
+
+    # =====================================
+    # 交易日历数据操作
+    # =====================================
+
+    async def insert_trade_cal_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入交易日历数据
+
+        Args:
+            data: 包含交易日历数据的DataFrame
+            batch_size: 每批插入的记录数
+
+        Returns:
+            int: 成功插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        # 确保数据按交易所和日期排序
+        data = data.sort_values(["exchange", "cal_date"]).reset_index(drop=True)
+
+        # 准备列名
+        columns = ["exchange", "cal_date", "is_open", "pretrade_date"]
+
+        total_inserted = 0
+        n_batches = (len(data) + batch_size - 1) // batch_size
+
+        for i in range(n_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, len(data))
+            batch_df = data.iloc[start_idx:end_idx]
+
+            # 构建插入语句（使用ON CONFLICT处理重复数据）
+            insert_sql = """
+                INSERT INTO trade_cal (
+                    exchange, cal_date, is_open, pretrade_date,
+                    updated_at, created_at
+                ) VALUES (
+                    :exchange, :cal_date, :is_open, :pretrade_date,
+                    NOW(), NOW()
+                )
+                ON CONFLICT (exchange, cal_date) DO UPDATE SET
+                    is_open = EXCLUDED.is_open,
+                    pretrade_date = EXCLUDED.pretrade_date,
+                    updated_at = NOW()
+            """
+
+            # 转换为字典列表
+            records = batch_df[columns].to_dict(orient="records")
+
+            # 转换日期为datetime对象（PostgreSQL TIMESTAMPTZ格式）
+            for record in records:
+                record["cal_date"] = _normalize_datetime_for_db(record["cal_date"], "daily")
+                # pretrade_date 可能为 NaT
+                if pd.notna(record["pretrade_date"]):
+                    record["pretrade_date"] = _normalize_datetime_for_db(record["pretrade_date"], "daily")
+                else:
+                    record["pretrade_date"] = None
+
+            async with self.db_manager._engine.begin() as conn:
+                await conn.execute(text(insert_sql), records)
+
+            batch_inserted = len(batch_df)
+            total_inserted += batch_inserted
+
+        logger.info(f"Total inserted {total_inserted} trade_cal records")
+        return total_inserted
+
+    async def get_trade_cal(
+        self,
+        exchange: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        is_open: Optional[int] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取交易日历数据
+
+        Args:
+            exchange: 交易所代码（如SSE、SZSE），None表示所有交易所
+            start_date: 开始日期（YYYY-MM-DD格式）
+            end_date: 结束日期（YYYY-MM-DD格式）
+            is_open: 是否交易日（0-休市，1-交易），None表示全部
+
+        Returns:
+            Optional[pd.DataFrame]: 交易日历数据
+        """
+        # 自动检查并初始化数据库连接（如果需要）
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        # 将字符串日期转换为带时区的datetime对象
+        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+
+        # 构建查询条件
+        query = """
+            SELECT exchange, cal_date, is_open, pretrade_date
+            FROM trade_cal
+            WHERE 1=1
+        """
+        params = {}
+
+        if exchange:
+            query += " AND exchange = :exchange"
+            params["exchange"] = exchange.upper()
+
+        if start_dt:
+            query += " AND cal_date >= :start_date"
+            params["start_date"] = start_dt
+
+        if end_dt:
+            query += " AND cal_date <= :end_date"
+            params["end_date"] = end_dt
+
+        if is_open is not None:
+            query += " AND is_open = :is_open"
+            params["is_open"] = is_open
+
+        query += " ORDER BY exchange, cal_date"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+
+        # 处理 cal_date 时区
+        if "cal_date" in data.columns and not data.empty:
+            cal_dates = pd.to_datetime(data["cal_date"])
+            if cal_dates.dt.tz is not None:
+                data["cal_date"] = cal_dates.dt.tz_convert("Asia/Shanghai")
+            else:
+                data["cal_date"] = cal_dates.dt.tz_localize("Asia/Shanghai")
+
+        # 处理 pretrade_date 时区
+        if "pretrade_date" in data.columns and not data.empty:
+            pretrade_dates = pd.to_datetime(data["pretrade_date"])
+            if pretrade_dates.dt.tz is not None:
+                data["pretrade_date"] = pretrade_dates.dt.tz_convert("Asia/Shanghai")
+            else:
+                # 可能有 NaT 值，跳过时区处理
+                pass
+
+        return data
+
+    async def get_latest_trade_cal_date(self, exchange: str) -> Optional[str]:
+        """
+        获取指定交易所的最新交易日历日期
+
+        Args:
+            exchange: 交易所代码
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），无数据返回None
+        """
+        query = """
+            SELECT MAX(cal_date) as latest_date
+            FROM trade_cal
+            WHERE exchange = :exchange
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), {"exchange": exchange.upper()})
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            # 转换为本地时区的日期字符串
+            latest_date = pd.to_datetime(row.latest_date)
+            if latest_date.tz is not None:
+                latest_date = latest_date.tz_convert("Asia/Shanghai")
+            return latest_date.strftime("%Y-%m-%d")
+
+        return None

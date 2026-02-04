@@ -974,3 +974,28 @@ COMMENT ON COLUMN sw_daily.pe IS '市盈率';
 COMMENT ON COLUMN sw_daily.pb IS '市净率';
 COMMENT ON COLUMN sw_daily.float_mv IS '流通市值（万元）';
 COMMENT ON COLUMN sw_daily.total_mv IS '总市值（万元）';
+
+-- ======================================
+-- 交易日历数据表
+-- ======================================
+
+-- 交易日历表
+CREATE TABLE IF NOT EXISTS trade_cal (
+    exchange VARCHAR(10) NOT NULL,              -- 交易所代码：SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE
+    cal_date TIMESTAMPTZ NOT NULL,              -- 日历日期
+    is_open INTEGER NOT NULL,                   -- 是否交易：0-休市，1-交易
+    pretrade_date TIMESTAMPTZ,                  -- 上一个交易日
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (exchange, cal_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_cal_cal_date ON trade_cal(cal_date);
+CREATE INDEX IF NOT EXISTS idx_trade_cal_exchange ON trade_cal(exchange);
+CREATE INDEX IF NOT EXISTS idx_trade_cal_is_open ON trade_cal(is_open);
+
+COMMENT ON TABLE trade_cal IS '交易日历数据表 - 各大交易所交易日历';
+COMMENT ON COLUMN trade_cal.exchange IS '交易所代码：SSE(上交所)、SZSE(深交所)、CFFEX(中金所)、SHFE(上期所)、CZCE(郑商所)、DCE(大商所)、INE(上能源)';
+COMMENT ON COLUMN trade_cal.cal_date IS '日历日期';
+COMMENT ON COLUMN trade_cal.is_open IS '是否交易：0-休市，1-交易';
+COMMENT ON COLUMN trade_cal.pretrade_date IS '上一个交易日';

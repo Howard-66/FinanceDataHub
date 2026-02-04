@@ -201,6 +201,7 @@ def update(
       - pmi: 中国PMI采购经理人指数数据
       - index_dailybasic: 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）
       - sw_daily: 申万行业日线行情数据（申万2021版行业指数）
+      - trade_cal: 交易日历数据（SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE）
 
       - fina_indicator: 上市公司财务指标数据（每股收益、ROE、资产负债率等）
 
@@ -224,6 +225,11 @@ def update(
         - 不指定--symbols时：获取所有行业的历史数据（智能更新）
         - 指定--symbols时：获取指定行业的日线数据（如 --symbols 801780.SI --start-date 2024-01-01 --end-date 2024-12-31）
         - 使用--trade-date参数：获取指定交易日所有行业数据（如 --trade-date 2024-06-28）
+
+        trade_cal使用说明:
+        - 不指定--symbols时：获取所有7个交易所的日历数据（SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE）
+        - 指定--symbols时：获取指定交易所的日历（如 --symbols SSE,SZSE）
+        - 支持 --start-date 和 --end-date 指定日期范围
 
     更新策略:
       默认采用智能下载模式，系统会自动:
@@ -345,8 +351,8 @@ async def _run_update(
     if symbols:
         symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
 
-    # 设置默认日期
-    if not end_date:
+    # 设置默认日期（交易日历数据不设置默认 end_date，允许 API 返回全年数据）
+    if not end_date and data_type != "trade_cal":
         end_date = datetime.now().strftime("%Y-%m-%d")
 
     # 更新策略矩阵：根据参数组合自动选择最优策略
@@ -636,6 +642,57 @@ async def _run_smart_download(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新申万行业日线行情数据失败: {str(e)}")
+                    raise
+
+    # 交易日历数据处理
+    if data_type == "trade_cal":
+        # 获取交易所代码列表（使用symbol_list存储）
+        exchange_list = symbol_list  # symbol_list 存储交易所代码（如 SSE, SZSE）
+
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - 交易日历数据（SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE）")
+            if exchange_list:
+                console.print(f"  - 将更新 {len(exchange_list)} 个交易所")
+            else:
+                console.print("  - 将更新 7 个交易所")
+            console.print("")
+
+        # 确定要更新的交易所列表
+        from finance_data_hub.providers.tushare import SUPPORTED_EXCHANGES
+        exchange_count = len(exchange_list) if exchange_list else len(SUPPORTED_EXCHANGES)
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("交易所"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取交易日历数据...", total=exchange_count)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
+                try:
+                    count = await updater.update_trade_cal(
+                        exchange_list=exchange_list if exchange_list else None,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=False,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=exchange_count)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条交易日历数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条交易日历数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新交易日历数据失败: {str(e)}")
                     raise
 
     # 财务指标数据处理
@@ -1320,6 +1377,58 @@ async def _run_force_update(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新申万行业日线行情数据失败: {str(e)}")
+                    raise
+
+    # 交易日历数据处理
+    if data_type == "trade_cal":
+        # 获取交易所代码列表
+        exchange_list = symbol_list  # symbol_list 存储交易所代码
+
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 交易日历数据（SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE）")
+            if exchange_list:
+                console.print(f"  - 将更新 {len(exchange_list)} 个交易所")
+            else:
+                console.print("  - 将更新 7 个交易所")
+            console.print("  - 使用指定的日期范围")
+            console.print("")
+
+        # 确定要更新的交易所列表
+        from finance_data_hub.providers.tushare import SUPPORTED_EXCHANGES
+        exchange_count = len(exchange_list) if exchange_list else len(SUPPORTED_EXCHANGES)
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("交易所"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取交易日历数据...", total=exchange_count)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
+                try:
+                    count = await updater.update_trade_cal(
+                        exchange_list=exchange_list if exchange_list else None,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=exchange_count)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条交易日历数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条交易日历数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新交易日历数据失败: {str(e)}")
                     raise
 
     # 财务指标数据处理
