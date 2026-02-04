@@ -232,9 +232,11 @@ class FinanceDataHub:
         获取日线 OHLCV 数据（同步方法）
 
         Args:
-            symbols: 股票代码列表，None表示不限制股票
-            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
-            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            symbols: 股票代码列表，用于批量查询指定股票。
+                     格式：['600519.SH', '000858.SZ']，代码后缀 .SH/.SZ 表示交易所
+                     None：不限制股票，返回所有股票数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
 
         Returns:
             Optional[pd.DataFrame]: 日线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
@@ -265,8 +267,9 @@ class FinanceDataHub:
 
         Args:
             symbols: 股票代码列表，None表示不限制股票
-            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
-            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+                     格式：['600519.SH', '000858.SZ']
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
 
         Returns:
             Optional[pd.DataFrame]: 日线数据
@@ -311,10 +314,16 @@ class FinanceDataHub:
         获取分钟级 OHLCV 数据（同步方法）
 
         Args:
-            symbols: 股票代码列表
-            start_date: 开始日期 (YYYY-MM-DD)
-            end_date: 结束日期 (YYYY-MM-DD)
-            frequency: 数据频率，支持 minute_1, minute_5, minute_15, minute_30, minute_60
+            symbols: 股票代码列表，用于批量查询指定股票
+                     格式：['600519.SH', '000858.SZ']
+            start_date: 开始日期，格式 'YYYY-MM-DD'
+            end_date: 结束日期，格式 'YYYY-MM-DD'
+            frequency: 数据频率，支持：
+                       - 'minute_1': 1分钟线
+                       - 'minute_5': 5分钟线
+                       - 'minute_15': 15分钟线
+                       - 'minute_30': 30分钟线
+                       - 'minute_60': 60分钟线
 
         Returns:
             Optional[pd.DataFrame]: 分钟数据，包含 time, symbol, open, high, low, close, volume, amount, frequency 列
@@ -366,9 +375,11 @@ class FinanceDataHub:
         获取每日基本面指标数据（同步方法）
 
         Args:
-            symbols: 股票代码列表，None表示不限制股票
-            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
-            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            symbols: 股票代码列表，用于批量查询指定股票
+                     格式：['600519.SH', '000858.SZ']
+                     None：不限制股票，返回所有股票数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
 
         Returns:
             Optional[pd.DataFrame]: 每日基本面数据，包含 time, symbol, turnover_rate, volume_ratio, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share, free_share, total_mv, circ_mv 列
@@ -435,9 +446,11 @@ class FinanceDataHub:
         获取复权因子数据（同步方法）
 
         Args:
-            symbols: 股票代码列表，None表示不限制股票
-            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
-            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            symbols: 股票代码列表，用于批量查询指定股票
+                     格式：['600519.SH', '000858.SZ']
+                     None：不限制股票，返回所有股票数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
 
         Returns:
             Optional[pd.DataFrame]: 复权因子数据，包含 time, symbol, adj_factor 列
@@ -502,7 +515,9 @@ class FinanceDataHub:
         获取股票基本信息（同步方法，非时间序列）
 
         Args:
-            symbols: 股票代码列表，如果为None则返回所有股票
+            symbols: 股票代码列表，用于批量查询指定股票
+                     格式：['600519.SH', '000858.SZ']
+                     None：返回所有股票的基本信息
 
         Returns:
             Optional[pd.DataFrame]: 股票基本信息，包含 ts_code, symbol, name, area, industry, market, exchange, list_status, list_date, delist_date, is_hs 列
@@ -976,9 +991,17 @@ class FinanceDataHub:
         获取大盘指数每日指标数据（同步方法）
 
         Args:
-            ts_code: 指数代码（如 '000001.SH' 上证综指，'399001.SZ' 深证成指），None表示所有指数
-            start_date: 开始日期（YYYY-MM-DD格式），None表示从最早开始
-            end_date: 结束日期（YYYY-MM-DD格式），None表示到最新
+            ts_code: 指数代码，用于指定查询的单一指数
+                     常用指数：
+                     - '000001.SH': 上证综指
+                     - '399001.SZ': 深证成指
+                     - '000016.SH': 上证50
+                     - '000905.SH': 中证500
+                     - '399005.SZ': 中小板指
+                     - '399006.SZ': 创业板指
+                     None：返回所有指数数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
 
         Returns:
             Optional[pd.DataFrame]: 指数每日指标数据，包含 ts_code, trade_date, total_mv, float_mv, total_share, float_share, free_share, turnover_rate, turnover_rate_f, pe, pe_ttm, pb 列
@@ -1019,16 +1042,21 @@ class FinanceDataHub:
         获取申万行业日线行情数据（同步方法）
 
         Args:
-            ts_code: 行业代码（如 '801780.SI' 申万农林牧渔），None表示所有行业
-            start_date: 开始日期（YYYY-MM-DD格式），None表示从最早开始
-            end_date: 结束日期（YYYY-MM-DD格式），None表示到最新
+            ts_code: 申万行业代码，用于指定查询的单一行业
+                     格式：'801780.SI'（申万2021版行业指数）
+                     None：返回所有行业数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
 
         Returns:
             Optional[pd.DataFrame]: 申万行业日线行情数据，包含 ts_code, trade_date, name, open, high, low, close, change, pct_change, vol, amount, pe, pb, float_mv, total_mv 列
 
+        Note:
+            申万行业代码可通过 get_sw_industry_classify() 获取
+
         Example:
             >>> fdh = FinanceDataHub(settings)
-            >>> data = fdh.get_sw_daily('2024-01-01', '2024-12-31')
+            >>> data = fdh.get_sw_daily('801780.SI', '2024-01-01', '2024-12-31')
             >>> print(data[['trade_date', 'ts_code', 'name', 'close', 'pct_change']])
         """
         return asyncio.run(self.get_sw_daily_async(ts_code, start_date, end_date))
@@ -1062,16 +1090,22 @@ class FinanceDataHub:
         获取上市公司财务指标数据（同步方法）
 
         Args:
-            ts_code: 股票代码（如 '600519.SH' 上证综指），None表示所有股票
-            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
-            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+            ts_code: 股票代码，用于指定查询的单一股票
+                     格式：'600519.SH'（沪市）或 '000858.SZ'（深市）
+                     None：返回所有股票的财务指标数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'（报告期），None表示从最早报告期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'（报告期），None表示到最新报告期
 
         Returns:
-            Optional[pd.DataFrame]: 财务指标数据，包含 ts_code, end_date_time 及所有指标字段
+            Optional[pd.DataFrame]: 财务指标数据，包含 ts_code, end_date 及90+个财务指标字段
+
+        Note:
+            - 报告期通常为季度末日期，如 '2024-03-31' 表示2024Q1
+            - 财务数据在财报发布后更新，存在一定的滞后性
 
         Example:
             >>> fdh = FinanceDataHub(settings)
-            >>> data = fdh.get_fina_indicator('600519.SH', '2020-01-01', '2024-12-31')
+            >>> data = fdh.get_fina_indicator('600519.SH', '2020-03-31', '2024-12-31')
             >>> print(data[['ts_code', 'end_date', 'eps', 'roe', 'debt_to_assets']])
         """
         return asyncio.run(self.get_fina_indicator_async(ts_code, start_date, end_date))
@@ -1105,12 +1139,18 @@ class FinanceDataHub:
         获取上市公司现金流量表数据（同步方法）
 
         Args:
-            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
-            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
-            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+            ts_code: 股票代码，用于指定查询的单一股票
+                     格式：'600519.SH'（沪市）或 '000858.SZ'（深市）
+                     None：返回所有股票的现金流量表数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'（报告期），None表示从最早报告期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'（报告期），None表示到最新报告期
 
         Returns:
-            Optional[pd.DataFrame]: 现金流量表数据，包含 ts_code, end_date_time 及所有现金流量指标字段
+            Optional[pd.DataFrame]: 现金流量表数据，包含 ts_code, end_date 及100+个现金流量指标字段
+
+        Note:
+            - 报告期通常为季度末日期，如 '2024-03-31' 表示2024Q1
+            - 主要指标包括：经营活动产生的现金流量净额、投资活动产生的现金流量净额、筹资活动产生的现金流量净额等
 
         Example:
             >>> fdh = FinanceDataHub(settings)
@@ -1148,12 +1188,18 @@ class FinanceDataHub:
         获取上市公司资产负债表数据（同步方法）
 
         Args:
-            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
-            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
-            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+            ts_code: 股票代码，用于指定查询的单一股票
+                     格式：'600519.SH'（沪市）或 '000858.SZ'（深市）
+                     None：返回所有股票的资产负债表数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'（报告期），None表示从最早报告期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'（报告期），None表示到最新报告期
 
         Returns:
-            Optional[pd.DataFrame]: 资产负债表数据，包含 ts_code, end_date_time 及所有资产负债表字段
+            Optional[pd.DataFrame]: 资产负债表数据，包含 ts_code, end_date 及150+个资产负债表字段
+
+        Note:
+            - 报告期通常为季度末日期，如 '2024-03-31' 表示2024Q1
+            - 主要指标包括：货币资金、应收账款、存货、固定资产、短期借款、应付账款、股东权益合计等
 
         Example:
             >>> fdh = FinanceDataHub(settings)
@@ -1195,12 +1241,18 @@ class FinanceDataHub:
         获取上市公司利润表数据（同步方法）
 
         Args:
-            ts_code: 股票代码（如 '600519.SH'），None表示所有股票
-            start_date: 开始日期（YYYY-MM-DD格式，报告期），None表示从最早开始
-            end_date: 结束日期（YYYY-MM-DD格式，报告期），None表示到最新
+            ts_code: 股票代码，用于指定查询的单一股票
+                     格式：'600519.SH'（沪市）或 '000858.SZ'（深市）
+                     None：返回所有股票的利润表数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'（报告期），None表示从最早报告期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'（报告期），None表示到最新报告期
 
         Returns:
-            Optional[pd.DataFrame]: 利润表数据
+            Optional[pd.DataFrame]: 利润表数据，包含 ts_code, end_date 及100+个利润表字段
+
+        Note:
+            - 报告期通常为季度末日期，如 '2024-03-31' 表示2024Q1
+            - 主要指标包括：营业总收入、营业收入、营业利润、净利润、息税前利润(EBIT)等
 
         Examples:
             >>> fdh = FinanceDataHub(settings)
@@ -1338,13 +1390,18 @@ class FinanceDataHub:
         - none: 不复权（返回原始价格和复权因子）
 
         Args:
-            symbols: 股票代码列表，None表示不限制股票
-            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
-            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
-            adjust: 复权类型，可选 'qfq'（前复权）, 'hfq'（后复权）, 'none'（不复权）
+            symbols: 股票代码列表，用于批量查询指定股票
+                     格式：['600519.SH', '000858.SZ']
+                     None：不限制股票，返回所有股票数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
+            adjust: 复权类型：
+                     - 'qfq': 前复权（默认，技术分析推荐）
+                     - 'hfq': 后复权（收益率计算推荐）
+                     - 'none': 不复权
 
         Returns:
-            Optional[pd.DataFrame]: 复权后的日线数据，包含 time, symbol, open, high, low, 
+            Optional[pd.DataFrame]: 复权后的日线数据，包含 time, symbol, open, high, low,
                                    close, volume, amount, adj_factor, adjust_type 列
 
         Note:
@@ -1438,12 +1495,14 @@ class FinanceDataHub:
         - ATR 指标：ATR14
 
         Args:
-            symbols: 股票代码列表，None表示不限制股票
-            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
-            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            symbols: 股票代码列表，用于批量查询指定股票
+                     格式：['600519.SH', '000858.SZ']
+                     None：不限制股票，返回所有股票数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
             indicators: 需要的指标列表，None表示返回全部可用指标
                        可选: ['ma_5', 'ma_10', 'ma_20', 'ma_60', 'ma_120', 'ma_250',
-                              'macd_dif', 'macd_dea', 'macd_hist', 
+                              'macd_dif', 'macd_dea', 'macd_hist',
                               'rsi_6', 'rsi_14', 'atr_14']
 
         Returns:
@@ -1568,11 +1627,14 @@ class FinanceDataHub:
         - F-Score：Piotroski 财务质量评分 (0-9)
 
         Args:
-            symbols: 股票代码列表，None表示不限制股票
-            start_date: 开始日期 (YYYY-MM-DD)
-            end_date: 结束日期 (YYYY-MM-DD)
+            symbols: 股票代码列表，用于批量查询指定股票
+                     格式：['600519.SH', '000858.SZ']
+                     None：不限制股票，返回所有股票数据
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
             indicators: 需要的指标列表，None表示返回全部
-                       可选: ['pe_ttm_pct_250d', 'pb_pct_250d', ..., 'f_score', ...]
+                       估值分位可选: ['pe_ttm_pct_250d', 'pe_ttm_pct_500d', 'pb_pct_250d', ...]
+                       财务评分可选: ['f_score', 'roe_score', 'leverage_score', ...]
 
         Returns:
             Optional[pd.DataFrame]: 基本面指标数据
