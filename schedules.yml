@@ -55,6 +55,8 @@ jobs:
       hour: 17
       minute: 15
       day_of_week: "mon-fri"
+    params:
+      trade_date: "latest"
     retry:
       max_retries: 3
       delay: 300
@@ -111,6 +113,8 @@ jobs:
       hour: 17
       minute: 40
       day_of_week: "mon-fri"
+    params:
+      trade_date: "latest"
     retry:
       max_retries: 3
       delay: 300
@@ -125,6 +129,8 @@ jobs:
       hour: 17
       minute: 45
       day_of_week: "mon-fri"
+    params:
+      trade_date: "latest"
     retry:
       max_retries: 3
       delay: 300
