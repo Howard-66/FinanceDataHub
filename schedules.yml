@@ -167,48 +167,48 @@ jobs:
   # ========== 预处理任务 ==========
   
   # 技术指标预处理 - 每日运行（18:00）
-  daily_tech_preprocess:
-    enabled: true
-    type: preprocess
-    category: technical
-    schedule:
-      type: cron
-      hour: 18
-      minute: 0
-      day_of_week: "mon-fri"
-    params:
-      freq: [daily, weekly, monthly]
-      adjust: qfq
-      indicators:
-        ma: [5, 10, 20, 60, 120, 250]
-        macd:
-          fast: 12
-          slow: 26
-          signal: 9
-        rsi: [6, 14]
-        atr: [14]
-    depends_on: [daily_update, adj_factor_update]
-    retry:
-      max_retries: 2
-      delay: 600
+  # daily_tech_preprocess:
+  #   enabled: true
+  #   type: preprocess
+  #   category: technical
+  #   schedule:
+  #     type: cron
+  #     hour: 18
+  #     minute: 0
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     freq: [daily, weekly, monthly]
+  #     adjust: qfq
+  #     indicators:
+  #       ma: [5, 10, 20, 60, 120, 250]
+  #       macd:
+  #         fast: 12
+  #         slow: 26
+  #         signal: 9
+  #       rsi: [6, 14]
+  #       atr: [14]
+  #   depends_on: [daily_update, adj_factor_update]
+  #   retry:
+  #     max_retries: 2
+  #     delay: 600
 
   # 基本面指标预处理 - 每日运行（18:30）
-  daily_fundamental_preprocess:
-    enabled: true
-    type: preprocess
-    category: fundamental
-    schedule:
-      type: cron
-      hour: 18
-      minute: 30
-      day_of_week: "mon-fri"
-    params:
-      indicators:
-        valuation_percentile:
-          metrics: [pe_ttm, pb, ps_ttm]
-          windows: [250, 500, 750, 1250]
-        f_score: {}
-    depends_on: [daily_basic_update]
-    retry:
-      max_retries: 2
-      delay: 600
+  # daily_fundamental_preprocess:
+  #   enabled: true
+  #   type: preprocess
+  #   category: fundamental
+  #   schedule:
+  #     type: cron
+  #     hour: 18
+  #     minute: 30
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     indicators:
+  #       valuation_percentile:
+  #         metrics: [pe_ttm, pb, ps_ttm]
+  #         windows: [250, 500, 750, 1250]
+  #       f_score: {}
+  #   depends_on: [daily_basic_update]
+  #   retry:
+  #     max_retries: 2
+  #     delay: 600

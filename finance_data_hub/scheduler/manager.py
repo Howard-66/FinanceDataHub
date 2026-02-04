@@ -18,6 +18,33 @@ from .engine import SchedulerEngine
 from .executor import TaskExecutor, RetryExecutor
 
 
+# 全局任务注册表，用于 APScheduler 序列化任务时查找
+# 结构: {job_id: (manager_ref, job_config)}
+_job_registry: Dict[str, tuple] = {}
+
+
+def _job_dispatcher(dispatcher_job_id: str, **kwargs) -> JobExecutionLog:
+    """
+    任务调度器的全局入口函数
+    
+    APScheduler 使用 SQLAlchemy jobstore 时需要序列化任务函数。
+    局部闭包无法序列化，因此使用此全局函数作为入口，
+    通过 job_id 查找对应的 manager 和 config 来执行任务。
+    
+    Args:
+        dispatcher_job_id: 任务 ID
+        **kwargs: APScheduler 传递的额外参数（如 trade_date）
+        
+    Returns:
+        任务执行日志
+    """
+    if dispatcher_job_id not in _job_registry:
+        raise ValueError(f"Job {dispatcher_job_id} not found in registry")
+    
+    manager_ref, job_config = _job_registry[dispatcher_job_id]
+    return manager_ref._execute_job(dispatcher_job_id, job_config)
+
+
 class ScheduleManager:
     """调度管理器"""
     
@@ -98,15 +125,16 @@ class ScheduleManager:
                 logger.debug(f"Skipping disabled job: {job_id}")
                 continue
             
-            # 创建任务包装函数
-            def job_wrapper(jid=job_id, jconf=job_config):
-                return self._execute_job(jid, jconf)
+            # 将任务注册到全局注册表（供序列化后的任务查找）
+            _job_registry[job_id] = (self, job_config)
             
-            # 添加任务到调度器
+            # 使用模块级别的 _job_dispatcher 函数，避免序列化问题
+            # APScheduler 会将 dispatcher_job_id 作为 kwargs 传递
             self._engine.add_job(
                 job_id=job_id,
-                func=job_wrapper,
-                job_config=job_config
+                func=_job_dispatcher,
+                job_config=job_config,
+                dispatcher_job_id=job_id  # 作为 kwargs 传递给 _job_dispatcher
             )
             
             # 注册任务监听器
