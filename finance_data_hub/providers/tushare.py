@@ -519,8 +519,12 @@ class TushareProvider(BaseDataProvider):
             logger.warning(f"No data fetched for {symbol}")
             return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
 
-        # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        # 合并DataFrame (过滤空DataFrame以避免 FutureWarning)
+        non_empty_dfs = [df for df in all_dataframes if not df.empty]
+        if not non_empty_dfs:
+            logger.warning(f"No non-empty data fetched for {symbol}")
+            return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
+        final_df = pd.concat(non_empty_dfs, ignore_index=True, sort=False)
 
         # 去重（如果批次间有重叠）
         final_df = final_df.drop_duplicates(subset=["time", "symbol"]).sort_values("time").reset_index(drop=True)
@@ -704,8 +708,12 @@ class TushareProvider(BaseDataProvider):
             logger.warning(f"No minute data fetched for {symbol}")
             return pd.DataFrame(columns=MinuteDataSchema.get_required_columns())
 
-        # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        # 合并DataFrame (过滤空DataFrame以避免 FutureWarning)
+        non_empty_dfs = [df for df in all_dataframes if not df.empty]
+        if not non_empty_dfs:
+            logger.warning(f"No non-empty minute data fetched for {symbol}")
+            return pd.DataFrame(columns=MinuteDataSchema.get_required_columns())
+        final_df = pd.concat(non_empty_dfs, ignore_index=True, sort=False)
 
         # 去重（如果批次间有重叠）
         final_df = final_df.drop_duplicates(subset=["time", "symbol"]).sort_values("time").reset_index(drop=True)
@@ -902,8 +910,12 @@ class TushareProvider(BaseDataProvider):
             logger.warning(f"No daily basic data fetched for {symbol}")
             return pd.DataFrame(columns=DailyBasicSchema.get_required_columns())
 
-        # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        # 合并DataFrame (过滤空DataFrame以避免 FutureWarning)
+        non_empty_dfs = [df for df in all_dataframes if not df.empty]
+        if not non_empty_dfs:
+            logger.warning(f"No non-empty daily basic data fetched for {symbol}")
+            return pd.DataFrame(columns=DailyBasicSchema.get_required_columns())
+        final_df = pd.concat(non_empty_dfs, ignore_index=True, sort=False)
 
         # 去重（如果批次间有重叠）
         final_df = final_df.drop_duplicates(subset=["time", "symbol"]).sort_values("time").reset_index(drop=True)
@@ -1068,8 +1080,12 @@ class TushareProvider(BaseDataProvider):
                 columns=["symbol", "time", "adj_factor"]
             )
 
-        # 合并DataFrame
-        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        # 合并DataFrame (过滤空DataFrame以避免 FutureWarning)
+        non_empty_dfs = [df for df in all_dataframes if not df.empty]
+        if not non_empty_dfs:
+            logger.warning(f"No non-empty adj_factor data fetched for {symbol}")
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+        final_df = pd.concat(non_empty_dfs, ignore_index=True, sort=False)
 
         # 去重（如果批次间有重叠）
         final_df = final_df.drop_duplicates(subset=["time", "symbol"]).sort_values("time").reset_index(drop=True)

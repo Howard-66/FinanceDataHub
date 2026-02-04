@@ -33,8 +33,8 @@ CREATE TABLE IF NOT EXISTS daily_basic (
     time TIMESTAMPTZ NOT NULL,                -- 交易日期
     symbol VARCHAR(20) NOT NULL,              -- 股票代码
     trade_volume BIGINT,                      -- 交易量（手）
-    turnover_rate DECIMAL(10,6),              -- 换手率
-    volume_ratio DECIMAL(10,6),               -- 量比
+    turnover_rate DECIMAL(20,6),              -- 换手率
+    volume_ratio DECIMAL(20,6),               -- 量比
     pe DECIMAL(20,6),                         -- 市盈率
     pe_ttm DECIMAL(20,6),                     -- 市盈率TTM
     pb DECIMAL(20,6),                         -- 市净率
