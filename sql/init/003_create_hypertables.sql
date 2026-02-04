@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS symbol_daily (
     close DECIMAL(20,6),                      -- 收盘价
     volume BIGINT,                            -- 成交量
     amount DECIMAL(30,6),                     -- 成交额
-    change_pct DECIMAL(10,6),                 -- 涨跌幅
+    change_pct DECIMAL(16,6),                 -- 涨跌幅（扩展精度以容纳1990年代极端值如18430%）
     change_amount DECIMAL(20,6),              -- 涨跌额
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
