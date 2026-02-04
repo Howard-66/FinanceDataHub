@@ -999,3 +999,27 @@ COMMENT ON COLUMN trade_cal.exchange IS '交易所代码：SSE(上交所)、SZSE
 COMMENT ON COLUMN trade_cal.cal_date IS '日历日期';
 COMMENT ON COLUMN trade_cal.is_open IS '是否交易：0-休市，1-交易';
 COMMENT ON COLUMN trade_cal.pretrade_date IS '上一个交易日';
+
+-- ======================================
+-- 指数成分权重数据表
+-- ======================================
+
+-- 指数成分权重表（月度数据）
+CREATE TABLE IF NOT EXISTS index_weight (
+    index_code VARCHAR(20) NOT NULL,              -- 指数代码，如 000300.SH（沪深300）
+    con_code VARCHAR(20) NOT NULL,                -- 成分代码
+    trade_date DATE NOT NULL,                     -- 交易日期（月度数据）
+    weight DECIMAL(10, 6),                        -- 权重
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (index_code, con_code, trade_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_index_weight_trade_date ON index_weight(trade_date);
+CREATE INDEX IF NOT EXISTS idx_index_weight_index_code ON index_weight(index_code);
+
+COMMENT ON TABLE index_weight IS '指数成分权重数据表 - 各类指数成分和权重（月度数据）';
+COMMENT ON COLUMN index_weight.index_code IS '指数代码，如000300.SH(沪深300)、000905.SH(中证500)';
+COMMENT ON COLUMN index_weight.con_code IS '成分代码';
+COMMENT ON COLUMN index_weight.trade_date IS '交易日期（月度数据）';
+COMMENT ON COLUMN index_weight.weight IS '权重';

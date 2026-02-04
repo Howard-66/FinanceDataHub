@@ -38,7 +38,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 from rich.text import Text
 from rich.syntax import Syntax
 
-from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES
+from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES, SUPPORTED_INDEX_WEIGHT_CODES
 from rich import print as rprint
 
 from finance_data_hub.config import get_settings, reload_settings
@@ -200,6 +200,7 @@ def update(
       - m: 中国货币供应量数据（M0、M1、M2）
       - pmi: 中国PMI采购经理人指数数据
       - index_dailybasic: 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）
+      - index_weight: 指数成分和权重数据（月度数据，沪深300、中证500等）
       - sw_daily: 申万行业日线行情数据（申万2021版行业指数）
       - trade_cal: 交易日历数据（SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE）
 
@@ -220,6 +221,12 @@ def update(
         - 不指定--symbols时：获取当日所有指数数据（增量更新）
         - 指定--symbols时：获取该指数的历史数据（如 --symbols 000001.SH --start-date 2024-01-01 --end-date 2024-12-31）
         - 使用--trade-date参数：获取指定交易日所有指数数据（如 --trade-date 2024-11-27）
+
+        index_weight使用说明:
+        - 不指定--symbols时：获取所有支持的指数数据（智能更新）
+        - 指定--symbols时：获取指定指数的数据（如 --symbols 000300.SH,000905.SH）
+        - 使用--trade-date参数：获取指定日期所有指数的成分权重（如 --trade-date 2024-06-30）
+        - 支持 --start-date 和 --end-date 指定日期范围
 
         sw_daily使用说明:
         - 不指定--symbols时：获取所有行业的历史数据（智能更新）
@@ -585,6 +592,57 @@ async def _run_smart_download(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
+                    raise
+
+    # 指数成分权重数据处理
+    if data_type == "index_weight":
+        # 获取指数代码列表
+        index_code_list = symbol_list  # 使用symbol_list作为指数代码列表
+
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - 指数成分和权重数据（月度数据，沪深300、中证500等）")
+            if index_code_list:
+                console.print(f"  - 将更新 {len(index_code_list)} 个指数")
+            else:
+                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_WEIGHT_CODES)} 个指数")
+            console.print("")
+
+        # 确定要更新的指数列表
+        index_count = len(index_code_list) if index_code_list else len(SUPPORTED_INDEX_WEIGHT_CODES)
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("指数"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取指数成分权重数据...", total=index_count)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
+                try:
+                    count = await updater.update_index_weight(
+                        index_list=index_code_list if index_code_list else SUPPORTED_INDEX_WEIGHT_CODES,
+                        start_date=start_date,  # 智能下载时为None
+                        end_date=end_date,
+                        trade_date=None,  # 智能更新不使用trade_date
+                        force_update=False,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=index_count)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数成分权重数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数成分权重数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新指数成分权重数据失败: {str(e)}")
                     raise
 
     # 申万行业日线行情数据处理
@@ -1319,6 +1377,58 @@ async def _run_force_update(
                     console.print(f"[bold red]ERROR:[/bold red] 更新指数每日指标数据失败: {str(e)}")
                     raise
 
+    # 指数成分权重数据处理
+    if data_type == "index_weight":
+        # 获取指数代码列表
+        index_code_list = symbol_list  # 使用symbol_list作为指数代码列表
+
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 指数成分和权重数据（月度数据，沪深300、中证500等）")
+            console.print("  - 使用指定的日期范围")
+            if index_code_list:
+                console.print(f"  - 将更新 {len(index_code_list)} 个指数")
+            else:
+                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_WEIGHT_CODES)} 个指数")
+            console.print("")
+
+        # 确定要更新的指数列表
+        index_count = len(index_code_list) if index_code_list else len(SUPPORTED_INDEX_WEIGHT_CODES)
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("指数"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取指数成分权重数据...", total=index_count)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
+                try:
+                    count = await updater.update_index_weight(
+                        index_list=index_code_list if index_code_list else SUPPORTED_INDEX_WEIGHT_CODES,
+                        start_date=start_date,
+                        end_date=end_date,
+                        trade_date=None,  # 强制更新不使用trade_date
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=index_count)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数成分权重数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数成分权重数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新指数成分权重数据失败: {str(e)}")
+                    raise
+
     # 申万行业日线行情数据处理
     if data_type == "sw_daily":
         # 获取行业代码列表
@@ -1915,15 +2025,23 @@ async def _run_trade_date_update(
             elif data_type == "adj_factor":
                 # 复权因子数据
                 method_name = "get_adj_factor"
+            elif data_type == "index_weight":
+                # 指数成分权重数据
+                method_name = "get_index_weight"
             else:
                 console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                 raise typer.Exit(1)
 
             # 通过路由器获取数据
-            # 注意：index_dailybasic和sw_daily使用asset_class="index"，其他使用"stock"
-            if data_type in ["index_dailybasic", "sw_daily"]:
+            # 注意：index_dailybasic、sw_daily和index_weight使用asset_class="index"，其他使用"stock"
+            if data_type in ["index_dailybasic", "sw_daily", "index_weight"]:
                 asset_class = "index"
-                router_data_type = "sw_daily" if data_type == "sw_daily" else "dailybasic"
+                if data_type == "sw_daily":
+                    router_data_type = "sw_daily"
+                elif data_type == "index_weight":
+                    router_data_type = "index_weight"
+                else:
+                    router_data_type = "dailybasic"
             else:
                 asset_class = "stock"
                 router_data_type = data_type
@@ -1942,7 +2060,13 @@ async def _run_trade_date_update(
 
             # 判断是股票还是指数数据
             is_index = (data_type in ["index_dailybasic", "sw_daily"])
-            if is_index:
+            is_index_weight = (data_type == "index_weight")
+
+            if is_index_weight:
+                # 指数成分权重数据使用 index_code 列
+                unique_codes = df["index_code"].unique()
+                code_label = "指数成分"
+            elif is_index:
                 unique_codes = df["ts_code"].unique()
                 code_label = "行业指数" if data_type == "sw_daily" else "指数"
             else:
@@ -1972,6 +2096,8 @@ async def _run_trade_date_update(
                         count = await updater.data_ops.insert_sw_daily_batch(batch_df)
                     elif data_type == "adj_factor":
                         count = await updater.data_ops.insert_adj_factor_batch(batch_df)
+                    elif data_type == "index_weight":
+                        count = await updater.data_ops.insert_index_weight_batch(batch_df)
                     else:
                         console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                         raise typer.Exit(1)
@@ -1984,7 +2110,9 @@ async def _run_trade_date_update(
 
                     # 显示进度（非安静模式）
                     if not quiet:
-                        if is_index:
+                        if is_index_weight:
+                            current_code = batch_df["index_code"].iloc[0] if len(batch_df) > 0 else "unknown"
+                        elif is_index:
                             current_code = batch_df["ts_code"].iloc[0] if len(batch_df) > 0 else "unknown"
                         else:
                             current_code = batch_df["symbol"].iloc[0] if len(batch_df) > 0 else "unknown"

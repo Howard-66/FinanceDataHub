@@ -894,6 +894,24 @@ TradeCalSchema = DataFrameSchema(
 
 
 # ===========================
+# 指数成分权重 Schema
+# ===========================
+
+
+# 指数成分权重 Schema
+IndexWeightSchema = DataFrameSchema(
+    name="index_weight",
+    description="指数成分和权重数据（月度数据）",
+    columns=[
+        ColumnSchema("index_code", "object", False, "指数代码，如000300.SH（沪深300）"),
+        ColumnSchema("con_code", "object", False, "成分代码"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期（月度）"),
+        ColumnSchema("weight", "float64", True, "权重"),
+    ],
+)
+
+
+# ===========================
 # 验证函数
 # ===========================
 

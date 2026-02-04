@@ -14,7 +14,7 @@ from finance_data_hub.router.smart_router import SmartRouter
 from finance_data_hub.database.manager import DatabaseManager
 from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.config import Settings
-from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES, SUPPORTED_EXCHANGES
+from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES, SUPPORTED_EXCHANGES, SUPPORTED_INDEX_WEIGHT_CODES
 
 
 def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
@@ -1926,6 +1926,118 @@ class DataUpdater:
 
         except Exception as e:
             logger.exception("Failed to update trade_cal data")
+            raise
+
+    async def update_index_weight(
+        self,
+        index_list: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """
+        更新指数成分权重数据（月度数据）
+
+        建议输入参数里开始日期和结束日分别输入当月第一天和最后一天的日期。
+
+        支持的调用模式：
+        1. 智能下载模式：增量更新（不指定index_list和date参数时）
+        2. 指定指数列表：获取指定指数的权重数据
+        3. 强制更新模式：强制重新获取所有数据
+        4. 单日模式：指定trade_date获取特定日期的数据
+
+        Args:
+            index_list: 指数代码列表，None表示所有支持的指数
+            start_date: 开始日期（YYYY-MM-DD格式）
+            end_date: 结束日期（YYYY-MM-DD格式）
+            trade_date: 交易日期（YYYY-MM-DD格式），与start_date/end_date互斥
+            force_update: 是否强制更新（忽略数据库状态）
+            progress_callback: 进度回调函数，接收 (current, total) 参数
+
+        Returns:
+            int: 更新的记录数
+        """
+        # 参数约束检查
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date 不能与 start_date/end_date 同时指定")
+
+        # 默认使用所有支持的指数
+        if index_list is None:
+            index_list = SUPPORTED_INDEX_WEIGHT_CODES
+
+        logger.info(
+            f"Updating index_weight for {len(index_list)} indexes "
+            f"(start={start_date or 'auto'}, end={end_date or 'auto'}, trade_date={trade_date}, force={force_update})"
+        )
+
+        try:
+            total_records = 0
+            total_indexes = len(index_list)
+
+            for idx, index_code in enumerate(index_list):
+                try:
+                    # 智能下载逻辑：确定该指数的实际起始日期
+                    # 注意：index_weight 是月度数据，需要处理月份边界
+                    exch_start_date = start_date
+                    exch_end_date = end_date
+
+                    if not force_update and not trade_date and not start_date:
+                        # 查询数据库中该指数的最新记录
+                        latest_date = await self.data_ops.get_latest_index_weight_date(index_code)
+
+                        if latest_date:
+                            # 有记录，计算下一个月
+                            # 将日期转换为下个月的第一天
+                            latest = datetime.strptime(latest_date, "%Y-%m-%d")
+                            # 计算下个月的第一天
+                            if latest.month == 12:
+                                next_month = datetime(latest.year + 1, 1, 1)
+                            else:
+                                next_month = datetime(latest.year, latest.month + 1, 1)
+                            exch_start_date = next_month.strftime("%Y-%m-%d")
+                            logger.debug(f"Smart incremental: {index_code} from {exch_start_date}")
+                        else:
+                            # 新指数，获取全量数据
+                            exch_start_date = None
+                            logger.debug(f"Smart download: {index_code} - fetching full history")
+                    elif force_update:
+                        logger.debug(f"Force update: {index_code} from {exch_start_date or 'beginning'}")
+
+                    logger.info(f"Fetching {index_code} ({idx + 1}/{total_indexes})")
+
+                    # 调用API获取数据
+                    data = self.router.route(
+                        asset_class="index",
+                        data_type="index_weight",
+                        method_name="get_index_weight",
+                        index_code=index_code,
+                        trade_date=trade_date,
+                        start_date=exch_start_date,
+                        end_date=exch_end_date,
+                    )
+
+                    if data is not None and not data.empty:
+                        inserted = await self.data_ops.insert_index_weight_batch(data)
+                        total_records += inserted
+                        logger.info(f"Inserted {inserted} records for {index_code}")
+                    else:
+                        logger.debug(f"No data for {index_code}")
+
+                    # 调用进度回调
+                    if progress_callback:
+                        progress_callback(idx + 1, total_indexes)
+
+                except Exception as e:
+                    logger.error(f"Failed to fetch index_weight for {index_code}: {str(e)}")
+                    continue
+
+            logger.info(f"Updated total {total_records} index_weight records")
+            return total_records
+
+        except Exception as e:
+            logger.exception("Failed to update index_weight data")
             raise
 
     async def close(self) -> None:

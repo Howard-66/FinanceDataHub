@@ -3945,3 +3945,171 @@ class DataOperations:
             return latest_date.strftime("%Y-%m-%d")
 
         return None
+
+    # ===========================
+    # 指数成分权重数据操作
+    # ===========================
+
+    async def insert_index_weight_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入指数成分权重数据
+
+        Args:
+            data: 包含指数成分权重数据的DataFrame
+            batch_size: 每批插入的记录数
+
+        Returns:
+            int: 成功插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        # 确保数据按指数代码、日期和成分代码排序
+        data = data.sort_values(["index_code", "trade_date", "con_code"]).reset_index(drop=True)
+
+        # 准备列名
+        columns = ["index_code", "con_code", "trade_date", "weight"]
+
+        total_inserted = 0
+        n_batches = (len(data) + batch_size - 1) // batch_size
+
+        for i in range(n_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, len(data))
+            batch_df = data.iloc[start_idx:end_idx]
+
+            # 构建插入语句（使用ON CONFLICT处理重复数据）
+            insert_sql = """
+                INSERT INTO index_weight (
+                    index_code, con_code, trade_date, weight,
+                    updated_at, created_at
+                ) VALUES (
+                    :index_code, :con_code, :trade_date, :weight,
+                    NOW(), NOW()
+                )
+                ON CONFLICT (index_code, con_code, trade_date) DO UPDATE SET
+                    weight = EXCLUDED.weight,
+                    updated_at = NOW()
+            """
+
+            # 转换为字典列表
+            records = batch_df[columns].to_dict(orient="records")
+
+            # 转换日期为datetime对象
+            for record in records:
+                record["trade_date"] = _normalize_datetime_for_db(record["trade_date"], "daily")
+
+            async with self.db_manager._engine.begin() as conn:
+                await conn.execute(text(insert_sql), records)
+
+            batch_inserted = len(batch_df)
+            total_inserted += batch_inserted
+
+        logger.info(f"Total inserted {total_inserted} index_weight records")
+        return total_inserted
+
+    async def get_index_weight(
+        self,
+        index_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取指数成分权重数据
+
+        Args:
+            index_code: 指数代码（如000300.SH），None表示所有支持的指数
+            start_date: 开始日期（YYYY-MM-DD格式）
+            end_date: 结束日期（YYYY-MM-DD格式）
+            trade_date: 交易日期（YYYY-MM-DD格式），与start_date/end_date互斥
+
+        Returns:
+            pd.DataFrame: 指数成分权重数据
+        """
+        # 参数约束检查
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date 不能与 start_date/end_date 同时指定")
+
+        # 初始化数据库连接
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        # 构建查询条件
+        conditions = []
+        params = {}
+
+        if index_code:
+            conditions.append("index_code = :index_code")
+            params["index_code"] = index_code
+
+        if trade_date:
+            conditions.append("trade_date = :trade_date")
+            params["trade_date"] = _normalize_datetime_for_db(trade_date, "daily")
+        else:
+            if start_date:
+                conditions.append("trade_date >= :start_date")
+                params["start_date"] = _normalize_datetime_for_db(start_date, "daily")
+            if end_date:
+                conditions.append("trade_date <= :end_date")
+                params["end_date"] = _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+        query = f"""
+            SELECT index_code, con_code, trade_date, weight
+            FROM index_weight
+            WHERE {where_clause}
+            ORDER BY index_code, trade_date, con_code
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        # 转换为DataFrame
+        data = pd.DataFrame([row._asdict() for row in rows])
+
+        # 处理时区
+        if "trade_date" in data.columns and not data.empty:
+            trade_dates = pd.to_datetime(data["trade_date"])
+            if trade_dates.dt.tz is not None:
+                data["trade_date"] = trade_dates.dt.tz_convert("Asia/Shanghai")
+            else:
+                data["trade_date"] = trade_dates.dt.tz_localize("Asia/Shanghai")
+
+        return data
+
+    async def get_latest_index_weight_date(self, index_code: str) -> Optional[str]:
+        """
+        获取指定指数的最新成分权重日期
+
+        Args:
+            index_code: 指数代码
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），无数据返回None
+        """
+        query = """
+            SELECT MAX(trade_date) as latest_date
+            FROM index_weight
+            WHERE index_code = :index_code
+        """
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), {"index_code": index_code})
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            # 转换为本地时区的日期字符串
+            latest_date = pd.to_datetime(row.latest_date)
+            if latest_date.tz is not None:
+                latest_date = latest_date.tz_convert("Asia/Shanghai")
+            return latest_date.strftime("%Y-%m-%d")
+
+        return None

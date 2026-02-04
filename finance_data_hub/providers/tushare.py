@@ -30,6 +30,7 @@ from finance_data_hub.providers.schema import (
     CNMSchema,
     CNPMISchema,
     IndexDailybasicSchema,
+    IndexWeightSchema,
     FinaIndicatorSchema,
     CashflowSchema,
     BalancesheetSchema,
@@ -65,6 +66,16 @@ SUPPORTED_EXCHANGES = [
     "CZCE",   # 郑商所
     "DCE",    # 大商所
     "INE",    # 上能源
+]
+
+# 支持的指数代码列表（用于指数成分权重）
+SUPPORTED_INDEX_WEIGHT_CODES = [
+    "000300.SH",  # 沪深300
+    "000905.SH",  # 中证500
+    "000016.SH",  # 上证50
+    "000001.SH",  # 上证综指
+    "399001.SZ",  # 深证成指
+    "399006.SZ",  # 创业板指
 ]
 
 
@@ -2967,4 +2978,142 @@ class TushareProvider(BaseDataProvider):
         final_df = final_df.sort_values(["exchange", "cal_date"]).reset_index(drop=True)
 
         logger.info(f"Total fetched {len(final_df)} trade calendar records")
+        return final_df
+
+    def get_index_weight(
+        self,
+        index_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取指数成分和权重数据（月度数据）
+
+        建议输入参数里开始日期和结束日分别输入当月第一天和最后一天的日期。
+
+        Args:
+            index_code: 指数代码（如000300.SH沪深300），支持多值，None表示所有支持的指数
+            trade_date: 交易日期（YYYY-MM-DD 或 YYYYMMDD格式），与start_date/end_date互斥
+            start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD格式）
+            end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD格式）
+
+        Returns:
+            pd.DataFrame: 标准格式的指数成分权重数据，包含 index_code, con_code, trade_date, weight 列
+        """
+        logger.info(
+            f"Fetching index weight data (index_code={index_code}, trade_date={trade_date}, "
+            f"start_date={start_date}, end_date={end_date})"
+        )
+
+        # 参数约束检查
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date 不能与 start_date/end_date 同时指定")
+
+        # 转换日期格式（去掉连字符）
+        if start_date:
+            start_date = start_date.replace("-", "")
+        if end_date:
+            end_date = end_date.replace("-", "")
+        if trade_date:
+            trade_date = trade_date.replace("-", "")
+
+        # Tushare API 记录限制常量
+        TUSHARE_MAX_RECORDS = 6000
+
+        # 确定要查询的指数代码列表
+        if index_code:
+            index_codes = [c.strip() for c in index_code.split(",") if c.strip()]
+        else:
+            # 没有指定index_code时，使用所有支持的指数
+            index_codes = SUPPORTED_INDEX_WEIGHT_CODES
+            logger.info(f"No index_code specified, using supported indexes: {index_codes}")
+
+        all_dataframes = []
+
+        # 对每个指数代码查询数据
+        for code in index_codes:
+            logger.info(f"Fetching index_weight for {code}")
+            code_dataframes = []
+            current_end_date = end_date
+            batch_count = 0
+
+            while True:
+                batch_count += 1
+                # 构建API参数
+                api_params = {
+                    "index_code": code,
+                    "fields": "index_code,con_code,trade_date,weight",
+                }
+
+                if trade_date:
+                    api_params["trade_date"] = trade_date
+                else:
+                    if start_date:
+                        api_params["start_date"] = start_date
+                    if current_end_date:
+                        api_params["end_date"] = current_end_date
+
+                df = self._call_api("index_weight", **api_params)
+
+                if df.empty:
+                    logger.info(f"  Batch {batch_count}: No data returned, stopping")
+                    break
+
+                # 列名映射
+                column_mapping = {
+                    "index_code": "index_code",
+                    "con_code": "con_code",
+                    "trade_date": "trade_date",
+                    "weight": "weight",
+                }
+
+                df = convert_to_standard_columns(df, column_mapping)
+
+                # 转换日期格式（YYYYMMDD字符串 -> datetime）
+                df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
+
+                # weight 转换为浮点数
+                df["weight"] = pd.to_numeric(df["weight"], errors="coerce")
+
+                batch_records = len(df)
+                code_dataframes.append(df)
+
+                logger.info(f"  Batch {batch_count}: Fetched {batch_records} records")
+
+                # 检查是否需要继续获取更早的数据
+                # 注意：只有非trade_date模式且没有指定end_date时，才自动分页
+                # if not trade_date and batch_records == TUSHARE_MAX_RECORDS and end_date is None:
+                if batch_records == TUSHARE_MAX_RECORDS and start_date is None:
+                    # 获取当前批次中最早的日期
+                    earliest_date = df["trade_date"].min().date()
+                    # 计算新的结束日期（向前推1天）
+                    from datetime import timedelta
+                    new_end_date = earliest_date - timedelta(days=1)
+                    current_end_date = new_end_date.strftime("%Y%m%d")
+                    logger.info(f"  Batch {batch_count}: Max limit reached, fetching earlier data up to {current_end_date}")
+                    continue
+                else:
+                    break
+
+            # 合并该指数的数据
+            if code_dataframes:
+                code_df = pd.concat(code_dataframes, ignore_index=True)
+                all_dataframes.append(code_df)
+                logger.info(f"  {code}: Total {len(code_df)} records")
+
+        if not all_dataframes:
+            logger.warning("No index weight data returned from Tushare")
+            return pd.DataFrame(columns=IndexWeightSchema.get_required_columns())
+
+        # 合并所有指数的数据
+        final_df = pd.concat(all_dataframes, ignore_index=True)
+
+        # 验证数据格式
+        final_df = validate_dataframe(final_df, IndexWeightSchema, provider_name=self.name)
+
+        # 按指数代码、日期和成分代码排序
+        final_df = final_df.sort_values(["index_code", "trade_date", "con_code"]).reset_index(drop=True)
+
+        logger.info(f"Total fetched {len(final_df)} index weight records")
         return final_df

@@ -1782,6 +1782,60 @@ class FinanceDataHub:
         """
         return await self.ops.get_trade_cal(exchange, start_date, end_date, is_open)
 
+    def get_index_weight(
+        self,
+        index_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取指数成分和权重数据（同步方法）
+
+        Args:
+            index_code: 指数代码（如 '000300.SH' 沪深300），None表示所有支持的指数
+            start_date: 开始日期（YYYY-MM-DD格式），None表示从最早日期开始
+            end_date: 结束日期（YYYY-MM-DD格式），None表示到最新日期
+            trade_date: 交易日期（YYYY-MM-DD格式），与start_date/end_date互斥
+
+        Returns:
+            Optional[pd.DataFrame]: 指数成分权重数据，包含 index_code, con_code, trade_date, weight 列
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> # 获取沪深300的成分权重数据
+            >>> weight = fdh.get_index_weight('000300.SH', '2024-01-01', '2024-12-31')
+            >>> print(weight[['con_code', 'weight']].head(10))
+            >>> # 获取特定月份的数据
+            >>> weight = fdh.get_index_weight('000300.SH', trade_date='2024-06-30')
+        """
+        return asyncio.run(self.get_index_weight_async(index_code, start_date, end_date, trade_date))
+
+    async def get_index_weight_async(
+        self,
+        index_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取指数成分和权重数据（异步方法）
+
+        Args:
+            index_code: 指数代码（如 '000300.SH' 沪深300），None表示所有支持的指数
+            start_date: 开始日期（YYYY-MM-DD格式），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD格式），None表示到最新
+            trade_date: 交易日期（YYYY-MM-DD格式），与start_date/end_date互斥
+
+        Returns:
+            Optional[pd.DataFrame]: 指数成分权重数据
+        """
+        # 参数约束检查
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date 不能与 start_date/end_date 同时指定")
+
+        return await self.ops.get_index_weight(index_code, start_date, end_date, trade_date)
+
     # ============================================================================
     # 资源管理
     # ============================================================================
