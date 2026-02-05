@@ -1,5 +1,4 @@
-"""
-调度管理器
+"""调度管理器
 
 提供高级调度管理功能：
 - 加载配置并初始化调度器
@@ -8,6 +7,9 @@
 - CLI 命令集成
 """
 
+import os
+import sys
+import traceback
 from typing import Optional, Dict, List, Any, Set
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +18,28 @@ from loguru import logger
 from .models import ScheduleConfig, JobConfig, JobExecutionLog, JobType
 from .engine import SchedulerEngine
 from .executor import TaskExecutor, RetryExecutor
+
+
+# 配置日志输出到文件
+def _setup_file_logging():
+    """设置日志文件输出"""
+    log_dir = Path.cwd() / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "scheduler.log"
+    
+    # 移除默认的 stderr handler，添加文件 handler
+    logger.add(
+        str(log_file),
+        rotation="10 MB",
+        retention="7 days",
+        level="DEBUG",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
+        enqueue=True,  # 线程安全
+    )
+    return log_file
+
+# 在模块加载时设置日志
+_log_file = _setup_file_logging()
 
 
 # 全局任务注册表，用于 APScheduler 序列化任务时查找
@@ -38,11 +62,26 @@ def _job_dispatcher(dispatcher_job_id: str, **kwargs) -> JobExecutionLog:
     Returns:
         任务执行日志
     """
-    if dispatcher_job_id not in _job_registry:
-        raise ValueError(f"Job {dispatcher_job_id} not found in registry")
+    logger.info(f"[Scheduler] 开始执行任务: {dispatcher_job_id}")
     
-    manager_ref, job_config = _job_registry[dispatcher_job_id]
-    return manager_ref._execute_job(dispatcher_job_id, job_config)
+    try:
+        if dispatcher_job_id not in _job_registry:
+            error_msg = f"Job {dispatcher_job_id} not found in registry. Registry contains: {list(_job_registry.keys())}"
+            logger.error(f"[Scheduler] {error_msg}")
+            raise ValueError(error_msg)
+        
+        manager_ref, job_config = _job_registry[dispatcher_job_id]
+        logger.info(f"[Scheduler] 找到任务配置，开始执行: {dispatcher_job_id}")
+        
+        result = manager_ref._execute_job(dispatcher_job_id, job_config)
+        
+        logger.info(f"[Scheduler] 任务完成: {dispatcher_job_id}, 状态: {result.status}")
+        return result
+        
+    except Exception as e:
+        error_msg = f"任务执行失败: {dispatcher_job_id}\n{traceback.format_exc()}"
+        logger.error(f"[Scheduler] {error_msg}")
+        raise
 
 
 class ScheduleManager:
@@ -146,7 +185,7 @@ class ScheduleManager:
         if not self._check_dependencies(job_id):
             logger.warning(f"Job {job_id} has unmet dependencies, adding to pending")
             self._pending_jobs.add(job_id)
-            return JobExecutionLog(
+            log = JobExecutionLog(
                 job_id=job_id,
                 job_name=job_id,
                 job_type=job_config.type,
@@ -154,16 +193,61 @@ class ScheduleManager:
                 start_time=datetime.now(),
                 error_message="Waiting for dependencies"
             )
+            self._save_execution_log(log)
+            return log
+        
+        logger.info(f"[Scheduler] 开始执行任务: {job_id}")
         
         # 执行任务
         log = self._executor.execute_with_retry(job_id, job_config)
         self._execution_logs.append(log)
+        
+        # 保存执行日志到数据库
+        self._save_execution_log(log)
+        
+        logger.info(f"[Scheduler] 任务 {job_id} 执行完成，状态: {log.status}")
         
         # 如果成功，检查是否有等待此任务的其他任务
         if log.status == "completed":
             self._trigger_dependent_jobs(job_id)
         
         return log
+    
+    def _save_execution_log(self, log: JobExecutionLog) -> None:
+        """将执行日志保存到数据库"""
+        if not self.database_url:
+            logger.debug("No database URL configured, skipping log save")
+            return
+        
+        try:
+            from sqlalchemy import create_engine, text
+            engine = create_engine(self.database_url)
+            
+            with engine.connect() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO preprocess_execution_log 
+                        (job_id, job_type, status, started_at, ended_at, 
+                         symbols_count, records_processed, error_message, parameters)
+                        VALUES (:job_id, :job_type, :status, :started_at, :ended_at,
+                                :symbols_count, :records_processed, :error_message, :parameters)
+                    """),
+                    {
+                        "job_id": log.job_id,
+                        "job_type": log.job_type.value,
+                        "status": log.status,
+                        "started_at": log.start_time,
+                        "ended_at": log.end_time,
+                        "symbols_count": log.symbols_count,
+                        "records_processed": log.records_processed,
+                        "error_message": log.error_message,
+                        "parameters": None  # 可以扩展为 JSON
+                    }
+                )
+                conn.commit()
+                logger.debug(f"Saved execution log for job {log.job_id}")
+        except Exception as e:
+            logger.error(f"Failed to save execution log: {e}")
     
     def _check_dependencies(self, job_id: str) -> bool:
         """检查任务依赖是否满足"""
@@ -269,6 +353,10 @@ class ScheduleManager:
         
         log = self._executor.execute_with_retry(job_id, job_config)
         self._execution_logs.append(log)
+        
+        # 保存执行日志到数据库
+        self._save_execution_log(log)
+        
         return log
     
     def pause_job(self, job_id: str) -> None:
