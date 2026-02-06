@@ -176,25 +176,15 @@ CREATE TABLE IF NOT EXISTS fundamental_indicators (
     time TIMESTAMPTZ NOT NULL,              -- 数据日期
     symbol VARCHAR(20) NOT NULL,            -- 股票代码
     
-    -- 估值分位数（1年滚动窗口）
-    pe_ttm_pct_250d DECIMAL(10,4),          -- PE_TTM 1年分位
-    pb_pct_250d DECIMAL(10,4),              -- PB 1年分位
-    ps_ttm_pct_250d DECIMAL(10,4),          -- PS_TTM 1年分位
-    
-    -- 估值分位数（2年滚动窗口）
-    pe_ttm_pct_500d DECIMAL(10,4),          -- PE_TTM 2年分位
-    pb_pct_500d DECIMAL(10,4),              -- PB 2年分位
-    ps_ttm_pct_500d DECIMAL(10,4),          -- PS_TTM 2年分位
-    
-    -- 估值分位数（3年滚动窗口）
-    pe_ttm_pct_750d DECIMAL(10,4),          -- PE_TTM 3年分位
-    pb_pct_750d DECIMAL(10,4),              -- PB 3年分位
-    ps_ttm_pct_750d DECIMAL(10,4),          -- PS_TTM 3年分位
-    
     -- 估值分位数（5年滚动窗口）
     pe_ttm_pct_1250d DECIMAL(10,4),         -- PE_TTM 5年分位
     pb_pct_1250d DECIMAL(10,4),             -- PB 5年分位
     ps_ttm_pct_1250d DECIMAL(10,4),         -- PS_TTM 5年分位
+    
+    -- 估值分位数（10年滚动窗口）
+    pe_ttm_pct_2500d DECIMAL(10,4),         -- PE_TTM 10年分位
+    pb_pct_2500d DECIMAL(10,4),             -- PB 10年分位
+    ps_ttm_pct_2500d DECIMAL(10,4),         -- PS_TTM 10年分位
     
     -- Piotroski F-Score
     f_score SMALLINT,                       -- 总分 (0-9)

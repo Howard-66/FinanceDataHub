@@ -35,8 +35,8 @@ class ValuationPercentile:
     DEFAULT_METRICS = ["pe_ttm", "pb", "ps_ttm"]
     
     # 默认滚动窗口（交易日）
-    # 250 ≈ 1年, 500 ≈ 2年, 750 ≈ 3年, 1250 ≈ 5年
-    DEFAULT_WINDOWS = [250, 500, 750, 1250]
+    # 1250 ≈ 5年, 2500 ≈ 10年
+    DEFAULT_WINDOWS = [1250, 2500]
     
     def __init__(
         self,

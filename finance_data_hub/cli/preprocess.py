@@ -687,7 +687,7 @@ def show_info():
     
     # 基本面指标
     console.print("[bold]支持的基本面指标:[/bold]")
-    console.print("  • 估值分位: PE/PB/PS 的 1年/2年/3年/5年 历史分位")
+    console.print("  • 估值分位: PE/PB/PS 的 5年/10年 历史分位")
     console.print("  • F-Score: Piotroski 财务质量评分 (0-9)")
     console.print()
     
