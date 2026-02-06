@@ -176,6 +176,11 @@ CREATE TABLE IF NOT EXISTS fundamental_indicators (
     time TIMESTAMPTZ NOT NULL,              -- 数据日期
     symbol VARCHAR(20) NOT NULL,            -- 股票代码
     
+    -- 估值指标原始值
+    pe_ttm DECIMAL(10,4),                   -- 市盈率(TTM)
+    pb DECIMAL(10,4),                       -- 市净率
+    ps_ttm DECIMAL(10,4),                   -- 市销率(TTM)
+    
     -- 估值分位数（5年滚动窗口）
     pe_ttm_pct_1250d DECIMAL(10,4),         -- PE_TTM 5年分位
     pb_pct_1250d DECIMAL(10,4),             -- PB 5年分位
@@ -221,7 +226,8 @@ CREATE INDEX IF NOT EXISTS idx_fundamental_indicators_fscore
 
 -- 表和列注释
 COMMENT ON TABLE fundamental_indicators IS '基本面指标（估值分位、F-Score）';
-COMMENT ON COLUMN fundamental_indicators.pe_ttm_pct_250d IS 'PE_TTM在过去1年（250交易日）的分位数，0-100';
+COMMENT ON COLUMN fundamental_indicators.pe_ttm IS '市盈率(TTM)';
+COMMENT ON COLUMN fundamental_indicators.pe_ttm_pct_1250d IS 'PE_TTM在过去5年（1250交易日）的分位数，0-100';
 COMMENT ON COLUMN fundamental_indicators.f_score IS 'Piotroski F-Score财务质量评分，0-9分';
 COMMENT ON COLUMN fundamental_indicators.f_roa IS 'F-Score子项：ROA是否为正（0或1）';
 

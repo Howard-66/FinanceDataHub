@@ -378,10 +378,9 @@ class FundamentalDataStorage:
     
     # 估值分位列
     VALUATION_COLUMNS = [
-        "pe_ttm_pct_250d", "pb_pct_250d", "ps_ttm_pct_250d",
-        "pe_ttm_pct_500d", "pb_pct_500d", "ps_ttm_pct_500d",
-        "pe_ttm_pct_750d", "pb_pct_750d", "ps_ttm_pct_750d",
+        "pe_ttm", "pb", "ps_ttm",  # 原始值
         "pe_ttm_pct_1250d", "pb_pct_1250d", "ps_ttm_pct_1250d",
+        "pe_ttm_pct_2500d", "pb_pct_2500d", "ps_ttm_pct_2500d",
     ]
     
     # F-Score 列
@@ -410,13 +409,20 @@ class FundamentalDataStorage:
         if df.empty:
             return 0
         
-        # 准备数据
-        result = df.copy()
+        # 准备数据，过滤多余列
+        allowed_columns = ["time", "symbol"] + self.VALUATION_COLUMNS + self.FSCORE_COLUMNS
+        available_columns = [c for c in df.columns if c in allowed_columns]
+        
+        if len(available_columns) <= 2:  # 只有 time 和 symbol
+            logger.warning("No valid fundamental metric columns found in DataFrame")
+            return 0
+            
+        result = df[available_columns].copy()
         result["processed_at"] = datetime.now()
         
-        # 转换日期
-        if "time" in result.columns and pd.api.types.is_datetime64_any_dtype(result["time"]):
-            result["time"] = pd.to_datetime(result["time"]).dt.to_pydatetime()
+        # 转换日期，避开 FutureWarning
+        if "time" in result.columns:
+             result["time"] = pd.to_datetime(result["time"]).apply(lambda x: x.to_pydatetime() if pd.notnull(x) else None)
         
         # 获取列名
         columns = list(result.columns)
