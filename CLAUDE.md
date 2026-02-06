@@ -211,10 +211,16 @@ routing_strategy:
 - [x] `get_fundamental_indicators()` - 基本面指标获取
 - [x] `calculate_indicators()` - 实时指标计算
 
-**4.4 待完成**
+**4.4 CLI 扩展** ✅ 已完成
+- [x] 实现 `fdh-cli preprocess` 命令
+- [x] `preprocess run` - 执行预处理
+- [x] `preprocess status` - 查看预处理状态
+- [x] `preprocess info` - 显示模块信息
+
+**4.5 待完成**
 - [ ] 运行 SQL 迁移创建预处理数据表
-- [ ] 完善 `ProcessedDataStorage` 数据库操作
 - [ ] 编写单元测试和集成测试
+- [ ] 完善文档和使用示例
 
 ### Phase 5: 流式处理与高级特性 📋 规划中
 - [ ] 在 `xtquant_helper` 服务中增加 WebSocket 接口
@@ -254,31 +260,6 @@ routing_strategy:
 ```bash
 # 安装依赖
 uv sync
-
-# ========== 数据下载命令 ==========
-# 更新日线数据
-fdh-cli update --dataset daily --trade-date 2024-01-15
-
-# 更新每日基本面
-fdh-cli update --dataset daily_basic --trade-date 2024-01-15
-
-# 更新股票基本信息
-fdh-cli update --dataset basic
-
-# ========== 调度命令 ==========
-# 列出所有调度任务
-fdh-cli schedule list
-
-# 手动执行任务
-fdh-cli schedule run --job daily_update
-fdh-cli schedule run --job basic_update
-
-# 启动/停止调度器
-fdh-cli schedule start
-fdh-cli schedule stop
-
-# 查看调度状态
-fdh-cli schedule status
 
 # ========== 测试命令 ==========
 uv run pytest tests/ -v
@@ -879,6 +860,22 @@ fdh-cli update --dataset trade_cal --force                # 强制全量更新
 fdh-cli update --dataset trade_cal --start-date 2024-01-01 --end-date 2024-12-31  # 指定日期范围
 fdh-cli update --dataset trade_cal --symbols SSE,SZSE     # 指定特定交易所
 ```
+### 调度命令
+```bash
+# 列出所有调度任务
+fdh-cli schedule list
+
+# 手动执行任务
+fdh-cli schedule run --job daily_update
+fdh-cli schedule run --job basic_update
+
+# 启动/停止调度器
+fdh-cli schedule start
+fdh-cli schedule stop
+
+# 查看调度状态
+fdh-cli schedule status
+```
 
 ### 日志输出控制
 
@@ -955,3 +952,136 @@ fdh-cli cleanup --mode all --verbose
 ```
 
 **注意**: 数据库清理操作不可逆，请谨慎使用！
+
+### 数据预处理命令
+
+`fdh-cli preprocess` 命令用于执行数据预处理，包括复权处理、技术指标计算和基本面指标计算。
+
+#### 预处理子命令
+
+```bash
+# 查看预处理模块信息（支持的指标、频率、复权类型）
+fdh-cli preprocess info
+
+# 执行预处理
+fdh-cli preprocess run [OPTIONS]
+
+# 查看预处理状态
+fdh-cli preprocess status
+```
+
+#### 预处理选项
+
+| 选项 | 说明 | 示例 |
+|------|------|------|
+| `--all, -a` | 处理全部股票 | `--all` |
+| `--category, -c` | 预处理类别 | `--category technical` |
+| `--symbols, -s` | 股票代码列表（逗号分隔） | `--symbols 600519.SH,000858.SZ` |
+| `--start-date` | 开始日期 (YYYY-MM-DD) | `--start-date 2024-01-01` |
+| `--end-date` | 结束日期 (YYYY-MM-DD) | `--end-date 2024-12-31` |
+| `--freq, -f` | 频率列表（逗号分隔） | `--freq daily,weekly,monthly` |
+| `--adjust` | 复权类型 | `--adjust qfq` |
+| `--force` | 强制全量重新计算 | `--force` |
+| `--batch-size, -b` | 批处理大小 | `--batch-size 100` |
+| `--verbose, -v` | 显示详细日志 | `--verbose` |
+
+#### 预处理类别
+
+- `technical`: 技术指标（MA, MACD, RSI, ATR）
+- `fundamental`: 基本面指标（估值分位）
+- `all`: 全部类别
+
+#### 支持的技术指标
+
+| 指标 | 说明 |
+|------|------|
+| `ma_5, ma_10, ma_20, ma_60, ma_120, ma_250` | 简单移动平均线 |
+| `macd` | MACD 指标（macd_dif, macd_dea, macd_hist） |
+| `rsi_6, rsi_14` | 相对强弱指标 |
+| `atr_14` | 平均真实波幅 |
+
+#### 支持的基本面指标
+
+- **估值分位**: PE/PB/PS 的 1年/2年/3年/5年 历史分位
+- **F-Score**: Piotroski 财务质量评分 (0-9)
+
+#### 支持的频率
+
+- `daily`: 日线
+- `weekly`: 周线
+- `monthly`: 月线
+
+#### 支持的复权类型
+
+- `qfq`: 前复权（存储）
+- `hfq`: 后复权（实时计算）
+- `none`: 不复权
+
+#### 预处理数据表
+
+| 表名 | 说明 |
+|------|------|
+| `processed_daily_qfq` | 日线前复权数据 + 技术指标 |
+| `processed_weekly_qfq` | 周线前复权数据 + 技术指标 |
+| `processed_monthly_qfq` | 月线前复权数据 + 技术指标 |
+| `fundamental_indicators` | 基本面指标数据 |
+
+#### 使用示例
+
+```bash
+# 首次运行：全量预处理所有类别
+fdh-cli preprocess run --all --category all --force
+
+# 只处理技术指标（日线）
+fdh-cli preprocess run --all --category technical
+
+# 处理技术指标（日线+周线+月线）
+fdh-cli preprocess run --all --category technical --freq daily,weekly,monthly
+
+# 只处理基本面指标
+fdh-cli preprocess run --all --category fundamental
+
+# 处理指定股票
+fdh-cli preprocess run --symbols 600519.SH,000858.SZ --category technical
+
+# 处理指定日期范围（增量更新）
+fdh-cli preprocess run --all --start-date 2024-01-01 --end-date 2024-12-31 --category technical
+
+# 查看预处理状态
+fdh-cli preprocess status
+
+# 查看模块信息
+fdh-cli preprocess info
+
+# 详细模式（显示进度和日志）
+fdh-cli preprocess run --all --category technical --verbose
+```
+
+#### 预处理工作流程
+
+1. **首次运行**:
+   ```bash
+   # 全量预处理所有数据
+   fdh-cli preprocess run --all --category all --force
+   ```
+
+2. **日常更新**:
+   ```bash
+   # 只处理最近的数据（增量）
+   fdh-cli preprocess run --all --category technical --start-date 2024-12-01
+   ```
+
+3. **查看状态**:
+   ```bash
+   # 检查预处理数据的覆盖范围
+   fdh-cli preprocess status
+   ```
+
+#### 注意事项
+
+- 预处理命令会自动从 `symbol_daily` 表获取原始数据
+- 技术指标计算需要足够的历史数据（如 MA250 需要至少 250 天数据）
+- 基本面指标需要 `daily_basic` 表中的 PE/PB/PS 数据
+- 使用 `--force` 会重新计算所有数据，耗时较长
+- 批处理大小（`--batch-size`）可根据内存情况调整
+

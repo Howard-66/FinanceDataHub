@@ -120,6 +120,11 @@ routing_strategy:
       providers: [tushare]
       fallback: false
 
+    # 指数成分权重
+    index_weight:
+      providers: [tushare]
+      fallback: false
+
     # 申万行业分类
     sw_classify:
       providers: [tushare]
@@ -132,6 +137,13 @@ routing_strategy:
 
     # 申万行业日线行情
     sw_daily:
+      providers: [tushare]
+      fallback: false
+
+  # 市场数据路由
+  market:
+    # 交易日历
+    trade_cal:
       providers: [tushare]
       fallback: false
 

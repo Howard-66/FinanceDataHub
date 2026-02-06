@@ -58,6 +58,10 @@ app = typer.Typer(
 from finance_data_hub.cli.schedule import schedule_app
 app.add_typer(schedule_app, name="schedule", help="调度器管理命令")
 
+# 导入并注册 preprocess 子命令
+from finance_data_hub.cli.preprocess import preprocess_app
+app.add_typer(preprocess_app, name="preprocess", help="数据预处理命令")
+
 console = Console(legacy_windows=False)
 
 
