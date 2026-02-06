@@ -199,5 +199,5 @@ class RSIIndicator(BaseIndicator):
 register_indicator("macd", MACDIndicator)
 
 # 注册常用周期的 RSI
-for period in [6, 14, 24]:
+for period in [14]:
     register_indicator(f"rsi_{period}", lambda p=period: RSIIndicator(p))

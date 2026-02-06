@@ -258,6 +258,9 @@ routing_strategy:
 ## 常用开发命令
 
 ```bash
+# 建立虚拟环境
+uv venv --python 3.11
+
 # 安装依赖
 uv sync
 

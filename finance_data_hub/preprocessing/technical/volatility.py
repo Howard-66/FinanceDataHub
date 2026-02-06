@@ -167,7 +167,7 @@ class TRIndicator(BaseIndicator):
 
 
 # 注册常用周期的 ATR
-for period in [14, 20]:
+for period in [14]:
     register_indicator(f"atr_{period}", lambda p=period: ATRIndicator(p))
 
 register_indicator("tr", TRIndicator)

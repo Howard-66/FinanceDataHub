@@ -21,24 +21,19 @@ CREATE TABLE IF NOT EXISTS processed_daily_qfq (
     volume BIGINT,                          -- 成交量（股）
     amount DECIMAL(20,4),                   -- 成交额（元）
     
-    -- 均线指标
-    ma_5 DECIMAL(20,6),                     -- 5日均线
-    ma_10 DECIMAL(20,6),                    -- 10日均线
+    -- 均线指标 (简化版: 20, 50)
     ma_20 DECIMAL(20,6),                    -- 20日均线
-    ma_60 DECIMAL(20,6),                    -- 60日均线
-    ma_120 DECIMAL(20,6),                   -- 120日均线
-    ma_250 DECIMAL(20,6),                   -- 250日均线
+    ma_50 DECIMAL(20,6),                    -- 50日均线
     
-    -- MACD 指标
+    -- MACD 指标 (默认 12, 26, 9)
     macd_dif DECIMAL(20,6),                 -- DIF 线
     macd_dea DECIMAL(20,6),                 -- DEA 信号线
     macd_hist DECIMAL(20,6),                -- MACD 柱状图
     
-    -- RSI 指标
-    rsi_6 DECIMAL(10,4),                    -- 6日 RSI
+    -- RSI 指标 (简化版: 14)
     rsi_14 DECIMAL(10,4),                   -- 14日 RSI
     
-    -- ATR 指标
+    -- ATR 指标 (简化版: 14)
     atr_14 DECIMAL(20,6),                   -- 14日 ATR
     
     -- 元数据
@@ -62,7 +57,6 @@ CREATE INDEX IF NOT EXISTS idx_processed_daily_qfq_time
 
 -- 表和列注释
 COMMENT ON TABLE processed_daily_qfq IS '前复权日线数据（含技术指标）';
-COMMENT ON COLUMN processed_daily_qfq.ma_5 IS '5日简单移动平均线';
 COMMENT ON COLUMN processed_daily_qfq.ma_20 IS '20日简单移动平均线';
 COMMENT ON COLUMN processed_daily_qfq.macd_dif IS 'MACD DIF线（快线-慢线）';
 COMMENT ON COLUMN processed_daily_qfq.macd_dea IS 'MACD DEA信号线（DIF的EMA）';
@@ -87,9 +81,8 @@ CREATE TABLE IF NOT EXISTS processed_weekly_qfq (
     amount DECIMAL(20,4),
     
     -- 均线指标（基于周线）
-    ma_5 DECIMAL(20,6),                     -- 5周均线
-    ma_10 DECIMAL(20,6),                    -- 10周均线
     ma_20 DECIMAL(20,6),                    -- 20周均线
+    ma_50 DECIMAL(20,6),                    -- 50周均线
     
     -- MACD 指标
     macd_dif DECIMAL(20,6),
@@ -97,7 +90,6 @@ CREATE TABLE IF NOT EXISTS processed_weekly_qfq (
     macd_hist DECIMAL(20,6),
     
     -- RSI 指标
-    rsi_6 DECIMAL(10,4),
     rsi_14 DECIMAL(10,4),
     
     -- ATR 指标
@@ -141,9 +133,8 @@ CREATE TABLE IF NOT EXISTS processed_monthly_qfq (
     amount DECIMAL(20,4),
     
     -- 均线指标（基于月线）
-    ma_5 DECIMAL(20,6),                     -- 5月均线
-    ma_10 DECIMAL(20,6),                    -- 10月均线
     ma_20 DECIMAL(20,6),                    -- 20月均线
+    ma_50 DECIMAL(20,6),                    -- 50月均线
     
     -- MACD 指标
     macd_dif DECIMAL(20,6),
@@ -151,7 +142,6 @@ CREATE TABLE IF NOT EXISTS processed_monthly_qfq (
     macd_hist DECIMAL(20,6),
     
     -- RSI 指标
-    rsi_6 DECIMAL(10,4),
     rsi_14 DECIMAL(10,4),
     
     -- ATR 指标
@@ -272,33 +262,3 @@ CREATE INDEX IF NOT EXISTS idx_preprocess_log_status
     ON preprocess_execution_log (status);
 
 COMMENT ON TABLE preprocess_execution_log IS '预处理任务执行日志';
-
-
--- =====================================================
--- 6. 压缩策略（可选，用于节省存储空间）
--- =====================================================
-
--- 为超过 6 个月的数据启用压缩
--- ALTER TABLE processed_daily_qfq SET (
---     timescaledb.compress,
---     timescaledb.compress_segmentby = 'symbol'
--- );
--- SELECT add_compression_policy('processed_daily_qfq', INTERVAL '6 months');
-
--- ALTER TABLE processed_weekly_qfq SET (
---     timescaledb.compress,
---     timescaledb.compress_segmentby = 'symbol'
--- );
--- SELECT add_compression_policy('processed_weekly_qfq', INTERVAL '1 year');
-
--- ALTER TABLE processed_monthly_qfq SET (
---     timescaledb.compress,
---     timescaledb.compress_segmentby = 'symbol'
--- );
--- SELECT add_compression_policy('processed_monthly_qfq', INTERVAL '2 years');
-
--- ALTER TABLE fundamental_indicators SET (
---     timescaledb.compress,
---     timescaledb.compress_segmentby = 'symbol'
--- );
--- SELECT add_compression_policy('fundamental_indicators', INTERVAL '1 year');

@@ -175,6 +175,6 @@ class EMAIndicator(BaseIndicator):
 
 
 # 注册常用周期的均线指标
-for period in [5, 10, 20, 60, 120, 250]:
+for period in [20, 50]:
     register_indicator(f"ma_{period}", lambda p=period: MAIndicator(p))
     register_indicator(f"ema_{period}", lambda p=period: EMAIndicator(p))

@@ -45,8 +45,8 @@ preprocess_app = typer.Typer(
 
 # 默认技术指标
 DEFAULT_INDICATORS = [
-    "ma_5", "ma_10", "ma_20", "ma_60", "ma_120", "ma_250",
-    "macd", "rsi_6", "rsi_14", "atr_14"
+    "ma_20", "ma_50",
+    "macd", "rsi_14", "atr_14"
 ]
 
 # 默认频率
@@ -675,9 +675,9 @@ def show_info():
     # 技术指标
     console.print("[bold]支持的技术指标:[/bold]")
     indicators = [
-        ("ma_5, ma_10, ma_20, ma_60, ma_120, ma_250", "简单移动平均线"),
+        ("ma_20, ma_50", "简单移动平均线"),
         ("macd (macd_dif, macd_dea, macd_hist)", "MACD 指标"),
-        ("rsi_6, rsi_14", "相对强弱指标"),
+        ("rsi_14", "相对强弱指标"),
         ("atr_14", "平均真实波幅"),
     ]
     

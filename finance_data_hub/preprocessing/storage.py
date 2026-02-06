@@ -36,9 +36,9 @@ class ProcessedDataStorage:
     
     # 技术指标列
     TECHNICAL_COLUMNS = [
-        "ma_5", "ma_10", "ma_20", "ma_60", "ma_120", "ma_250",
+        "ma_20", "ma_50",
         "macd_dif", "macd_dea", "macd_hist",
-        "rsi_6", "rsi_14",
+        "rsi_14",
         "atr_14"
     ]
     
