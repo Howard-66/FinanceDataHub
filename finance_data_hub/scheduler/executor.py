@@ -115,6 +115,11 @@ class TaskExecutor:
                 raise RuntimeError(f"Download failed for {dataset}: {error_msg}")
             
             logger.info(f"Download completed for {dataset}")
+            
+            # 记录命令输出，以便调试（特别是"无数据"的情况）
+            if result.stdout:
+                logger.info(f"Command output for {dataset}:\n{result.stdout.strip()}")
+            
             # TODO: 解析输出获取记录数
             
         return {

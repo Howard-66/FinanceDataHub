@@ -21,6 +21,7 @@ from pathlib import Path
 import os
 import signal
 import sys
+from loguru import logger
 
 from ..scheduler import ScheduleManager
 from ..config import get_settings
@@ -122,6 +123,30 @@ def start(
     使用 --daemon 以守护进程模式运行。
     """
     global _manager
+    
+    # 重新配置日志：确保前台模式下能看到 INFO 日志
+    logger.remove()
+    
+    # 1. 控制台输出
+    log_level = "DEBUG" if verbose else "INFO"
+    logger.add(
+        sys.stderr,
+        level=log_level,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        colorize=True,
+    )
+    
+    # 2. 文件输出（与 manager.py 保持一致）
+    log_file = Path.cwd() / "logs" / "scheduler.log"
+    log_file.parent.mkdir(exist_ok=True)
+    logger.add(
+        str(log_file),
+        rotation="10 MB",
+        retention="7 days",
+        level="DEBUG",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
+        enqueue=True,
+    )
     
     config_path = config or _get_config_path()
     
