@@ -3,11 +3,20 @@
 
 包含：
 - ATR: 平均真实波幅
+- TR: 真实波幅
+
+使用 TA-Lib 加速计算。
 """
 
 from typing import List
 import pandas as pd
 import numpy as np
+
+try:
+    import talib
+    HAS_TALIB = True
+except ImportError:
+    HAS_TALIB = False
 
 from .base import BaseIndicator, register_indicator
 
@@ -71,34 +80,33 @@ class ATRIndicator(BaseIndicator):
                 raise ValueError(f"DataFrame must contain '{col}' column for ATR calculation")
         
         result = df.copy()
+        symbols = df["symbol"].unique()
+        result[self.name] = np.nan
         
-        def calc_atr(group: pd.DataFrame) -> pd.Series:
-            high = group["high"]
-            low = group["low"]
-            close = group["close"]
+        for symbol in symbols:
+            mask = df["symbol"] == symbol
+            high = df.loc[mask, "high"].values.astype(np.float64)
+            low = df.loc[mask, "low"].values.astype(np.float64)
+            close = df.loc[mask, "close"].values.astype(np.float64)
             
-            # 前一日收盘价
-            prev_close = close.shift(1)
-            
-            # 计算三个真实波幅候选值
-            tr1 = high - low  # 当日振幅
-            tr2 = (high - prev_close).abs()  # 当日最高与前日收盘的距离
-            tr3 = (low - prev_close).abs()  # 当日最低与前日收盘的距离
-            
-            # 真实波幅 = 三个候选值中的最大值
-            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-            
-            # ATR = TR 的 EMA
-            atr = tr.ewm(span=self.period, adjust=False).mean()
-            
-            return pd.Series(atr.values, index=group.index)
-        
-        # 按股票分组计算
-        atr_values = []
-        for _, group in df.groupby("symbol", sort=False):
-            atr_values.append(calc_atr(group))
-        
-        result[self.name] = pd.concat(atr_values)
+            if len(close) > 0:
+                if HAS_TALIB:
+                    # 使用 TA-Lib 加速
+                    atr = talib.ATR(high, low, close, timeperiod=self.period)
+                    result.loc[mask, self.name] = atr
+                else:
+                    # 回退到 pandas 实现
+                    prev_close = np.roll(close, 1)
+                    prev_close[0] = close[0]
+                    
+                    tr1 = high - low
+                    tr2 = np.abs(high - prev_close)
+                    tr3 = np.abs(low - prev_close)
+                    tr = np.maximum(np.maximum(tr1, tr2), tr3)
+                    
+                    # ATR = TR 的 EMA
+                    atr = pd.Series(tr).ewm(span=self.period, adjust=False).mean().values
+                    result.loc[mask, self.name] = atr
         
         return result
 
@@ -123,27 +131,37 @@ class TRIndicator(BaseIndicator):
     
     def calculate(self, df: pd.DataFrame) -> pd.DataFrame:
         """计算 TR"""
+        # 验证必要的列
+        required_cols = ["high", "low", "close"]
+        for col in required_cols:
+            if col not in df.columns:
+                raise ValueError(f"DataFrame must contain '{col}' column for TR calculation")
+        
         result = df.copy()
+        symbols = df["symbol"].unique()
+        result[self.name] = np.nan
         
-        def calc_tr(group: pd.DataFrame) -> pd.Series:
-            high = group["high"]
-            low = group["low"]
-            close = group["close"]
-            prev_close = close.shift(1)
+        for symbol in symbols:
+            mask = df["symbol"] == symbol
+            high = df.loc[mask, "high"].values.astype(np.float64)
+            low = df.loc[mask, "low"].values.astype(np.float64)
+            close = df.loc[mask, "close"].values.astype(np.float64)
             
-            tr1 = high - low
-            tr2 = (high - prev_close).abs()
-            tr3 = (low - prev_close).abs()
-            
-            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-            return pd.Series(tr.values, index=group.index)
-        
-        # 按股票分组计算
-        tr_values = []
-        for _, group in df.groupby("symbol", sort=False):
-            tr_values.append(calc_tr(group))
-        
-        result[self.name] = pd.concat(tr_values)
+            if len(close) > 0:
+                if HAS_TALIB:
+                    # 使用 TA-Lib 加速
+                    tr = talib.TRANGE(high, low, close)
+                    result.loc[mask, self.name] = tr
+                else:
+                    # 回退到 pandas 实现
+                    prev_close = np.roll(close, 1)
+                    prev_close[0] = close[0]
+                    
+                    tr1 = high - low
+                    tr2 = np.abs(high - prev_close)
+                    tr3 = np.abs(low - prev_close)
+                    tr = np.maximum(np.maximum(tr1, tr2), tr3)
+                    result.loc[mask, self.name] = tr
         
         return result
 

@@ -4,13 +4,44 @@
 包含：
 - MA: 简单移动平均线
 - EMA: 指数移动平均线
+
+使用 TA-Lib 加速计算。
 """
 
 from typing import List
 import pandas as pd
 import numpy as np
 
+try:
+    import talib
+    HAS_TALIB = True
+except ImportError:
+    HAS_TALIB = False
+
 from .base import BaseIndicator, register_indicator
+
+
+def _compute_by_symbol(df: pd.DataFrame, compute_func, col_name: str) -> pd.DataFrame:
+    """
+    按 symbol 分组计算指标（优化版本）
+    
+    使用向量化操作，避免逐行处理。
+    """
+    result = df.copy()
+    
+    # 按 symbol 分组处理
+    symbols = df["symbol"].unique()
+    result[col_name] = np.nan
+    
+    for symbol in symbols:
+        mask = df["symbol"] == symbol
+        close = df.loc[mask, "close"].values.astype(np.float64)
+        
+        if len(close) > 0:
+            values = compute_func(close)
+            result.loc[mask, col_name] = values
+    
+    return result
 
 
 class MAIndicator(BaseIndicator):
@@ -57,19 +88,25 @@ class MAIndicator(BaseIndicator):
         Returns:
             添加 MA 列的 DataFrame
         """
-        result = df.copy()
-        
-        result[self.name] = (
-            df.groupby("symbol")["close"]
-            .transform(
-                lambda x: x.rolling(
-                    window=self.period, 
-                    min_periods=1
-                ).mean()
+        if HAS_TALIB:
+            # 使用 TA-Lib 加速
+            def compute_ma(close: np.ndarray) -> np.ndarray:
+                return talib.SMA(close, timeperiod=self.period)
+            
+            return _compute_by_symbol(df, compute_ma, self.name)
+        else:
+            # 回退到 pandas 实现
+            result = df.copy()
+            result[self.name] = (
+                df.groupby("symbol")["close"]
+                .transform(
+                    lambda x: x.rolling(
+                        window=self.period, 
+                        min_periods=1
+                    ).mean()
+                )
             )
-        )
-        
-        return result
+            return result
 
 
 class EMAIndicator(BaseIndicator):
@@ -116,19 +153,25 @@ class EMAIndicator(BaseIndicator):
         Returns:
             添加 EMA 列的 DataFrame
         """
-        result = df.copy()
-        
-        result[self.name] = (
-            df.groupby("symbol")["close"]
-            .transform(
-                lambda x: x.ewm(
-                    span=self.period, 
-                    adjust=False
-                ).mean()
+        if HAS_TALIB:
+            # 使用 TA-Lib 加速
+            def compute_ema(close: np.ndarray) -> np.ndarray:
+                return talib.EMA(close, timeperiod=self.period)
+            
+            return _compute_by_symbol(df, compute_ema, self.name)
+        else:
+            # 回退到 pandas 实现
+            result = df.copy()
+            result[self.name] = (
+                df.groupby("symbol")["close"]
+                .transform(
+                    lambda x: x.ewm(
+                        span=self.period, 
+                        adjust=False
+                    ).mean()
+                )
             )
-        )
-        
-        return result
+            return result
 
 
 # 注册常用周期的均线指标

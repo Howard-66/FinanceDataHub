@@ -912,47 +912,6 @@ fdh-cli refresh-aggregates --table daily_basic_weekly
 fdh-cli status --aggregates
 ```
 
-### 系统状态查看
-
-```bash
-# 查看数据库状态
-fdh-cli status
-
-# 详细信息
-fdh-cli status --verbose
-```
-
-### 配置管理
-
-```bash
-# 查看当前配置
-fdh-cli config show
-
-# 测试配置
-fdh-cli config test
-```
-
-### 数据库清理
-
-```bash
-# 完全清理数据库（删除所有表、视图、函数、连续聚合）- 需确认
-fdh-cli cleanup --mode all
-
-# 完全清理并跳过确认
-fdh-cli cleanup --mode all --yes
-
-# 只清空数据，保留表结构
-fdh-cli cleanup --mode data_only
-
-# 只删除连续聚合视图
-fdh-cli cleanup --mode aggregates
-
-# 显示详细信息
-fdh-cli cleanup --mode all --verbose
-```
-
-**注意**: 数据库清理操作不可逆，请谨慎使用！
-
 ### 数据预处理命令
 
 `fdh-cli preprocess` 命令用于执行数据预处理，包括复权处理、技术指标计算和基本面指标计算。
@@ -1085,3 +1044,50 @@ fdh-cli preprocess run --all --category technical --verbose
 - 使用 `--force` 会重新计算所有数据，耗时较长
 - 批处理大小（`--batch-size`）可根据内存情况调整
 
+
+### 系统状态查看
+
+```bash
+# 查看数据库状态
+fdh-cli status
+
+# 详细信息
+fdh-cli status --verbose
+```
+
+### 配置管理
+
+```bash
+# 查看当前配置
+fdh-cli config show
+
+# 测试配置
+fdh-cli config test
+```
+
+### 数据库清理
+
+```bash
+# 完全清理数据库（删除所有表、视图、函数、连续聚合）- 需确认
+fdh-cli cleanup --mode all
+
+# 完全清理并跳过确认
+fdh-cli cleanup --mode all --yes
+
+# 只清空数据，保留表结构
+fdh-cli cleanup --mode data_only
+
+# 只删除连续聚合视图
+fdh-cli cleanup --mode aggregates
+
+# 显示详细信息
+fdh-cli cleanup --mode all --verbose
+```
+**注意**: 数据库清理操作不可逆，请谨慎使用！
+
+### 虚拟环境清理
+
+```bash
+# 完全清理虚拟环境
+taskkill /F /IM python.exe 2>$null; Remove-Item -Recurse -Force .venv -ErrorAction SilentlyContinue; Write-Host "Cleaned .venv directory"
+```

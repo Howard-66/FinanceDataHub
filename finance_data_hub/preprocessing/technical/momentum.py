@@ -4,11 +4,19 @@
 包含：
 - MACD: 指数平滑异同移动平均线
 - RSI: 相对强弱指标
+
+使用 TA-Lib 加速计算。
 """
 
 from typing import List
 import pandas as pd
 import numpy as np
+
+try:
+    import talib
+    HAS_TALIB = True
+except ImportError:
+    HAS_TALIB = False
 
 from .base import BaseIndicator, register_indicator
 
@@ -71,37 +79,41 @@ class MACDIndicator(BaseIndicator):
             添加 MACD 相关列的 DataFrame
         """
         result = df.copy()
+        symbols = df["symbol"].unique()
         
-        def calc_macd(group: pd.DataFrame) -> pd.DataFrame:
-            close = group["close"]
-            
-            # 计算快速和慢速 EMA
-            ema_fast = close.ewm(span=self.fast, adjust=False).mean()
-            ema_slow = close.ewm(span=self.slow, adjust=False).mean()
-            
-            # DIF = 快线 - 慢线
-            dif = ema_fast - ema_slow
-            
-            # DEA = DIF 的 EMA
-            dea = dif.ewm(span=self.signal, adjust=False).mean()
-            
-            # MACD 柱状图（乘以 2 是为了放大显示）
-            hist = (dif - dea) * 2
-            
-            return pd.DataFrame({
-                "macd_dif": dif,
-                "macd_dea": dea,
-                "macd_hist": hist
-            }, index=group.index)
+        result["macd_dif"] = np.nan
+        result["macd_dea"] = np.nan
+        result["macd_hist"] = np.nan
         
-        # 按股票分组计算
-        macd_df = (
-            df.groupby("symbol", group_keys=False)
-            .apply(calc_macd)
-        )
-        
-        # 合并结果
-        result = result.join(macd_df)
+        for symbol in symbols:
+            mask = df["symbol"] == symbol
+            close = df.loc[mask, "close"].values.astype(np.float64)
+            
+            if len(close) > 0:
+                if HAS_TALIB:
+                    # TA-Lib 的 MACD 返回 (dif, dea, hist)
+                    dif, dea, hist = talib.MACD(
+                        close, 
+                        fastperiod=self.fast, 
+                        slowperiod=self.slow, 
+                        signalperiod=self.signal
+                    )
+                    # TA-Lib 的 hist 没有乘以 2，这里保持一致
+                    result.loc[mask, "macd_dif"] = dif
+                    result.loc[mask, "macd_dea"] = dea
+                    result.loc[mask, "macd_hist"] = hist * 2  # 乘以 2 以匹配国内习惯
+                else:
+                    # 回退到 pandas 实现
+                    close_series = pd.Series(close)
+                    ema_fast = close_series.ewm(span=self.fast, adjust=False).mean()
+                    ema_slow = close_series.ewm(span=self.slow, adjust=False).mean()
+                    dif = ema_fast - ema_slow
+                    dea = dif.ewm(span=self.signal, adjust=False).mean()
+                    hist = (dif - dea) * 2
+                    
+                    result.loc[mask, "macd_dif"] = dif.values
+                    result.loc[mask, "macd_dea"] = dea.values
+                    result.loc[mask, "macd_hist"] = hist.values
         
         return result
 
@@ -155,37 +167,30 @@ class RSIIndicator(BaseIndicator):
             添加 RSI 列的 DataFrame
         """
         result = df.copy()
+        symbols = df["symbol"].unique()
+        result[self.name] = np.nan
         
-        def calc_rsi(group: pd.DataFrame) -> pd.Series:
-            close = group["close"]
+        for symbol in symbols:
+            mask = df["symbol"] == symbol
+            close = df.loc[mask, "close"].values.astype(np.float64)
             
-            # 计算价格变化
-            delta = close.diff()
-            
-            # 分离上涨和下跌
-            gain = delta.where(delta > 0, 0)
-            loss = (-delta).where(delta < 0, 0)
-            
-            # 计算平均上涨和下跌
-            avg_gain = gain.rolling(window=self.period, min_periods=1).mean()
-            avg_loss = loss.rolling(window=self.period, min_periods=1).mean()
-            
-            # 计算 RS 和 RSI
-            # 避免除以零
-            rs = avg_gain / avg_loss.replace(0, np.inf)
-            rsi = 100 - (100 / (1 + rs))
-            
-            # 处理极端情况
-            rsi = rsi.replace([np.inf, -np.inf], np.nan)
-            
-            return pd.Series(rsi.values, index=group.index)
-        
-        # 按股票分组计算，使用 transform 方式
-        rsi_values = []
-        for _, group in df.groupby("symbol", sort=False):
-            rsi_values.append(calc_rsi(group))
-        
-        result[self.name] = pd.concat(rsi_values)
+            if len(close) > 0:
+                if HAS_TALIB:
+                    # 使用 TA-Lib 加速
+                    rsi = talib.RSI(close, timeperiod=self.period)
+                    result.loc[mask, self.name] = rsi
+                else:
+                    # 回退到 pandas 实现
+                    close_series = pd.Series(close)
+                    delta = close_series.diff()
+                    gain = delta.where(delta > 0, 0)
+                    loss = (-delta).where(delta < 0, 0)
+                    avg_gain = gain.rolling(window=self.period, min_periods=1).mean()
+                    avg_loss = loss.rolling(window=self.period, min_periods=1).mean()
+                    rs = avg_gain / avg_loss.replace(0, np.inf)
+                    rsi = 100 - (100 / (1 + rs))
+                    rsi = rsi.replace([np.inf, -np.inf], np.nan)
+                    result.loc[mask, self.name] = rsi.values
         
         return result
 

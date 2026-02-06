@@ -37,6 +37,7 @@ dependencies = [
     "apscheduler>=3.11.2",
     "ipykernel>=7.1.0",
     "psycopg2-binary>=2.9.11",
+    "ta-lib>=0.6.0",
 ]
 
 [project.optional-dependencies]
