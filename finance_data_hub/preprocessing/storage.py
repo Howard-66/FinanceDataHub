@@ -558,3 +558,202 @@ class FundamentalDataStorage:
         except Exception as e:
             logger.error(f"Query failed: {e}")
             return pd.DataFrame()
+
+
+class QuarterlyFundamentalDataStorage:
+    """
+    季度基本面指标存储管理器
+    
+    管理 F-Score 和补充指标的季度数据存储。
+    """
+    
+    TABLE_NAME = "quarterly_fundamental_indicators"
+    
+    # F-Score 列
+    FSCORE_COLUMNS = [
+        "f_score",
+        "f_roa", "f_cfo", "f_delta_roa", "f_accrual",
+        "f_delta_lever", "f_delta_liquid", "f_eq_offer",
+        "f_delta_margin", "f_delta_turn"
+    ]
+    
+    # 补充指标列
+    EXTRA_COLUMNS = [
+        "roe_5y_avg", "ni_cfo_corr_3y", "debt_ratio", "current_ratio"
+    ]
+    
+    # 日期列
+    DATE_COLUMNS = ["end_date_time", "ann_date_time", "f_ann_date_time"]
+    
+    def __init__(self, db_manager: Optional["DatabaseManager"] = None):
+        self.db_manager = db_manager
+    
+    async def upsert(
+        self,
+        df: pd.DataFrame,
+        batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入/更新季度基本面指标数据
+        
+        Args:
+            df: 包含 F-Score 及补充指标的 DataFrame
+                必须包含: ts_code, end_date_time
+                可选包含: ann_date_time, f_ann_date_time, F-Score列, 补充指标列
+            batch_size: 批处理大小
+            
+        Returns:
+            影响的记录数
+        """
+        if self.db_manager is None:
+            logger.warning("No db_manager configured")
+            return 0
+        
+        if df.empty:
+            return 0
+        
+        # 准备数据
+        allowed_columns = (
+            ["ts_code"] + self.DATE_COLUMNS + 
+            self.FSCORE_COLUMNS + self.EXTRA_COLUMNS + 
+            ["exemptions"]
+        )
+        available_columns = [c for c in df.columns if c in allowed_columns]
+        
+        if "ts_code" not in available_columns or "end_date_time" not in available_columns:
+            logger.error("DataFrame must contain 'ts_code' and 'end_date_time' columns")
+            return 0
+        
+        result = df[available_columns].copy()
+        result["processed_at"] = datetime.now()
+        
+        # 转换日期列
+        for date_col in self.DATE_COLUMNS:
+            if date_col in result.columns:
+                result[date_col] = pd.to_datetime(result[date_col]).apply(
+                    lambda x: x.to_pydatetime() if pd.notnull(x) else None
+                )
+        
+        # 获取列名
+        columns = list(result.columns)
+        
+        # 构建 SQL
+        cols_str = ", ".join(columns)
+        placeholders = ", ".join([f"${i+1}" for i in range(len(columns))])
+        
+        # 构建更新语句（排除主键）
+        update_cols = [c for c in columns if c not in ["ts_code", "end_date_time"]]
+        update_str = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
+        
+        sql = f"""
+            INSERT INTO {self.TABLE_NAME} ({cols_str})
+            VALUES ({placeholders})
+            ON CONFLICT (ts_code, end_date_time) 
+            DO UPDATE SET {update_str}
+        """
+        
+        # 转换数据为记录列表
+        values_list = []
+        for _, row in result.iterrows():
+            values = []
+            for col in columns:
+                val = row[col]
+                # 先检查是否为空值（包括 NaT、NaN、None）
+                if pd.isna(val):
+                    val = None
+                elif isinstance(val, (pd.Timestamp, datetime)):
+                    # 确保不是 NaT
+                    if pd.isnull(val):
+                        val = None
+                    elif hasattr(val, 'to_pydatetime'):
+                        val = val.to_pydatetime()
+                elif hasattr(val, 'item'):  # numpy scalar
+                    val = val.item()
+                elif isinstance(val, list):  # exemptions 列
+                    import json
+                    val = json.dumps(val)
+                values.append(val)
+            values_list.append(tuple(values))
+        
+        total = 0
+        try:
+            engine = self.db_manager.get_engine()
+            async with engine.begin() as conn:
+                raw_conn = await conn.get_raw_connection()
+                asyncpg_conn = raw_conn.driver_connection
+                
+                for i in range(0, len(values_list), batch_size):
+                    batch = values_list[i:i+batch_size]
+                    await asyncpg_conn.executemany(sql, batch)
+                    total += len(batch)
+                    
+            logger.info(f"Upserted {total} quarterly records to {self.TABLE_NAME}")
+            return total
+        except Exception as e:
+            logger.error(f"Quarterly upsert failed: {e}")
+            raise
+    
+    async def query(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> pd.DataFrame:
+        """
+        查询季度基本面指标
+        
+        Args:
+            symbols: 股票代码列表（ts_code 格式）
+            start_date: 开始日期（报告期）
+            end_date: 结束日期（报告期）
+            
+        Returns:
+            季度基本面指标 DataFrame
+        """
+        if self.db_manager is None:
+            return pd.DataFrame()
+        
+        conditions = []
+        params = {}
+        
+        if symbols:
+            placeholders = ", ".join([f":sym_{i}" for i in range(len(symbols))])
+            conditions.append(f"ts_code IN ({placeholders})")
+            for i, sym in enumerate(symbols):
+                params[f"sym_{i}"] = sym
+        
+        if start_date:
+            if isinstance(start_date, str):
+                start_date = pd.to_datetime(start_date).to_pydatetime()
+            conditions.append("end_date_time >= :start_date")
+            params["start_date"] = start_date
+        
+        if end_date:
+            if isinstance(end_date, str):
+                end_date = pd.to_datetime(end_date).to_pydatetime()
+            conditions.append("end_date_time <= :end_date")
+            params["end_date"] = end_date
+        
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+        
+        sql = f"""
+            SELECT * FROM {self.TABLE_NAME}
+            {where_clause}
+            ORDER BY ts_code, end_date_time
+        """
+        
+        try:
+            result = await self.db_manager.execute_raw_sql(sql, params)
+            rows = result.fetchall()
+            
+            if not rows:
+                return pd.DataFrame()
+            
+            # 获取列名
+            columns = result.keys()
+            return pd.DataFrame(rows, columns=columns)
+        except Exception as e:
+            logger.error(f"Quarterly query failed: {e}")
+            return pd.DataFrame()

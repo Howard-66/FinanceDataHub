@@ -211,3 +211,204 @@ class ValuationPercentile:
             })
         
         return pd.DataFrame(result_list)
+
+
+class PEGCalculator:
+    """
+    PEG 指标计算器
+    
+    PEG = PE_TTM / 净利润同比增速(%)
+    
+    使用场景:
+    - PEG < 1: 可能被低估
+    - PEG = 1: 合理估值
+    - PEG > 1: 可能被高估
+    
+    注意:
+    - 仅当净利润增速 > 0 时计算有意义
+    - 增速为负时 PEG 无意义,返回 NaN
+    """
+    
+    def __init__(self):
+        pass
+    
+    def calculate(
+        self, 
+        daily_basic: pd.DataFrame, 
+        fina_indicator: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        计算 PEG 指标
+        
+        Args:
+            daily_basic: 日度估值数据,需包含 symbol, time, pe_ttm
+            fina_indicator: 财务指标数据,需包含 ts_code, end_date, netprofit_yoy
+            
+        Returns:
+            添加 peg 列的 DataFrame
+        """
+        result = daily_basic.copy()
+        
+        if "pe_ttm" not in daily_basic.columns:
+            logger.warning("pe_ttm not found in daily_basic, skipping PEG calculation")
+            result["peg"] = np.nan
+            return result
+        
+        if fina_indicator.empty or "netprofit_yoy" not in fina_indicator.columns:
+            logger.warning("netprofit_yoy not found in fina_indicator, skipping PEG calculation")
+            result["peg"] = np.nan
+            return result
+        
+        # 标准化列名
+        if "symbol" not in daily_basic.columns and "ts_code" in daily_basic.columns:
+            result["symbol"] = result["ts_code"]
+        
+        # 准备财务数据:按股票获取最新的净利润增速
+        fina = fina_indicator.copy()
+        if "end_date_time" not in fina.columns and "end_date" in fina.columns:
+            fina["end_date_time"] = pd.to_datetime(fina["end_date"])
+        
+        # 获取公告日期列
+        if "ann_date_time" not in fina.columns and "ann_date" in fina.columns:
+            fina["ann_date_time"] = pd.to_datetime(fina["ann_date"])
+        
+        # 计算 PEG
+        peg_values = []
+        
+        for idx, row in result.iterrows():
+            symbol = row.get("symbol")
+            trade_date = row.get("time")
+            pe_ttm = row.get("pe_ttm")
+            
+            if pd.isna(pe_ttm) or pe_ttm <= 0:
+                peg_values.append(np.nan)
+                continue
+            
+            # 获取该股票在交易日之前最新的财务数据
+            stock_fina = fina[fina["ts_code"] == symbol]
+            
+            if stock_fina.empty:
+                peg_values.append(np.nan)
+                continue
+            
+            # 使用公告日期筛选
+            date_col = "ann_date_time" if "ann_date_time" in stock_fina.columns else "end_date_time"
+            available = stock_fina[stock_fina[date_col] <= trade_date]
+            
+            if available.empty:
+                peg_values.append(np.nan)
+                continue
+            
+            # 获取最新的净利润增速
+            latest = available.sort_values(date_col).iloc[-1]
+            netprofit_yoy = latest.get("netprofit_yoy")
+            
+            if pd.isna(netprofit_yoy) or netprofit_yoy <= 0:
+                # 增速为负或为零,PEG 无意义
+                peg_values.append(np.nan)
+                continue
+            
+            # 计算 PEG
+            peg = pe_ttm / netprofit_yoy
+            peg_values.append(peg)
+        
+        result["peg"] = peg_values
+        
+        logger.debug(f"Calculated PEG for {len(result)} records")
+        return result
+    
+    def calculate_batch(
+        self, 
+        daily_basic: pd.DataFrame, 
+        fina_indicator: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        批量计算 PEG (优化版本,使用向量化操作)
+        
+        通过将财务数据按公告日期合并到日度数据,避免逐行循环。
+        
+        Args:
+            daily_basic: 日度估值数据
+            fina_indicator: 财务指标数据
+            
+        Returns:
+            添加 peg 列的 DataFrame
+        """
+        result = daily_basic.copy()
+        
+        if "pe_ttm" not in daily_basic.columns:
+            result["peg"] = np.nan
+            return result
+        
+        if fina_indicator.empty or "netprofit_yoy" not in fina_indicator.columns:
+            result["peg"] = np.nan
+            return result
+        
+        # 准备财务数据
+        fina = fina_indicator[["ts_code", "ann_date", "netprofit_yoy"]].copy()
+        fina["ann_date"] = pd.to_datetime(fina["ann_date"])
+        fina = fina.sort_values(["ts_code", "ann_date"])
+        
+        # 为每只股票创建增速时间序列用于asof merge
+        peg_list = []
+        
+        for symbol in result["symbol"].unique():
+            stock_daily = result[result["symbol"] == symbol].copy()
+            stock_fina = fina[fina["ts_code"] == symbol].copy()
+            
+            if stock_fina.empty:
+                stock_daily["peg"] = np.nan
+                peg_list.append(stock_daily)
+                continue
+            
+            # 使用 merge_asof 进行时点匹配
+            stock_daily = stock_daily.sort_values("time")
+            stock_fina = stock_fina.rename(columns={"ann_date": "time_fina"})
+            
+            merged = pd.merge_asof(
+                stock_daily,
+                stock_fina[["time_fina", "netprofit_yoy"]],
+                left_on="time",
+                right_on="time_fina",
+                direction="backward"
+            )
+            
+            # 计算 PEG
+            merged["peg"] = np.where(
+                (merged["pe_ttm"] > 0) & (merged["netprofit_yoy"] > 0),
+                merged["pe_ttm"] / merged["netprofit_yoy"],
+                np.nan
+            )
+            
+            peg_list.append(merged.drop(columns=["time_fina", "netprofit_yoy"], errors="ignore"))
+        
+        if peg_list:
+            result = pd.concat(peg_list, ignore_index=True)
+        else:
+            result["peg"] = np.nan
+        
+        return result
+    
+    def get_peg_level(self, peg: float) -> str:
+        """
+        获取 PEG 估值水平描述
+        
+        Args:
+            peg: PEG 值
+            
+        Returns:
+            水平描述
+        """
+        if pd.isna(peg):
+            return "无效"
+        elif peg < 0.5:
+            return "极度低估"
+        elif peg < 1.0:
+            return "低估"
+        elif peg < 1.5:
+            return "合理"
+        elif peg < 2.0:
+            return "偏高"
+        else:
+            return "高估"
+

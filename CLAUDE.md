@@ -45,10 +45,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 中国PMI采购经理人指数数据（月度）
 - 大盘指数每日指标数据（日度，上证综指、深证成指、上证50、中证500等）
 - 申万行业日线行情数据（日度，申万2021版行业指数）
-- 上市公司财务指标数据（每股收益、ROE、资产负债率等，季度）
+- 上市公司财务指标数据（每股收益、ROE、roe_yearly年化ROE、资产负债率等，季度）
 - 上市公司现金流量表数据（经营活动、投资活动、筹资活动现金流量，季度）
 - 上市公司资产负债表数据（资产、负债、股东权益，季度）
 - 上市公司利润表数据（收入、成本和利润，季度）
+- 季度基本面指标预处理数据（F-Score 9项评分、roe_5y_avg、ni_cfo_corr_3y等，季度）
 - 交易日历数据（SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE 7个交易所）
 
 ## 高层架构设计
@@ -217,8 +218,13 @@ routing_strategy:
 - [x] `preprocess status` - 查看预处理状态
 - [x] `preprocess info` - 显示模块信息
 
-**4.5 待完成**
-- [ ] 运行 SQL 迁移创建预处理数据表
+**4.5 季度基本面指标分表存储** ✅ 已完成
+- [x] 实现 F-Score 计算器（9项 Piotroski 指标）
+- [x] 创建 `quarterly_fundamental_indicators` 独立预处理表（季频数据与日频分开存储）
+- [x] 添加 `roe_yearly` 字段到 `fina_indicator` 表支持年化ROE计算
+- [x] 实现数据迁移脚本 `008_create_quarterly_fundamental.sql`、`009_add_roe_yearly.sql`
+
+**4.6 待完成**
 - [ ] 编写单元测试和集成测试
 - [ ] 完善文档和使用示例
 
@@ -951,6 +957,7 @@ fdh-cli preprocess status
 
 - `technical`: 技术指标（MA, MACD, RSI, ATR）
 - `fundamental`: 基本面指标（估值分位）
+- `quarterly_fundamental`: 季度基本面指标（F-Score、财务质量指标）
 - `all`: 全部类别
 
 #### 支持的技术指标
@@ -964,8 +971,14 @@ fdh-cli preprocess status
 
 #### 支持的基本面指标
 
+**日频指标（`fundamental` 类别）**:
 - **估值分位**: PE/PB/PS 的 1年/2年/3年/5年 历史分位
-- **F-Score**: Piotroski 财务质量评分 (0-9)
+
+**季度指标（`quarterly_fundamental` 类别）**:
+- **F-Score**: Piotroski 财务质量评分 (0-9)，包含9项评分指标
+- **roe_5y_avg**: 5年平均ROE（使用 `roe_yearly` 年化数据计算）
+- **ni_cfo_corr_3y**: 净利润与经营现金流3年相关性
+- **财务变化指标**: roa_change、cfo_change、leverage_change、liquidity_change 等
 
 #### 支持的频率
 
@@ -981,12 +994,13 @@ fdh-cli preprocess status
 
 #### 预处理数据表
 
-| 表名 | 说明 |
-|------|------|
-| `processed_daily_qfq` | 日线前复权数据 + 技术指标 |
-| `processed_weekly_qfq` | 周线前复权数据 + 技术指标 |
-| `processed_monthly_qfq` | 月线前复权数据 + 技术指标 |
-| `fundamental_indicators` | 基本面指标数据 |
+| 表名 | 频率 | 说明 |
+|------|------|------|
+| `processed_daily_qfq` | 日频 | 日线前复权数据 + 技术指标 |
+| `processed_weekly_qfq` | 周频 | 周线前复权数据 + 技术指标 |
+| `processed_monthly_qfq` | 月频 | 月线前复权数据 + 技术指标 |
+| `fundamental_indicators` | 日频 | 估值分位等日频基本面指标 |
+| `quarterly_fundamental_indicators` | 季频 | F-Score及财务质量指标（独立存储） |
 
 #### 使用示例
 
@@ -1000,8 +1014,14 @@ fdh-cli preprocess run --all --category technical
 # 处理技术指标（日线+周线+月线）
 fdh-cli preprocess run --all --category technical --freq daily,weekly,monthly
 
-# 只处理基本面指标
+# 处理日频基本面指标
 fdh-cli preprocess run --all --category fundamental
+
+# 处理季度基本面指标
+fdh-cli preprocess run --all --category quarterly_fundamental
+
+# 处理指定股票的季度基本面指标
+fdh-cli preprocess run --symbols 601111.SH,600036.SH,600900.SH,600519.SH --category quarterly_fundamental
 
 # 处理指定股票
 fdh-cli preprocess run --symbols 600519.SH,000858.SZ --category technical

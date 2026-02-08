@@ -325,6 +325,7 @@ CREATE TABLE IF NOT EXISTS fina_indicator (
     grossprofit_margin DECIMAL(10,4),                 -- 销售毛利率
     profit_to_gr DECIMAL(10,4),                       -- 净利润/营业总收入
     roe DECIMAL(10,4),                                -- 净资产收益率
+    roe_yearly DECIMAL(10,4),                         -- 年化净资产收益率
     roe_waa DECIMAL(10,4),                            -- 加权平均净资产收益率
     roe_dt DECIMAL(10,4),                             -- 净资产收益率(扣除非经常损益)
     roa DECIMAL(10,4),                                -- 总资产报酬率

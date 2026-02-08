@@ -1662,6 +1662,176 @@ class FinanceDataHub:
         logger.warning("get_fundamental_indicators: Table not yet available. Run SQL migration first.")
         return None
 
+    # ============================================================================
+    # 季度基本面指标查询（新增）
+    # ============================================================================
+
+    def get_quarterly_fundamental(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取季度基本面指标（同步方法）
+
+        从 quarterly_fundamental_indicators 表查询季度指标，包含：
+        - Piotroski F-Score：财务质量评分 (0-9分)
+        - 5年平均ROE
+        - 3年净利润-经营现金流相关性
+        - 资产负债率、流动比率
+
+        Args:
+            symbols: 股票代码列表（如 ['600519.SH']），None表示不限制
+            start_date: 开始日期（报告期格式，如 '2020-01-01'），None表示从最早开始
+            end_date: 结束日期，None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 季度基本面指标数据
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_quarterly_fundamental(['600519.SH'], '2020-01-01', '2024-12-31')
+            >>> print(data[['ts_code', 'end_date_time', 'f_score', 'roe_5y_avg']])
+        """
+        return asyncio.run(self.get_quarterly_fundamental_async(symbols, start_date, end_date))
+
+    async def get_quarterly_fundamental_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取季度基本面指标（异步方法）
+
+        Args:
+            symbols: 股票代码列表，None表示不限制
+            start_date: 开始日期，None表示从最早开始
+            end_date: 结束日期，None表示到最新
+
+        Returns:
+            Optional[pd.DataFrame]: 季度基本面指标数据
+        """
+        # 构建查询
+        query = """
+            SELECT * FROM quarterly_fundamental_indicators
+            WHERE 1=1
+        """
+        params = []
+        
+        if symbols:
+            placeholders = ", ".join([f"${i+1}" for i in range(len(symbols))])
+            query += f" AND ts_code IN ({placeholders})"
+            params.extend(symbols)
+        
+        if start_date:
+            params.append(start_date)
+            query += f" AND end_date_time >= ${len(params)}"
+        
+        if end_date:
+            params.append(end_date)
+            query += f" AND end_date_time <= ${len(params)}"
+        
+        query += " ORDER BY ts_code, end_date_time"
+        
+        try:
+            result = await self.ops.execute_query(query, params)
+            return result
+        except Exception as e:
+            logger.warning(f"get_quarterly_fundamental: Query failed - {e}")
+            return None
+
+    def get_fundamental_combined(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        include_fscore: bool = True
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取日度估值与季度F-Score合并数据（同步方法）
+
+        使用 v_fundamental_combined 视图查询，季度数据按公告日向前填充。
+
+        Args:
+            symbols: 股票代码列表，None表示不限制
+            start_date: 开始日期（YYYY-MM-DD），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD），None表示到最新
+            include_fscore: 是否包含F-Score字段（默认True）
+
+        Returns:
+            Optional[pd.DataFrame]: 合并后的基本面数据
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> data = fdh.get_fundamental_combined(
+            ...     ['600519.SH'], '2024-01-01', '2024-12-31'
+            ... )
+            >>> print(data[['time', 'pe_ttm', 'pb', 'f_score', 'roe_5y_avg']].tail())
+        """
+        return asyncio.run(self.get_fundamental_combined_async(
+            symbols, start_date, end_date, include_fscore
+        ))
+
+    async def get_fundamental_combined_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        include_fscore: bool = True
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取日度估值与季度F-Score合并数据（异步方法）
+
+        Args:
+            symbols: 股票代码列表，None表示不限制
+            start_date: 开始日期，None表示从最早开始
+            end_date: 结束日期，None表示到最新
+            include_fscore: 是否包含F-Score字段
+
+        Returns:
+            Optional[pd.DataFrame]: 合并后的基本面数据
+        """
+        # 选择字段
+        if include_fscore:
+            select_cols = "*"
+        else:
+            # 只选择日度估值字段
+            select_cols = """
+                time, symbol, pe_ttm, pb, ps_ttm, peg,
+                pe_ttm_pct_1250d, pb_pct_1250d, ps_ttm_pct_1250d,
+                pe_ttm_pct_2500d, pb_pct_2500d, ps_ttm_pct_2500d
+            """
+        
+        query = f"""
+            SELECT {select_cols} FROM v_fundamental_combined
+            WHERE 1=1
+        """
+        params = []
+        
+        if symbols:
+            placeholders = ", ".join([f"${i+1}" for i in range(len(symbols))])
+            query += f" AND symbol IN ({placeholders})"
+            params.extend(symbols)
+        
+        if start_date:
+            params.append(start_date)
+            query += f" AND time >= ${len(params)}"
+        
+        if end_date:
+            params.append(end_date)
+            query += f" AND time <= ${len(params)}"
+        
+        query += " ORDER BY symbol, time"
+        
+        try:
+            result = await self.ops.execute_query(query, params)
+            return result
+        except Exception as e:
+            logger.warning(f"get_fundamental_combined: Query failed - {e}")
+            return None
+
     def calculate_indicators(
         self,
         df: pd.DataFrame,

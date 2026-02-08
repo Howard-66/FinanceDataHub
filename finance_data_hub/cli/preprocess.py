@@ -353,6 +353,171 @@ async def _run_fundamental_preprocess(
     }
 
 
+async def _run_quarterly_fundamental_preprocess(
+    db_manager: DatabaseManager,
+    symbols: Optional[List[str]] = None,
+    batch_size: int = 50,
+    verbose: bool = False,
+) -> dict:
+    """执行季度基本面指标预处理（F-Score等）"""
+    import pandas as pd
+    import json
+    from ..preprocessing.fundamental.quality import FScoreCalculator
+    from ..preprocessing.storage import QuarterlyFundamentalDataStorage
+    
+    # 获取股票列表
+    if not symbols:
+        console.print("[cyan]获取股票列表...[/cyan]")
+        symbols = await _get_all_stock_symbols(db_manager)
+        console.print(f"共 {len(symbols)} 只股票")
+    
+    # 加载行业配置
+    import os
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "industry_config.json"
+    )
+    if not os.path.exists(config_path):
+        config_path = None
+    
+    # 初始化计算器和存储
+    calculator = FScoreCalculator(industry_config_path=config_path)
+    storage = QuarterlyFundamentalDataStorage(db_manager)
+    
+    total_symbols = 0
+    total_records = 0
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(
+            "[cyan]预处理季度F-Score...",
+            total=len(symbols)
+        )
+        
+        # 分批处理
+        for i in range(0, len(symbols), batch_size):
+            batch_symbols = symbols[i:i+batch_size]
+            
+            if verbose:
+                progress.console.print(f"  批次 {i//batch_size + 1}: {len(batch_symbols)} 只股票")
+            
+            placeholders = ", ".join([f":sym_{j}" for j in range(len(batch_symbols))])
+            params = {f"sym_{j}": sym for j, sym in enumerate(batch_symbols)}
+            
+            try:
+                # 获取 fina_indicator 数据
+                fina_sql = f"""
+                    SELECT ts_code, end_date, ann_date,
+                           roe, roe_yearly, roe_dt, roa, grossprofit_margin, assets_turn,
+                           current_ratio, debt_to_assets, netprofit_yoy
+                    FROM fina_indicator
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date
+                """
+                fina_result = await db_manager.execute_raw_sql(fina_sql, params)
+                fina_rows = fina_result.fetchall()
+                
+                if not fina_rows:
+                    progress.advance(task, len(batch_symbols))
+                    continue
+                
+                fina_df = pd.DataFrame(fina_rows, columns=[
+                    "ts_code", "end_date", "ann_date",
+                    "roe", "roe_yearly", "roe_dt", "roa", "grossprofit_margin", "assets_turn",
+                    "current_ratio", "debt_to_assets", "netprofit_yoy"
+                ])
+                
+                # 获取 balancesheet 数据
+                bs_sql = f"""
+                    SELECT ts_code, end_date, f_ann_date,
+                           total_assets, total_liab, total_cur_assets, total_cur_liab, total_share
+                    FROM balancesheet
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date
+                """
+                bs_result = await db_manager.execute_raw_sql(bs_sql, params)
+                bs_rows = bs_result.fetchall()
+                bs_df = pd.DataFrame(bs_rows, columns=[
+                    "ts_code", "end_date", "f_ann_date",
+                    "total_assets", "total_liab", "total_cur_assets", "total_cur_liab", "total_share"
+                ]) if bs_rows else pd.DataFrame()
+                
+                # 获取 cashflow 数据
+                cf_sql = f"""
+                    SELECT ts_code, end_date, n_cashflow_act
+                    FROM cashflow
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date
+                """
+                cf_result = await db_manager.execute_raw_sql(cf_sql, params)
+                cf_rows = cf_result.fetchall()
+                cf_df = pd.DataFrame(cf_rows, columns=[
+                    "ts_code", "end_date", "n_cashflow_act"
+                ]) if cf_rows else pd.DataFrame()
+                
+                # 获取 income 数据
+                inc_sql = f"""
+                    SELECT ts_code, end_date, n_income
+                    FROM income
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date
+                """
+                inc_result = await db_manager.execute_raw_sql(inc_sql, params)
+                inc_rows = inc_result.fetchall()
+                inc_df = pd.DataFrame(inc_rows, columns=[
+                    "ts_code", "end_date", "n_income"
+                ]) if inc_rows else pd.DataFrame()
+                
+                # 计算 F-Score
+                fscore_df = calculator.calculate(
+                    fina_indicator=fina_df,
+                    balancesheet=bs_df,
+                    cashflow=cf_df,
+                    income=inc_df,
+                    exemptions=None  # 暂不使用豁免规则
+                )
+                
+                if fscore_df.empty:
+                    progress.advance(task, len(batch_symbols))
+                    continue
+                
+                # 转换列名以匹配数据库表
+                fscore_df = fscore_df.rename(columns={
+                    "end_date": "end_date_time",
+                    "ann_date": "ann_date_time",
+                    "f_ann_date": "f_ann_date_time"
+                })
+                
+                # 转换日期列
+                for col in ["end_date_time", "ann_date_time", "f_ann_date_time"]:
+                    if col in fscore_df.columns:
+                        fscore_df[col] = pd.to_datetime(fscore_df[col])
+                
+                # 存储数据
+                count = await storage.upsert(fscore_df)
+                total_records += count
+                total_symbols += len(batch_symbols)
+                
+            except Exception as e:
+                if verbose:
+                    progress.console.print(f"  [yellow]批次处理失败: {e}[/yellow]")
+                    import traceback
+                    progress.console.print(traceback.format_exc())
+            
+            progress.advance(task, len(batch_symbols))
+    
+    return {
+        "symbols_processed": total_symbols,
+        "records_processed": total_records,
+    }
+
+
 async def _get_table_stats(db_manager: DatabaseManager, table_name: str) -> dict:
     """获取表统计信息"""
     try:
@@ -400,7 +565,7 @@ def run_preprocess(
         None,
         "--category",
         "-c",
-        help="预处理类别 (technical, fundamental, all)"
+        help="预处理类别 (technical, fundamental, quarterly_fundamental, all)"
     ),
     symbols: Optional[str] = typer.Option(
         None,
@@ -539,6 +704,19 @@ def run_preprocess(
                 )
                 results["fundamental"] = result
                 console.print(f"\n[green]基本面指标处理完成[/green]")
+                console.print(f"  处理股票: {result['symbols_processed']}")
+                console.print(f"  处理记录: {result['records_processed']}\n")
+            
+            if category in ["quarterly_fundamental", "quarterly", "all"]:
+                console.print("[bold cyan]== 季度F-Score预处理 ==[/bold cyan]\n")
+                result = await _run_quarterly_fundamental_preprocess(
+                    db_manager,
+                    symbols=symbol_list,
+                    batch_size=batch_size,
+                    verbose=verbose,
+                )
+                results["quarterly_fundamental"] = result
+                console.print(f"\n[green]季度F-Score处理完成[/green]")
                 console.print(f"  处理股票: {result['symbols_processed']}")
                 console.print(f"  处理记录: {result['records_processed']}\n")
             

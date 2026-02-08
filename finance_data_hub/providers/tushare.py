@@ -2058,7 +2058,7 @@ class TushareProvider(BaseDataProvider):
                               "noncurrent_exint,interestdebt,netdebt,tangible_asset,working_capital,"
                               "networking_capital,invest_capital,retained_earnings,diluted2_eps,"
                               "bps,ocfps,cfps,ebit_ps,netprofit_margin,grossprofit_margin,profit_to_gr,"
-                              "roe,roe_waa,roe_dt,roa,roic,debt_to_assets,assets_to_eqt,ca_to_assets,"
+                              "roe,roe_yearly,roe_waa,roe_dt,roa,roic,debt_to_assets,assets_to_eqt,ca_to_assets,"
                               "nca_to_assets,tbassets_to_totalassets,int_to_talcap,eqt_to_talcapital,"
                               "currentdebt_to_debt,longdeb_to_debt,debt_to_eqt,eqt_to_debt,"
                               "eqt_to_interestdebt,tangibleasset_to_debt,ocf_to_debt,turn_days,"

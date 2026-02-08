@@ -1,0 +1,2538 @@
+{
+    "种子": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "粮食种植": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "其他种植业": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "食用菌": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "海洋捕捞": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "水产养殖": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "林业Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "畜禽饲料": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "水产饲料": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "宠物食品": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "果蔬加工": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "粮油加工": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "其他农产品加工": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "生猪养殖": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "肉鸡养殖": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "其他养殖": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "动物保健Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "农业综合Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "纯碱": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "氯碱": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "无机盐": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "其他化学原料": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "煤化工": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "钛白粉": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "涂料油墨": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "民爆制品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "纺织化学制品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "其他化学制品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "氟化工": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "聚氨酯": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "食品及饲料添加剂": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "有机硅": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "胶黏剂及胶带": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "涤纶": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "粘胶": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他化学纤维": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "氨纶": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "锦纶": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他塑料制品": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "改性塑料": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "合成树脂": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "膜材料": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "其他橡胶制品": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "炭黑": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "橡胶助剂": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "氮肥": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "磷肥及磷化工": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "农药": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "钾肥": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "复合肥": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "非金属材料Ⅲ": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "铁矿石": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "冶钢辅料": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "长材": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "板材": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "钢铁管材": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "特钢Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他金属新材料": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "磁性材料": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "铝": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "铜": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "铅锌": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "黄金": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "白银": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "稀土": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "钨": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他小金属": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "钼": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "钴": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "镍": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "锂": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "分立器件": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "半导体材料": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "数字芯片设计": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "模拟芯片设计": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "集成电路制造": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "集成电路封测": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "半导体设备": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "印制电路板": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "被动元件": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "面板": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "LED": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "光学元件": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他电子Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "品牌消费电子": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "消费电子零部件及组装": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "电子化学品Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "车身附件及饰件": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "底盘与发动机系统": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "轮胎轮毂": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他汽车零部件": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "汽车电子电气系统": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "汽车经销商": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "汽车综合服务": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "其他运输设备": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "摩托车": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "电动乘用车": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "综合乘用车": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "商用载货车": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "商用载客车": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "空调": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "冰洗": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "彩电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "其他黑色家电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "厨房小家电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "清洁小家电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "个护小家电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "厨房电器": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "卫浴电器": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "照明设备Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "家电零部件Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "其他家电Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "肉制品": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "其他食品": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "预加工食品": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "保健品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "白酒Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "商业模式极佳，具备提价权。"
+    },
+    "啤酒": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "其他酒类": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "软饮料": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "乳品": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "零食": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "烘焙食品": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "熟食": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "调味发酵品Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "棉纺": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "印染": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "辅料": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他纺织": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "纺织鞋类制造": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "鞋帽及其他": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "家纺": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "运动服装": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "非运动服装": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "钟表珠宝": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "多品类奢侈品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他饰品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "大宗用纸": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "特种纸": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "印刷": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "金属包装": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "塑料包装": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "纸包装": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "综合包装": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "瓷砖地板": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "成品家居": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "定制家居": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "卫浴制品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他家居用品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "文化用品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "娱乐用品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "原料药": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "化学制剂": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "中药Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "血液制品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "疫苗": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "其他生物制品": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "医药流通": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "线下药店": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "互联网药店": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "医疗设备": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "医疗耗材": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "体外诊断": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "诊断服务": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "医疗研发外包": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "医院": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他医疗服务": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "老龄化刚需+创新驱动，关注研发管线。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "火力发电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "水力发电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "且备极佳的现金流，成熟期水电关注分红仅PE估值。"
+    },
+    "热力服务": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "光伏发电": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "风力发电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "核力发电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "其他能源发电": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "电能综合服务": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "燃气Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "原材料供应链服务": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "中间产品及消费品供应链服务": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "快递": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "跨境物流": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "仓储物流": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "公路货运": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "高速公路": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "公交": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "铁路运输": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "航空运输": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "机场": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "航运": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "港口": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "住宅开发": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "政策博弈，估值修复。",
+        "exemptions": [
+            "liability_check"
+        ]
+    },
+    "商业地产": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "政策博弈，估值修复。",
+        "exemptions": [
+            "liability_check"
+        ]
+    },
+    "产业地产": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "政策博弈，估值修复。",
+        "exemptions": [
+            "liability_check"
+        ]
+    },
+    "物业管理": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "政策博弈，估值修复。",
+        "exemptions": [
+            "liability_check"
+        ]
+    },
+    "房产租赁经纪": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "房地产综合服务": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "政策博弈，估值修复。",
+        "exemptions": [
+            "liability_check"
+        ]
+    },
+    "贸易Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "百货": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "超市": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "多业态零售": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "商业物业经营": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "政策博弈，估值修复。",
+        "exemptions": [
+            "liability_check"
+        ]
+    },
+    "专业连锁Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "综合电商": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "跨境电商": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "电商服务": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "旅游零售Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "体育Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "本地生活服务Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "人力资源服务": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "检测服务": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "会展服务": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他专业服务": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "酒店": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "餐饮": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "博彩": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "人工景区": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "自然景区": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "旅游综合": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "学历教育": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "培训教育": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "教育运营及其他": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "国有大型银行Ⅲ": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "低估值高分红，防御属性强。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check",
+            "f_score_gross_margin",
+            "f_score_current_ratio",
+            "f_score_cfo",
+            "f_score_cfo_positive",
+            "f_score_leverage"
+        ]
+    },
+    "股份制银行Ⅲ": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "低估值高分红，防御属性强。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check",
+            "f_score_gross_margin",
+            "f_score_current_ratio",
+            "f_score_cfo",
+            "f_score_cfo_positive",
+            "f_score_leverage"
+        ]
+    },
+    "城商行Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "农商行Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "其他银行Ⅲ": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "低估值高分红，防御属性强。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check",
+            "f_score_gross_margin",
+            "f_score_current_ratio",
+            "f_score_cfo",
+            "f_score_cfo_positive",
+            "f_score_leverage"
+        ]
+    },
+    "证券Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "保险Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "金融控股": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "期货": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "信托": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "租赁": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "金融信息服务": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "资产管理": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "其他多元金融": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "",
+        "logic": "流动性敏感，牛市旗手。",
+        "exemptions": [
+            "liability_check",
+            "liquidity_check"
+        ]
+    },
+    "综合Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "水泥制造": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "水泥制品": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "玻璃制造": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "玻纤制造": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "耐火材料": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "管材": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他建材": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "防水材料": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "涂料": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "房屋建设Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "装修装饰Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "基建市政工程": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "园林工程": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "钢结构": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "化学工程": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "国际工程": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他专业工程": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "工程咨询服务Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "电机Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "综合电力设备商": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "火电设备": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "其他电源设备Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "硅料硅片": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "光伏电池组件": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "逆变器": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "光伏辅材": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "光伏加工设备": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "风电整机": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "风电零部件": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "锂电池": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "电池化学品": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "锂电专用设备": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "燃料电池": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "蓄电池及其他电池": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PEG",
+        "logic": "双碳政策驱动，高景气度成长。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "输变电设备": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "配电设备": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "电网自动化设备": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "电工仪器仪表": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "线缆部件及其他": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "机床工具": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "磨具磨料": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "制冷空调设备": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他通用设备": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "仪器仪表": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "金属制品": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "能源及重型设备": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "楼宇设备": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "纺织服装设备": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "农用机械": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "必选消费，抗通胀，业绩稳健。"
+    },
+    "印刷包装机械": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他专用设备": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "轨交设备Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "工程机械整机": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "工程机械器件": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "机器人": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "工控设备": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "激光设备": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "其他自动化设备": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "航天装备Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "航空装备Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "地面兵装Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "航海装备Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "军工电子Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "安防设备": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他计算机设备": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "IT服务Ⅲ": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "垂直应用软件": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "横向通用软件": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "游戏Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "营销代理": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "广告媒体": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "影视动漫制作": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "院线": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "视频媒体": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "音频媒体": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "图片媒体": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "门户网站": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "文字媒体": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "其他数字媒体": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "社交Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "教育出版": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "大众出版": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "其他出版": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PS",
+        "logic": "可选消费，顺周期复苏，戴维斯双击。"
+    },
+    "电视广播Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "电信运营商": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "高分红，数据要素，防御资产。"
+    },
+    "通信工程及服务": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "通信应用增值服务": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "通信网络设备及器件": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "通信线缆及配套": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "通信终端及配件": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "其他通信设备": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "动力煤": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "焦煤": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "焦炭Ⅲ": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "油气开采Ⅲ": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "油田服务": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "油气及炼化工程": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "炼油化工": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "油品石化贸易": {
+        "macro_cycle": "OVERHEAT",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "通胀受益，强周期，关注PB底部。"
+    },
+    "其他石化": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "大气治理": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "水务及水治理": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "固废治理": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "综合环境治理": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "环保设备Ⅲ": {
+        "macro_cycle": "STAGFLATION",
+        "core_indicator": "PB",
+        "ref_indicator": "PS",
+        "logic": "类债券资产，现金流稳定，防御属性。",
+        "exemptions": [
+            "f_score_cfo"
+        ]
+    },
+    "生活用纸": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "洗护用品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "化妆品制造及其他": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "品牌化妆品": {
+        "macro_cycle": "RECOVERY",
+        "core_indicator": "PE",
+        "ref_indicator": "PB",
+        "logic": "顺周期制造业，受益经济复苏。"
+    },
+    "医美耗材": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    },
+    "医美服务": {
+        "macro_cycle": "REFLATION",
+        "core_indicator": "PS",
+        "ref_indicator": "PEG",
+        "logic": "数字经济，国产替代，高弹性。",
+        "exemptions": [
+            "liability_check",
+            "f_score_cfo_positive"
+        ]
+    }
+}

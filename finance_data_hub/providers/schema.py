@@ -337,6 +337,7 @@ FinaIndicatorSchema = DataFrameSchema(
         ColumnSchema("grossprofit_margin", "float64", True, "销售毛利率"),
         ColumnSchema("profit_to_gr", "float64", True, "净利润/营业总收入"),
         ColumnSchema("roe", "float64", True, "净资产收益率"),
+        ColumnSchema("roe_yearly", "float64", True, "年化净资产收益率"),
         ColumnSchema("roe_waa", "float64", True, "加权平均净资产收益率"),
         ColumnSchema("roe_dt", "float64", True, "净资产收益率(扣除非经常损益)"),
         ColumnSchema("roa", "float64", True, "总资产报酬率"),
