@@ -16,6 +16,11 @@ from loguru import logger
 from .models import JobConfig, JobType, JobExecutionLog
 
 
+class NoDataAvailableError(Exception):
+    """当 API 返回空数据时抛出的异常，可触发重试"""
+    pass
+
+
 class TaskExecutor:
     """任务执行器"""
     
@@ -114,11 +119,20 @@ class TaskExecutor:
                 error_msg = result.stderr or result.stdout
                 raise RuntimeError(f"Download failed for {dataset}: {error_msg}")
             
-            logger.info(f"Download completed for {dataset}")
+            # 记录命令输出，以便调试
+            output = result.stdout.strip() if result.stdout else ""
+            if output:
+                logger.info(f"Command output for {dataset}:\n{output}")
             
-            # 记录命令输出，以便调试（特别是"无数据"的情况）
-            if result.stdout:
-                logger.info(f"Command output for {dataset}:\n{result.stdout.strip()}")
+            # 检测"没有数据"的情况，抛出异常以触发重试
+            # 这通常发生在 Tushare 数据尚未准备好的情况下
+            if "没有数据" in output:
+                logger.warning(f"No data available for {dataset}, will retry later")
+                raise NoDataAvailableError(
+                    f"数据集 {dataset} 暂无数据可用（Tushare 数据可能尚未更新），将触发重试"
+                )
+            
+            logger.info(f"Download completed for {dataset}")
             
             # TODO: 解析输出获取记录数
             
@@ -173,13 +187,15 @@ class TaskExecutor:
     
     def _get_latest_trade_date(self) -> Optional[str]:
         """获取最新交易日"""
+        from datetime import timedelta
+        
         today = date.today()
         # 简单判断：周六周日不是交易日
         weekday = today.weekday()
         if weekday == 5:  # 周六
-            trade_date = today.replace(day=today.day - 1)
+            trade_date = today - timedelta(days=1)
         elif weekday == 6:  # 周日
-            trade_date = today.replace(day=today.day - 2)
+            trade_date = today - timedelta(days=2)
         else:
             trade_date = today
         

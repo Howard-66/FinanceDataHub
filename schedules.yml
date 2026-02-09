@@ -103,37 +103,39 @@ jobs:
       max_retries: 3
       delay: 600
 
-  # 大盘指数每日指标 - 每日更新（17:40）
+  # 大盘指数每日指标 - 每日更新（19:30）
+  # 注意：Tushare 的指数级别数据通常在收盘后 2-3 小时才完全可用
   index_dailybasic_update:
     enabled: true
     type: download
     dataset: index_dailybasic
     schedule:
       type: cron
-      hour: 17
-      minute: 40
+      hour: 19
+      minute: 30
       day_of_week: "mon-fri"
     params:
       trade_date: "latest"
     retry:
       max_retries: 3
-      delay: 300
+      delay: 600  # 10分钟后重试
 
-  # 申万行业日线 - 每日更新（17:45）
+  # 申万行业日线 - 每日更新（19:45）
+  # 注意：Tushare 的申万行业数据通常在收盘后 2-3 小时才完全可用
   sw_daily_update:
     enabled: true
     type: download
     dataset: sw_daily
     schedule:
       type: cron
-      hour: 17
+      hour: 19
       minute: 45
       day_of_week: "mon-fri"
     params:
       trade_date: "latest"
     retry:
       max_retries: 3
-      delay: 300
+      delay: 600  # 10分钟后重试
 
   # 申万行业分类 - 每月1号更新
   sw_classify_update:
