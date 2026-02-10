@@ -178,7 +178,7 @@ class FScoreCalculator:
         
         # 选择必要的列(来自balancesheet)
         bs_cols = ["ts_code", "end_date_time", "f_ann_date", "total_assets", 
-                   "total_liab", "total_cur_assets", "total_cur_liab", "total_share"]
+                   "total_liab", "total_ncl", "total_cur_assets", "total_cur_liab", "total_share"]
         
         # 选择必要的列(来自cashflow)
         cf_cols = ["ts_code", "end_date_time", "f_ann_date", "n_cashflow_act"]
@@ -262,11 +262,11 @@ class FScoreCalculator:
         
         # === 2. 财务杠杆/流动性 (3分) ===
         
-        # F_ΔLEVER: 资产负债率下降 (使用 total_liab / total_assets)
+        # F_ΔLEVER: 非流动负债占比下降 (使用 total_ncl / total_assets)
         if "f_score_leverage" in exemptions:
             result["f_delta_lever"] = 1  # 豁免,给满分
-        elif "total_liab" in result.columns and "total_assets" in result.columns:
-            lever = result["total_liab"] / result["total_assets"].replace(0, np.nan)
+        elif "total_ncl" in result.columns and "total_assets" in result.columns:
+            lever = result["total_ncl"] / result["total_assets"].replace(0, np.nan)
             result["f_delta_lever"] = self._calc_yoy_improvement(
                 result.assign(_lever=lever), "_lever", lower_is_better=True
             )

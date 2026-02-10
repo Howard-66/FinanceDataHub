@@ -436,7 +436,7 @@ async def _run_quarterly_fundamental_preprocess(
                 # 获取 balancesheet 数据
                 bs_sql = f"""
                     SELECT ts_code, end_date, f_ann_date,
-                           total_assets, total_liab, total_cur_assets, total_cur_liab, total_share
+                           total_assets, total_liab, total_ncl, total_cur_assets, total_cur_liab, total_share
                     FROM balancesheet
                     WHERE ts_code IN ({placeholders})
                     ORDER BY ts_code, end_date
@@ -445,7 +445,7 @@ async def _run_quarterly_fundamental_preprocess(
                 bs_rows = bs_result.fetchall()
                 bs_df = pd.DataFrame(bs_rows, columns=[
                     "ts_code", "end_date", "f_ann_date",
-                    "total_assets", "total_liab", "total_cur_assets", "total_cur_liab", "total_share"
+                    "total_assets", "total_liab", "total_ncl", "total_cur_assets", "total_cur_liab", "total_share"
                 ]) if bs_rows else pd.DataFrame()
                 
                 # 获取 cashflow 数据
