@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS quarterly_fundamental_indicators (
     f_delta_turn SMALLINT,                     -- 周转率上升
     
     -- 补充基本面指标
+    roa_ttm DECIMAL(10,4),                     -- ROA TTM
     roe_5y_avg DECIMAL(10,4),                  -- 5年平均ROE
     ni_cfo_corr_3y DECIMAL(10,4),              -- 3年净利润-经营现金流相关性
     debt_ratio DECIMAL(10,4),                  -- 资产负债率(%)
@@ -308,6 +309,7 @@ SELECT
     qf.f_delta_margin,
     qf.f_delta_turn,
     -- 季度补充指标
+    qf.roa_ttm,
     qf.roe_5y_avg,
     qf.ni_cfo_corr_3y,
     qf.debt_ratio,

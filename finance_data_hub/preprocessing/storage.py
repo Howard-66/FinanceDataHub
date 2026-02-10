@@ -579,7 +579,7 @@ class QuarterlyFundamentalDataStorage:
     
     # 补充指标列
     EXTRA_COLUMNS = [
-        "roe_5y_avg", "ni_cfo_corr_3y", "debt_ratio", "current_ratio"
+        "roa_ttm", "roe_5y_avg", "ni_cfo_corr_3y", "debt_ratio", "current_ratio"
     ]
     
     # 日期列
