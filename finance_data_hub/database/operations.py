@@ -2252,22 +2252,52 @@ class DataOperations:
         indicator_columns = [
             "eps", "dt_eps", "total_revenue_ps", "revenue_ps", "capital_rese_ps",
             "surplus_rese_ps", "undist_profit_ps", "extra_item", "profit_dedt", "gross_margin",
-            "current_ratio", "quick_ratio", "cash_ratio", "ar_turn", "ca_turn", "fa_turn",
-            "assets_turn", "op_income", "ebit", "ebitda", "fcff", "fcfe", "current_exint",
+            "current_ratio", "quick_ratio", "cash_ratio",
+            "invturn_days", "arturn_days", "inv_turn",
+            "ar_turn", "ca_turn", "fa_turn",
+            "assets_turn", "op_income",
+            "valuechange_income", "interst_income", "daa",
+            "ebit", "ebitda", "fcff", "fcfe", "current_exint",
             "noncurrent_exint", "interestdebt", "netdebt", "tangible_asset", "working_capital",
             "networking_capital", "invest_capital", "retained_earnings", "diluted2_eps",
-            "bps", "ocfps", "cfps", "ebit_ps", "netprofit_margin", "grossprofit_margin",
-            "profit_to_gr", "roe", "roe_yearly", "roe_waa", "roe_dt", "roa", "roic", "debt_to_assets",
-            "assets_to_eqt", "ca_to_assets", "nca_to_assets", "tbassets_to_totalassets",
-            "int_to_talcap", "eqt_to_talcapital", "currentdebt_to_debt", "longdeb_to_debt",
-            "debt_to_eqt", "eqt_to_debt", "eqt_to_interestdebt", "tangibleasset_to_debt",
-            "ocf_to_debt", "turn_days", "fixed_assets", "profit_prefin_exp", "non_op_profit",
-            "op_to_ebt", "q_opincome", "q_dtprofit", "q_eps", "q_netprofit_margin",
-            "q_gsprofit_margin", "q_profit_to_gr", "q_salescash_to_or", "q_ocf_to_sales",
-            "basic_eps_yoy", "dt_eps_yoy", "cfps_yoy", "op_yoy", "ebt_yoy", "netprofit_yoy",
-            "dt_netprofit_yoy", "ocf_yoy", "roe_yoy", "bps_yoy", "assets_yoy", "eqt_yoy",
-            "tr_yoy", "or_yoy", "q_gr_yoy", "q_sales_yoy", "q_op_yoy", "q_op_qoq",
-            "q_profit_yoy", "q_profit_qoq", "q_netprofit_yoy", "q_netprofit_qoq", "equity_yoy"
+            "bps", "ocfps", "retainedps", "cfps", "ebit_ps", "fcff_ps", "fcfe_ps",
+            "netprofit_margin", "grossprofit_margin",
+            "cogs_of_sales", "expense_of_sales",
+            "profit_to_gr", "saleexp_to_gr", "adminexp_of_gr", "finaexp_of_gr",
+            "impai_ttm", "gc_of_gr", "op_of_gr", "ebit_of_gr",
+            "roe", "roe_waa", "roe_dt", "roa", "npta", "roic",
+            "roe_yearly", "roa2_yearly", "roe_avg",
+            "opincome_of_ebt", "investincome_of_ebt", "n_op_profit_of_ebt",
+            "tax_to_ebt", "dtprofit_to_profit",
+            "salescash_to_or", "ocf_to_or", "ocf_to_opincome", "capitalized_to_da",
+            "debt_to_assets", "assets_to_eqt", "dp_assets_to_eqt",
+            "ca_to_assets", "nca_to_assets", "tbassets_to_totalassets",
+            "int_to_talcap", "eqt_to_talcapital",
+            "currentdebt_to_debt", "longdeb_to_debt", "ocf_to_shortdebt",
+            "debt_to_eqt", "eqt_to_debt", "eqt_to_interestdebt",
+            "tangibleasset_to_debt", "tangasset_to_intdebt", "tangibleasset_to_netdebt",
+            "ocf_to_debt", "ocf_to_interestdebt", "ocf_to_netdebt",
+            "ebit_to_interest", "longdebt_to_workingcapital", "ebitda_to_debt",
+            "turn_days", "roa_yearly", "roa_dp",
+            "fixed_assets", "profit_prefin_exp", "non_op_profit",
+            "op_to_ebt", "nop_to_ebt",
+            "ocf_to_profit", "cash_to_liqdebt", "cash_to_liqdebt_withinterest",
+            "op_to_liqdebt", "op_to_debt", "roic_yearly", "total_fa_trun", "profit_to_op",
+            "q_opincome", "q_investincome", "q_dtprofit", "q_eps",
+            "q_netprofit_margin", "q_gsprofit_margin", "q_exp_to_sales",
+            "q_profit_to_gr", "q_saleexp_to_gr", "q_adminexp_to_gr", "q_finaexp_to_gr",
+            "q_impair_to_gr_ttm", "q_gc_to_gr", "q_op_to_gr",
+            "q_roe", "q_dt_roe", "q_npta",
+            "q_opincome_to_ebt", "q_investincome_to_ebt", "q_dtprofit_to_profit",
+            "q_salescash_to_or", "q_ocf_to_sales", "q_ocf_to_or",
+            "basic_eps_yoy", "dt_eps_yoy", "cfps_yoy",
+            "op_yoy", "ebt_yoy", "netprofit_yoy", "dt_netprofit_yoy", "ocf_yoy", "roe_yoy", "bps_yoy",
+            "assets_yoy", "eqt_yoy", "tr_yoy", "or_yoy",
+            "q_gr_yoy", "q_gr_qoq", "q_sales_yoy", "q_sales_qoq",
+            "q_op_yoy", "q_op_qoq",
+            "q_profit_yoy", "q_profit_qoq", "q_netprofit_yoy", "q_netprofit_qoq",
+            "equity_yoy",
+            "rd_exp", "update_flag",
         ]
 
         # 构建INSERT语句
@@ -2295,14 +2325,8 @@ class DataOperations:
         # 所有需要插入的列名
         all_columns = ["ts_code", "ann_date", "ann_date_time", "end_date", "end_date_time"] + indicator_columns
 
-        # 可能包含大数值的字段（需要clip到安全范围）
-        large_value_columns = {
-            "gross_margin", "extra_item", "profit_dedt", "op_income", "ebit", "ebitda",
-            "fcff", "fcfe", "current_exint", "noncurrent_exint", "interestdebt", "netdebt",
-            "tangible_asset", "working_capital", "networking_capital", "invest_capital",
-            "retained_earnings", "fixed_assets", "profit_prefin_exp", "non_op_profit",
-            "q_opincome", "q_dtprofit", "total_revenue_ps", "revenue_ps"
-        }
+        # 非数值字段列表（不需要clip）
+        non_numeric_columns = {"ts_code", "ann_date", "end_date", "ann_date_time", "end_date_time", "update_flag"}
 
         for i in range(0, len(data), batch_size):
             batch = data.iloc[i : i + batch_size].copy()
@@ -2315,14 +2339,16 @@ class DataOperations:
                     if col not in record:
                         record[col] = None
 
-                # 处理值，clip大数值字段到安全范围
+                # 处理值，clip所有数值字段到DECIMAL(20,4)的安全范围
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
                     elif key in ("end_date_time", "ann_date_time") or isinstance(value, pd.Timestamp):
                         record[key] = _normalize_datetime_for_db(value, data_type="daily")
-                    elif key in large_value_columns and isinstance(value, (int, float)):
-                        # Clip大数值到DECIMAL(20,4)的安全范围
+                    elif key == "update_flag":
+                        record[key] = str(value) if value is not None else None
+                    elif key not in non_numeric_columns and isinstance(value, (int, float)):
+                        # Clip所有数值到DECIMAL(20,4)的安全范围
                         # max = 10^16 - 1 = 9999999999999999
                         max_val = 9_999_999_999_999_999
                         min_val = -9_999_999_999_999_999
