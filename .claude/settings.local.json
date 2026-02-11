@@ -50,7 +50,9 @@
       "Bash(.venvScriptspython:*)",
       "Bash(.venv\\\\Scripts\\\\python.exe:*)",
       "Bash(.venvScriptspython.exe -c:*)",
-      "Bash(fdh-cli schedule run:*)"
+      "Bash(fdh-cli schedule run:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

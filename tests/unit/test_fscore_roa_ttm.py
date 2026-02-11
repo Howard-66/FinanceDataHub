@@ -763,3 +763,62 @@ class TestRoe5yAvg:
         
         # 应使用 roe_yearly 降级方案, 不应全为NaN
         assert result.notna().any()
+
+import pytest
+import pandas as pd
+import numpy as np
+from finance_data_hub.preprocessing.fundamental.quality import FScoreCalculator
+
+def _make_minimal_df(end_date):
+    """构造最小数据集"""
+    df = pd.DataFrame([{
+        "ts_code": "600519.SH",
+        "end_date": end_date,
+        "end_date_time": pd.to_datetime(end_date),
+        "ann_date": end_date,
+        "roa": 10.0,
+        "grossprofit_margin": 50.0,
+        "q_gsprofit_margin": 50.0,
+        "assets_turn": 0.5,
+        "current_ratio": 2.0,
+        "n_cashflow_act": 100.0,
+        "n_income": 80.0,
+        "total_revenue": 500.0,
+        "total_assets": 1000.0,
+        "total_liab": 400.0,
+        "total_cur_assets": 500.0,
+        "total_cur_liab": 250.0,
+        "total_share": 100.0
+    }])
+    return df
+
+@pytest.fixture
+def calculator():
+    return FScoreCalculator()
+
+
+def test_ttm_fields_in_output(calculator):
+    """Verify cfo_ttm, ni_ttm, gpm_ttm, at_ttm exist in result DataFrame"""
+    # Construct 4 quarters of data to generate valid TTM
+    dfs = []
+    for date in ["20220331", "20220630", "20220930", "20221231"]:
+        dfs.append(_make_minimal_df(date))
+
+    # Merge and split back to each table (simplified test)
+    full_df = pd.concat(dfs).reset_index(drop=True)
+
+    # Simulate input data
+    fina_df = full_df[["ts_code", "end_date", "end_date_time", "ann_date", "roa", "grossprofit_margin", "q_gsprofit_margin", "assets_turn", "current_ratio"]].copy()
+    bs_df = full_df[["ts_code", "end_date", "end_date_time", "total_assets", "total_liab", "total_cur_assets", "total_cur_liab", "total_share"]].copy()
+    cf_df = full_df[["ts_code", "end_date", "end_date_time", "n_cashflow_act"]].copy()
+    inc_df = full_df[["ts_code", "end_date", "end_date_time", "n_income", "total_revenue"]].copy()
+
+    result = calculator.calculate(fina_df, bs_df, cf_df, inc_df)
+
+    expected_cols = ["cfo_ttm", "ni_ttm", "gpm_ttm", "at_ttm"]
+    for col in expected_cols:
+        assert col in result.columns, f"Missing output column: {col}"
+        # Verify Q4 data is not empty (Q1-Q3 may be empty due to rolling logic, but Q4 should have value)
+        q4_val = result.iloc[3][col]
+        assert pd.notna(q4_val), f"Column {col} is NaN for Q4"
+

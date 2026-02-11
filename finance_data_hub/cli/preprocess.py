@@ -415,22 +415,24 @@ async def _run_quarterly_fundamental_preprocess(
                 fina_sql = f"""
                     SELECT ts_code, end_date, ann_date,
                            roe, roe_yearly, roe_dt, roa, grossprofit_margin, assets_turn,
-                           current_ratio, debt_to_assets, netprofit_yoy
+                           current_ratio, debt_to_assets, netprofit_yoy,
+                           q_gsprofit_margin, q_roe
                     FROM fina_indicator
                     WHERE ts_code IN ({placeholders})
                     ORDER BY ts_code, end_date
                 """
                 fina_result = await db_manager.execute_raw_sql(fina_sql, params)
                 fina_rows = fina_result.fetchall()
-                
+
                 if not fina_rows:
                     progress.advance(task, len(batch_symbols))
                     continue
-                
+
                 fina_df = pd.DataFrame(fina_rows, columns=[
                     "ts_code", "end_date", "ann_date",
                     "roe", "roe_yearly", "roe_dt", "roa", "grossprofit_margin", "assets_turn",
-                    "current_ratio", "debt_to_assets", "netprofit_yoy"
+                    "current_ratio", "debt_to_assets", "netprofit_yoy",
+                    "q_gsprofit_margin", "q_roe"
                 ])
                 
                 # 获取 balancesheet 数据

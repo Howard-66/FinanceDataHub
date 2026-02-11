@@ -76,7 +76,8 @@ class FScoreCalculator:
     
     # 补充指标列名
     EXTRA_COLUMNS = [
-        "roa_ttm", "roe_5y_avg", "ni_cfo_corr_3y", "debt_ratio", "current_ratio"
+        "roa_ttm", "roe_5y_avg", "ni_cfo_corr_3y", "debt_ratio", "current_ratio",
+        "cfo_ttm", "ni_ttm", "gpm_ttm", "at_ttm"
     ]
     
     def __init__(self, industry_config_path: Optional[str] = None):
