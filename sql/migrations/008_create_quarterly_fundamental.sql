@@ -2,15 +2,15 @@
 -- 008: 季度基本面指标表与日度估值表重构
 -- 
 -- 变更内容:
--- 1. 创建 quarterly_fundamental_indicators 季度表
--- 2. 修改 fundamental_indicators 表(移除F-Score字段,添加PEG)
+-- 1. 创建 processed_fundamental_quality 季度表
+-- 2. 修改 processed_valuation_pct 表(移除F-Score字段,添加PEG)
 -- 3. 创建 v_fundamental_combined 合并视图
 -- =====================================================
 
 -- =====================================================
 -- 1. 创建季度基本面指标表
 -- =====================================================
-CREATE TABLE IF NOT EXISTS quarterly_fundamental_indicators (
+CREATE TABLE IF NOT EXISTS processed_fundamental_quality (
     ts_code VARCHAR(20) NOT NULL,              -- 股票代码
     end_date_time TIMESTAMPTZ NOT NULL,        -- 报告期末
     ann_date_time TIMESTAMPTZ,                 -- 公告日期(fina_indicator使用)
@@ -45,34 +45,34 @@ CREATE TABLE IF NOT EXISTS quarterly_fundamental_indicators (
 
 -- 创建索引
 CREATE INDEX IF NOT EXISTS idx_quarterly_fund_ts_code 
-    ON quarterly_fundamental_indicators (ts_code);
+    ON processed_fundamental_quality (ts_code);
 CREATE INDEX IF NOT EXISTS idx_quarterly_fund_ann_date 
-    ON quarterly_fundamental_indicators (ann_date_time);
+    ON processed_fundamental_quality (ann_date_time);
 CREATE INDEX IF NOT EXISTS idx_quarterly_fund_f_ann_date 
-    ON quarterly_fundamental_indicators (f_ann_date_time);
+    ON processed_fundamental_quality (f_ann_date_time);
 CREATE INDEX IF NOT EXISTS idx_quarterly_fund_fscore 
-    ON quarterly_fundamental_indicators (f_score);
+    ON processed_fundamental_quality (f_score);
 
 -- 表和列注释
-COMMENT ON TABLE quarterly_fundamental_indicators IS '季度基本面指标表(F-Score、ROE均值、相关性等)';
-COMMENT ON COLUMN quarterly_fundamental_indicators.ts_code IS '股票代码,如600519.SH';
-COMMENT ON COLUMN quarterly_fundamental_indicators.end_date_time IS '报告期末日期';
-COMMENT ON COLUMN quarterly_fundamental_indicators.ann_date_time IS '公告日期(来自fina_indicator)';
-COMMENT ON COLUMN quarterly_fundamental_indicators.f_ann_date_time IS '实际公告日期(来自cashflow/balancesheet/income,用于forward-fill基准)';
-COMMENT ON COLUMN quarterly_fundamental_indicators.f_score IS 'Piotroski F-Score财务质量评分,0-9分';
-COMMENT ON COLUMN quarterly_fundamental_indicators.roe_5y_avg IS '最近5年(20个季度)ROE平均值';
-COMMENT ON COLUMN quarterly_fundamental_indicators.ni_cfo_corr_3y IS '最近3年(12个季度)净利润与经营现金流的相关系数';
-COMMENT ON COLUMN quarterly_fundamental_indicators.debt_ratio IS '资产负债率=总负债/总资产*100';
-COMMENT ON COLUMN quarterly_fundamental_indicators.current_ratio IS '流动比率=流动资产/流动负债';
-COMMENT ON COLUMN quarterly_fundamental_indicators.exemptions IS '行业豁免规则JSON数组,如["f_score_cfo_positive","f_score_leverage"]';
+COMMENT ON TABLE processed_fundamental_quality IS '季度基本面指标表(F-Score、ROE均值、相关性等)';
+COMMENT ON COLUMN processed_fundamental_quality.ts_code IS '股票代码,如600519.SH';
+COMMENT ON COLUMN processed_fundamental_quality.end_date_time IS '报告期末日期';
+COMMENT ON COLUMN processed_fundamental_quality.ann_date_time IS '公告日期(来自fina_indicator)';
+COMMENT ON COLUMN processed_fundamental_quality.f_ann_date_time IS '实际公告日期(来自cashflow/balancesheet/income,用于forward-fill基准)';
+COMMENT ON COLUMN processed_fundamental_quality.f_score IS 'Piotroski F-Score财务质量评分,0-9分';
+COMMENT ON COLUMN processed_fundamental_quality.roe_5y_avg IS '最近5年(20个季度)ROE平均值';
+COMMENT ON COLUMN processed_fundamental_quality.ni_cfo_corr_3y IS '最近3年(12个季度)净利润与经营现金流的相关系数';
+COMMENT ON COLUMN processed_fundamental_quality.debt_ratio IS '资产负债率=总负债/总资产*100';
+COMMENT ON COLUMN processed_fundamental_quality.current_ratio IS '流动比率=流动资产/流动负债';
+COMMENT ON COLUMN processed_fundamental_quality.exemptions IS '行业豁免规则JSON数组,如["f_score_cfo_positive","f_score_leverage"]';
 
 
 -- =====================================================
--- 2. 修改 fundamental_indicators 表
+-- 2. 修改 processed_valuation_pct 表
 -- =====================================================
 
 -- 移除 F-Score 相关字段
-ALTER TABLE fundamental_indicators 
+ALTER TABLE processed_valuation_pct 
     DROP COLUMN IF EXISTS f_score,
     DROP COLUMN IF EXISTS f_roa,
     DROP COLUMN IF EXISTS f_cfo,
@@ -85,10 +85,10 @@ ALTER TABLE fundamental_indicators
     DROP COLUMN IF EXISTS f_delta_turn;
 
 -- 添加 PEG 字段
-ALTER TABLE fundamental_indicators 
+ALTER TABLE processed_valuation_pct 
     ADD COLUMN IF NOT EXISTS peg DECIMAL(10,4);
 
-COMMENT ON COLUMN fundamental_indicators.peg IS 'PEG = PE_TTM / 净利润增速(%), 仅当增速>0时有效';
+COMMENT ON COLUMN processed_valuation_pct.peg IS 'PEG = PE_TTM / 净利润增速(%), 仅当增速>0时有效';
 
 
 -- =====================================================
@@ -131,9 +131,9 @@ SELECT
     -- 季度数据元信息
     qf.end_date_time AS fscore_period,
     COALESCE(qf.f_ann_date_time, qf.ann_date_time) AS fscore_effective_date
-FROM fundamental_indicators fi
+FROM processed_valuation_pct fi
 LEFT JOIN LATERAL (
-    SELECT * FROM quarterly_fundamental_indicators qfi
+    SELECT * FROM processed_fundamental_quality qfi
     WHERE qfi.ts_code = fi.symbol
       AND COALESCE(qfi.f_ann_date_time, qfi.ann_date_time) <= fi.time
     ORDER BY COALESCE(qfi.f_ann_date_time, qfi.ann_date_time) DESC

@@ -1015,7 +1015,7 @@ COMMENT ON TABLE processed_monthly_qfq IS '预处理月线数据表（前复权 
 -- 基本面指标表（估值分位 + F-Score）
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS fundamental_indicators (
+CREATE TABLE IF NOT EXISTS processed_valuation_pct (
     time TIMESTAMPTZ NOT NULL,                    -- 交易日期
     symbol VARCHAR(20) NOT NULL,                   -- 股票代码
     -- 估值分位（1年窗口）
@@ -1050,14 +1050,14 @@ CREATE TABLE IF NOT EXISTS fundamental_indicators (
     PRIMARY KEY (symbol, time)
 );
 
-SELECT create_hypertable('fundamental_indicators', 'time', if_not_exists => TRUE);
+SELECT create_hypertable('processed_valuation_pct', 'time', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS idx_fundamental_symbol 
-    ON fundamental_indicators (symbol, time DESC);
+    ON processed_valuation_pct (symbol, time DESC);
 
-COMMENT ON TABLE fundamental_indicators IS '基本面指标表（估值分位 + F-Score）';
-COMMENT ON COLUMN fundamental_indicators.pe_ttm_pct_250d IS 'PE_TTM 1年历史分位 (0-100)';
-COMMENT ON COLUMN fundamental_indicators.f_score IS 'Piotroski F-Score (0-9)';
+COMMENT ON TABLE processed_valuation_pct IS '基本面指标表（估值分位 + F-Score）';
+COMMENT ON COLUMN processed_valuation_pct.pe_ttm_pct_250d IS 'PE_TTM 1年历史分位 (0-100)';
+COMMENT ON COLUMN processed_valuation_pct.f_score IS 'Piotroski F-Score (0-9)';
 
 -- ============================================================================
 -- 预处理任务执行记录表
@@ -1190,7 +1190,7 @@ class FinanceDataHub:
     
     # ========== 基本面指标查询 ==========
     
-    def get_fundamental_indicators(
+    def get_processed_valuation_pct(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
@@ -1212,7 +1212,7 @@ class FinanceDataHub:
             基本面指标数据
             
         Example:
-            >>> fdh.get_fundamental_indicators(
+            >>> fdh.get_processed_valuation_pct(
             ...     symbols=['600519.SH'],
             ...     start_date='2024-01-01',
             ...     indicators=['pe_ttm_pct_250d', 'f_score']
@@ -1284,7 +1284,7 @@ class FinanceDataHub:
 |------|--------|--------|
 | 实现 `get_daily_adjusted()` | P0 | 0.5d |
 | 实现 `get_processed_daily/weekly/monthly()` | P0 | 1d |
-| 实现 `get_fundamental_indicators()` | P0 | 0.5d |
+| 实现 `get_processed_valuation_pct()` | P0 | 0.5d |
 | 实现 `calculate_indicators()` 实时计算 | P1 | 0.5d |
 | 更新 SDK 文档 | P1 | 0.5d |
 | 编写 SDK 扩展测试 | P1 | 0.5d |
@@ -1342,7 +1342,7 @@ processed = fdh.get_processed_daily(
 )
 
 # 4. 获取基本面指标
-fundamental = fdh.get_fundamental_indicators(
+fundamental = fdh.get_processed_valuation_pct(
     symbols=['600519.SH'],
     start_date='2024-01-01',
     indicators=['pe_ttm_pct_250d', 'f_score']
@@ -1425,4 +1425,4 @@ pytest tests/integration/test_full_pipeline.py -v
 > | processed_daily_qfq | ~10GB | 5000股×20年×~100字节/行 |
 > | processed_weekly_qfq | ~2GB | 日线的 1/5 |
 > | processed_monthly_qfq | ~0.5GB | 日线的 1/20 |
-> | fundamental_indicators | ~5GB | 5000股×20年×~50字节/行 |
+> | processed_valuation_pct | ~5GB | 5000股×20年×~50字节/行 |

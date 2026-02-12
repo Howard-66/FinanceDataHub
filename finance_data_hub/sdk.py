@@ -1612,7 +1612,7 @@ class FinanceDataHub:
         logger.warning("get_processed_monthly: Table not yet available. Run SQL migration first.")
         return None
 
-    def get_fundamental_indicators(
+    def get_processed_valuation_pct(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
@@ -1622,7 +1622,7 @@ class FinanceDataHub:
         """
         获取基本面指标数据（同步方法）
 
-        从 fundamental_indicators 表查询基本面指标，包含：
+        从 processed_valuation_pct 表查询基本面指标，包含：
         - 估值分位：PE/PB/PS 的 1年/2年/3年/5年 历史分位数
         - F-Score：Piotroski 财务质量评分 (0-9)
 
@@ -1642,16 +1642,16 @@ class FinanceDataHub:
         Example:
             >>> fdh = FinanceDataHub(settings)
             >>> # 获取估值分位和 F-Score
-            >>> data = fdh.get_fundamental_indicators(['600519.SH'], '2024-01-01', '2024-12-31')
+            >>> data = fdh.get_processed_valuation_pct(['600519.SH'], '2024-01-01', '2024-12-31')
             >>> # 只获取 F-Score
-            >>> data = fdh.get_fundamental_indicators(
+            >>> data = fdh.get_processed_valuation_pct(
             ...     ['600519.SH'], '2024-01-01', '2024-12-31',
             ...     indicators=['f_score']
             ... )
         """
-        return asyncio.run(self.get_fundamental_indicators_async(symbols, start_date, end_date, indicators))
+        return asyncio.run(self.get_processed_valuation_pct_async(symbols, start_date, end_date, indicators))
 
-    async def get_fundamental_indicators_async(
+    async def get_processed_valuation_pct_async(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
@@ -1659,7 +1659,7 @@ class FinanceDataHub:
         indicators: Optional[List[str]] = None
     ) -> Optional[pd.DataFrame]:
         """获取基本面指标数据（异步方法）"""
-        logger.warning("get_fundamental_indicators: Table not yet available. Run SQL migration first.")
+        logger.warning("get_processed_valuation_pct: Table not yet available. Run SQL migration first.")
         return None
 
     # ============================================================================
@@ -1675,7 +1675,7 @@ class FinanceDataHub:
         """
         获取季度基本面指标（同步方法）
 
-        从 quarterly_fundamental_indicators 表查询季度指标，包含：
+        从 processed_fundamental_quality 表查询季度指标，包含：
         - Piotroski F-Score：财务质量评分 (0-9分)
         - 5年平均ROE
         - 3年净利润-经营现金流相关性
@@ -1715,7 +1715,7 @@ class FinanceDataHub:
         """
         # 构建查询
         query = """
-            SELECT * FROM quarterly_fundamental_indicators
+            SELECT * FROM processed_fundamental_quality
             WHERE 1=1
         """
         params = []

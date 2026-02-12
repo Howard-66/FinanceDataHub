@@ -209,7 +209,7 @@ routing_strategy:
 **4.3 SDK 扩展** ✅ 已完成
 - [x] `get_daily_adjusted()` - 复权数据获取
 - [x] `get_processed_daily/weekly/monthly()` - 预处理数据获取
-- [x] `get_fundamental_indicators()` - 基本面指标获取
+- [x] `get_processed_valuation_pct()` - 基本面指标获取
 - [x] `calculate_indicators()` - 实时指标计算
 
 **4.4 CLI 扩展** ✅ 已完成
@@ -220,7 +220,7 @@ routing_strategy:
 
 **4.5 季度基本面指标分表存储** ✅ 已完成
 - [x] 实现 F-Score 计算器（9项 Piotroski 指标）
-- [x] 创建 `quarterly_fundamental_indicators` 独立预处理表（季频数据与日频分开存储）
+- [x] 创建 `processed_fundamental_quality` 独立预处理表（季频数据与日频分开存储）
 - [x] 添加 `roe_yearly` 字段到 `fina_indicator` 表支持年化ROE计算
 - [x] 实现数据迁移脚本 `008_create_quarterly_fundamental.sql`、`009_add_roe_yearly.sql`
 
@@ -999,8 +999,8 @@ fdh-cli preprocess status
 | `processed_daily_qfq` | 日频 | 日线前复权数据 + 技术指标 |
 | `processed_weekly_qfq` | 周频 | 周线前复权数据 + 技术指标 |
 | `processed_monthly_qfq` | 月频 | 月线前复权数据 + 技术指标 |
-| `fundamental_indicators` | 日频 | 估值分位等日频基本面指标 |
-| `quarterly_fundamental_indicators` | 季频 | F-Score及财务质量指标（独立存储） |
+| `processed_valuation_pct` | 日频 | 估值分位等日频基本面指标 |
+| `processed_fundamental_quality` | 季频 | F-Score及财务质量指标（独立存储） |
 
 #### 使用示例
 

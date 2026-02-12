@@ -34,8 +34,8 @@ DROP COLUMN IF EXISTS rsi_6;
 ALTER TABLE processed_monthly_qfq 
 ADD COLUMN IF NOT EXISTS ma_50 DECIMAL(20,6);
 
--- 4. 处理 fundamental_indicators 表
-ALTER TABLE fundamental_indicators
+-- 4. 处理 processed_valuation_pct 表
+ALTER TABLE processed_valuation_pct
 DROP COLUMN IF EXISTS pe_ttm_pct_250d,
 DROP COLUMN IF EXISTS pb_pct_250d,
 DROP COLUMN IF EXISTS ps_ttm_pct_250d,
@@ -46,7 +46,7 @@ DROP COLUMN IF EXISTS pe_ttm_pct_750d,
 DROP COLUMN IF EXISTS pb_pct_750d,
 DROP COLUMN IF EXISTS ps_ttm_pct_750d;
 
-ALTER TABLE fundamental_indicators
+ALTER TABLE processed_valuation_pct
 ADD COLUMN IF NOT EXISTS pe_ttm DECIMAL(10,4),
 ADD COLUMN IF NOT EXISTS pb DECIMAL(10,4),
 ADD COLUMN IF NOT EXISTS ps_ttm DECIMAL(10,4),

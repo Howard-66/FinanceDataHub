@@ -3,31 +3,33 @@
 -- 新增字段: cfo_ttm, ni_ttm, gpm_ttm, at_ttm
 -- 用于存储滚动 4 期聚合的财务指标 TTM 值
 -- ==========================================
+ALTER TABLE public.quarterly_fundamental_indicators RENAME TO processed_fundamental_quality;
+ALTER TABLE public.fundamental_indicators RENAME TO processed_valuation_pct;
 
 -- 添加 TTM 指标字段
-ALTER TABLE quarterly_fundamental_indicators
+ALTER TABLE processed_fundamental_quality
     ADD COLUMN IF NOT EXISTS cfo_ttm DECIMAL(20,4);
 
-ALTER TABLE quarterly_fundamental_indicators
+ALTER TABLE processed_fundamental_quality
     ADD COLUMN IF NOT EXISTS ni_ttm DECIMAL(20,4);
 
-ALTER TABLE quarterly_fundamental_indicators
+ALTER TABLE processed_fundamental_quality
     ADD COLUMN IF NOT EXISTS gpm_ttm DECIMAL(10,4);
 
-ALTER TABLE quarterly_fundamental_indicators
+ALTER TABLE processed_fundamental_quality
     ADD COLUMN IF NOT EXISTS at_ttm DECIMAL(10,4);
 
 -- 添加字段注释
-COMMENT ON COLUMN quarterly_fundamental_indicators.cfo_ttm
+COMMENT ON COLUMN processed_fundamental_quality.cfo_ttm
     IS '经营现金流 TTM，4期滚动求和';
 
-COMMENT ON COLUMN quarterly_fundamental_indicators.ni_ttm
+COMMENT ON COLUMN processed_fundamental_quality.ni_ttm
     IS '净利润 TTM，4期滚动求和';
 
-COMMENT ON COLUMN quarterly_fundamental_indicators.gpm_ttm
+COMMENT ON COLUMN processed_fundamental_quality.gpm_ttm
     IS '毛利率 TTM，q_gsprofit_margin 4期滚动均值';
 
-COMMENT ON COLUMN quarterly_fundamental_indicators.at_ttm
+COMMENT ON COLUMN processed_fundamental_quality.at_ttm
     IS '资产周转率 TTM，4期滚动均值';
 
 -- 更新合并视图，添加 TTM 字段
@@ -72,9 +74,9 @@ SELECT
     -- 季度数据元信息
     qf.end_date_time AS fscore_period,
     COALESCE(qf.f_ann_date_time, qf.ann_date_time) AS fscore_effective_date
-FROM fundamental_indicators fi
+FROM processed_valuation_pct fi
 LEFT JOIN LATERAL (
-    SELECT * FROM quarterly_fundamental_indicators qfi
+    SELECT * FROM processed_fundamental_quality qfi
     WHERE qfi.ts_code = fi.symbol
       AND COALESCE(qfi.f_ann_date_time, qfi.ann_date_time) <= fi.time
     ORDER BY COALESCE(qfi.f_ann_date_time, qfi.ann_date_time) DESC

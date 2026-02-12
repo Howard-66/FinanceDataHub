@@ -1,10 +1,10 @@
 -- 010: 添加 roa_ttm 字段到季度基本面指标表
 -- ROA TTM = 本期累计ROA + (上年年报ROA - 上年同期累计ROA)
 
-ALTER TABLE quarterly_fundamental_indicators
+ALTER TABLE processed_fundamental_quality
     ADD COLUMN IF NOT EXISTS roa_ttm DECIMAL(10,4);
 
-COMMENT ON COLUMN quarterly_fundamental_indicators.roa_ttm
+COMMENT ON COLUMN processed_fundamental_quality.roa_ttm
     IS 'ROA TTM = 本期累计ROA + (上年年报ROA - 上年同期累计ROA)，消除季节性偏差';
 
 -- 更新合并视图，添加 roa_ttm 字段
@@ -44,9 +44,9 @@ SELECT
     -- 季度数据元信息
     qf.end_date_time AS fscore_period,
     COALESCE(qf.f_ann_date_time, qf.ann_date_time) AS fscore_effective_date
-FROM fundamental_indicators fi
+FROM processed_valuation_pct fi
 LEFT JOIN LATERAL (
-    SELECT * FROM quarterly_fundamental_indicators qfi
+    SELECT * FROM processed_fundamental_quality qfi
     WHERE qfi.ts_code = fi.symbol
       AND COALESCE(qfi.f_ann_date_time, qfi.ann_date_time) <= fi.time
     ORDER BY COALESCE(qfi.f_ann_date_time, qfi.ann_date_time) DESC

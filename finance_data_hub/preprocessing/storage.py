@@ -374,7 +374,7 @@ class FundamentalDataStorage:
     管理估值分位和 F-Score 等基本面指标的存储。
     """
     
-    TABLE_NAME = "fundamental_indicators"
+    TABLE_NAME = "processed_valuation_pct"
     
     # 估值分位列
     VALUATION_COLUMNS = [
@@ -567,7 +567,7 @@ class QuarterlyFundamentalDataStorage:
     管理 F-Score 和补充指标的季度数据存储。
     """
     
-    TABLE_NAME = "quarterly_fundamental_indicators"
+    TABLE_NAME = "processed_fundamental_quality"
     
     # F-Score 列
     FSCORE_COLUMNS = [
