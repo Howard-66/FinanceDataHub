@@ -108,9 +108,9 @@ SELECT
     fi.pe_ttm_pct_1250d,
     fi.pb_pct_1250d,
     fi.ps_ttm_pct_1250d,
-    fi.pe_ttm_pct_2500d,
-    fi.pb_pct_2500d,
-    fi.ps_ttm_pct_2500d,
+    -- fi.pe_ttm_pct_2500d,
+    -- fi.pb_pct_2500d,
+    -- fi.ps_ttm_pct_2500d,
     -- 季度 F-Score 指标 (forward-fill)
     qf.f_score,
     qf.f_roa,

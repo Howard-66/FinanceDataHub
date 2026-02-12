@@ -378,9 +378,8 @@ class FundamentalDataStorage:
     
     # 估值分位列
     VALUATION_COLUMNS = [
-        "pe_ttm", "pb", "ps_ttm",  # 原始值
+        "pe_ttm", "pb", "ps_ttm", "dv_ttm",  # 原始值
         "pe_ttm_pct_1250d", "pb_pct_1250d", "ps_ttm_pct_1250d",
-        "pe_ttm_pct_2500d", "pb_pct_2500d", "ps_ttm_pct_2500d",
     ]
     
     # F-Score 列

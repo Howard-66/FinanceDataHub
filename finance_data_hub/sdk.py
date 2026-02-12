@@ -1799,9 +1799,8 @@ class FinanceDataHub:
         else:
             # 只选择日度估值字段
             select_cols = """
-                time, symbol, pe_ttm, pb, ps_ttm, peg,
-                pe_ttm_pct_1250d, pb_pct_1250d, ps_ttm_pct_1250d,
-                pe_ttm_pct_2500d, pb_pct_2500d, ps_ttm_pct_2500d
+                time, symbol, pe_ttm, pb, ps_ttm, peg, dv_ttm,
+                pe_ttm_pct_1250d, pb_pct_1250d, ps_ttm_pct_1250d
             """
         
         query = f"""

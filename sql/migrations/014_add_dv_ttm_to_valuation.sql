@@ -1,28 +1,28 @@
--- 010: 添加 roa_ttm 字段到季度基本面指标表
--- ROA TTM = 本期累计ROA + (上年年报ROA - 上年同期累计ROA)
+-- =====================================================
+-- 添加股息率 TTM 字段到估值分位表
+-- =====================================================
 
-ALTER TABLE processed_fundamental_quality
-    ADD COLUMN IF NOT EXISTS roa_ttm DECIMAL(10,4);
+-- 添加 dv_ttm 字段到 processed_valuation_pct 表
+ALTER TABLE processed_valuation_pct
+    ADD COLUMN IF NOT EXISTS dv_ttm DECIMAL(10,4),                     -- 股息率(TTM)
 
-COMMENT ON COLUMN processed_fundamental_quality.roa_ttm
-    IS 'ROA TTM = 本期累计ROA + (上年年报ROA - 上年同期累计ROA)，消除季节性偏差';
+-- 添加列注释
+COMMENT ON COLUMN processed_valuation_pct.dv_ttm IS '股息率(TTM)，税前股息率';
 
--- 更新合并视图，添加 roa_ttm 字段
+-- 更新合并视图，添加 dv_ttm 字段
 CREATE OR REPLACE VIEW v_fundamental_combined AS
-SELECT 
+SELECT
     fi.time,
     fi.symbol,
     -- 日度估值指标
     fi.pe_ttm,
     fi.pb,
     fi.ps_ttm,
+    fi.dv_ttm,
     fi.peg,
     fi.pe_ttm_pct_1250d,
     fi.pb_pct_1250d,
     fi.ps_ttm_pct_1250d,
-    -- fi.pe_ttm_pct_2500d,
-    -- fi.pb_pct_2500d,
-    -- fi.ps_ttm_pct_2500d,
     -- 季度 F-Score 指标 (forward-fill)
     qf.f_score,
     qf.f_roa,
@@ -40,6 +40,11 @@ SELECT
     qf.ni_cfo_corr_3y,
     qf.debt_ratio,
     qf.current_ratio,
+    -- TTM 指标
+    qf.cfo_ttm,
+    qf.ni_ttm,
+    qf.gpm_ttm,
+    qf.at_ttm,
     qf.exemptions,
     -- 季度数据元信息
     qf.end_date_time AS fscore_period,

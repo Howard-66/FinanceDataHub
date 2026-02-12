@@ -315,7 +315,7 @@ async def _run_fundamental_preprocess(
             where_clause = " AND ".join(conditions)
             
             sql = f"""
-                SELECT time, symbol, pe_ttm, pb, ps_ttm
+                SELECT time, symbol, pe_ttm, pb, ps_ttm, dv_ttm
                 FROM daily_basic
                 WHERE {where_clause}
                 ORDER BY symbol, time
@@ -329,7 +329,7 @@ async def _run_fundamental_preprocess(
                     progress.advance(task, len(batch_symbols))
                     continue
                 
-                df = pd.DataFrame(rows, columns=["time", "symbol", "pe_ttm", "pb", "ps_ttm"])
+                df = pd.DataFrame(rows, columns=["time", "symbol", "pe_ttm", "pb", "ps_ttm", "dv_ttm"])
                 
                 # 计算估值分位
                 df = valuation.calculate(df)
