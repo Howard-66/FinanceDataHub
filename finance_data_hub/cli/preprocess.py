@@ -263,16 +263,17 @@ async def _run_fundamental_preprocess(
 ) -> dict:
     """执行基本面指标预处理"""
     import pandas as pd
-    from ..preprocessing.fundamental.valuation import ValuationPercentile
-    
+    from ..preprocessing.fundamental.valuation import ValuationPercentile, PEGCalculator
+
     # 获取股票列表
     if not symbols:
         console.print("[cyan]获取股票列表...[/cyan]")
         symbols = await _get_all_stock_symbols(db_manager)
         console.print(f"共 {len(symbols)} 只股票")
-    
+
     # 初始化处理器和存储
     valuation = ValuationPercentile()
+    peg_calculator = PEGCalculator()
     storage = FundamentalDataStorage(db_manager)
     
     total_symbols = 0
@@ -313,27 +314,46 @@ async def _run_fundamental_preprocess(
                 params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
             
             where_clause = " AND ".join(conditions)
-            
+
+            # 获取 daily_basic 数据（包含 PE, PB, PS, DV_TTM）
             sql = f"""
                 SELECT time, symbol, pe_ttm, pb, ps_ttm, dv_ttm
                 FROM daily_basic
                 WHERE {where_clause}
                 ORDER BY symbol, time
             """
-            
+
+            # 获取财务数据用于计算 PEG（直接使用 ann_date_time）
+            fina_sql = f"""
+                SELECT ts_code, ann_date_time, end_date_time, netprofit_yoy
+                FROM fina_indicator
+                WHERE ts_code IN ({placeholders})
+                  AND ann_date_time IS NOT NULL
+                ORDER BY ts_code, ann_date_time
+            """
+
             try:
                 result = await db_manager.execute_raw_sql(sql, params)
                 rows = result.fetchall()
-                
+
                 if not rows:
                     progress.advance(task, len(batch_symbols))
                     continue
-                
+
                 df = pd.DataFrame(rows, columns=["time", "symbol", "pe_ttm", "pb", "ps_ttm", "dv_ttm"])
-                
+
+                # 获取财务数据用于计算 PEG
+                fina_result = await db_manager.execute_raw_sql(fina_sql, params)
+                fina_rows = fina_result.fetchall()
+
+                if fina_rows:
+                    fina_df = pd.DataFrame(fina_rows, columns=["ts_code", "ann_date_time", "end_date_time", "netprofit_yoy"])
+                    # 计算 PEG
+                    df = peg_calculator.calculate_batch(df, fina_df)
+
                 # 计算估值分位
                 df = valuation.calculate(df)
-                
+
                 # 存储数据
                 if not df.empty:
                     count = await storage.upsert(df)

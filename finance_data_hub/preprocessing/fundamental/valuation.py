@@ -318,53 +318,62 @@ class PEGCalculator:
         return result
     
     def calculate_batch(
-        self, 
-        daily_basic: pd.DataFrame, 
+        self,
+        daily_basic: pd.DataFrame,
         fina_indicator: pd.DataFrame
     ) -> pd.DataFrame:
         """
         批量计算 PEG (优化版本,使用向量化操作)
-        
+
         通过将财务数据按公告日期合并到日度数据,避免逐行循环。
-        
+
         Args:
             daily_basic: 日度估值数据
             fina_indicator: 财务指标数据
-            
+
         Returns:
             添加 peg 列的 DataFrame
         """
         result = daily_basic.copy()
-        
+
         if "pe_ttm" not in daily_basic.columns:
             result["peg"] = np.nan
             return result
-        
+
         if fina_indicator.empty or "netprofit_yoy" not in fina_indicator.columns:
             result["peg"] = np.nan
             return result
-        
+
         # 准备财务数据
-        fina = fina_indicator[["ts_code", "ann_date", "netprofit_yoy"]].copy()
-        fina["ann_date"] = pd.to_datetime(fina["ann_date"])
-        fina = fina.sort_values(["ts_code", "ann_date"])
-        
+        fina = fina_indicator[["ts_code", "ann_date_time", "netprofit_yoy"]].copy()
+        # 确保时间列是 datetime 类型
+        if fina["ann_date_time"].dtype == "object":
+            fina["ann_date_time"] = pd.to_datetime(fina["ann_date_time"])
+        fina = fina.sort_values(["ts_code", "ann_date_time"])
+
+        # 调试：检查 netprofit_yoy 数据
+        valid_yoy = fina[fina["netprofit_yoy"].notna() & (fina["netprofit_yoy"] > 0)]
+
         # 为每只股票创建增速时间序列用于asof merge
         peg_list = []
-        
+
         for symbol in result["symbol"].unique():
             stock_daily = result[result["symbol"] == symbol].copy()
             stock_fina = fina[fina["ts_code"] == symbol].copy()
-            
+
             if stock_fina.empty:
                 stock_daily["peg"] = np.nan
                 peg_list.append(stock_daily)
                 continue
-            
+
+            # 确保 daily_basic 的 time 列是 datetime 类型
+            if stock_daily["time"].dtype == "object":
+                stock_daily["time"] = pd.to_datetime(stock_daily["time"])
+
             # 使用 merge_asof 进行时点匹配
             stock_daily = stock_daily.sort_values("time")
-            stock_fina = stock_fina.rename(columns={"ann_date": "time_fina"})
-            
+            stock_fina = stock_fina.rename(columns={"ann_date_time": "time_fina"})
+
             merged = pd.merge_asof(
                 stock_daily,
                 stock_fina[["time_fina", "netprofit_yoy"]],
@@ -372,21 +381,26 @@ class PEGCalculator:
                 right_on="time_fina",
                 direction="backward"
             )
-            
+
+            # 调试：检查合并后的数据
+            matched = merged[merged["netprofit_yoy"].notna()]
+            valid_peg = merged[(merged["netprofit_yoy"].notna()) & (merged["netprofit_yoy"] > 0) & (merged["pe_ttm"] > 0)]
+            print(f"[DEBUG] PEG计算: {symbol} 匹配 {len(matched)} 条, 有效PEG {len(valid_peg)} 条")
+
             # 计算 PEG
             merged["peg"] = np.where(
                 (merged["pe_ttm"] > 0) & (merged["netprofit_yoy"] > 0),
                 merged["pe_ttm"] / merged["netprofit_yoy"],
                 np.nan
             )
-            
+
             peg_list.append(merged.drop(columns=["time_fina", "netprofit_yoy"], errors="ignore"))
-        
+
         if peg_list:
             result = pd.concat(peg_list, ignore_index=True)
         else:
             result["peg"] = np.nan
-        
+
         return result
     
     def get_peg_level(self, peg: float) -> str:

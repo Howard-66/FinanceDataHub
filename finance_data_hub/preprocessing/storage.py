@@ -380,6 +380,7 @@ class FundamentalDataStorage:
     VALUATION_COLUMNS = [
         "pe_ttm", "pb", "ps_ttm", "dv_ttm",  # 原始值
         "pe_ttm_pct_1250d", "pb_pct_1250d", "ps_ttm_pct_1250d",
+        "peg",
     ]
     
     # F-Score 列

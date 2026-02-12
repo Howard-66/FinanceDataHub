@@ -52,7 +52,9 @@
       "Bash(.venvScriptspython.exe -c:*)",
       "Bash(fdh-cli schedule run:*)",
       "Bash(uv run pytest:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(fdh-cli preprocess run:*)",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []
