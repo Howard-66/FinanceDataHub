@@ -498,6 +498,76 @@ print(data_with_indicators[['close', 'ma_20', 'macd_dif', 'rsi_14', 'atr_14']].t
 await fdh.close()
 ```
 
+### 预处理数据查询示例
+
+预处理数据表存储经过预计算的数据，可直接查询：
+
+```python
+from finance_data_hub import FinanceDataHub
+from finance_data_hub.config import get_settings
+
+settings = get_settings()
+fdh = FinanceDataHub(settings)
+
+# ========== 查询预处理日线数据（含技术指标）==========
+# 从 processed_daily_qfq 表查询
+daily_processed = await fdh.get_processed_daily_async(
+    symbols=['600519.SH', '000858.SZ'],
+    start_date='2024-01-01',
+    end_date='2024-12-31',
+    indicators=['ma_20', 'macd_dif', 'macd_dea', 'macd_hist', 'rsi_14', 'atr_14']
+)
+print(f"预处理日线数据: {len(daily_processed)} 条")
+print(daily_processed[['time', 'symbol', 'close', 'ma_20', 'macd_dif', 'rsi_14']].tail())
+
+# ========== 查询预处理周线数据 ==========
+weekly_processed = await fdh.get_processed_weekly_async(
+    symbols=['600519.SH'],
+    start_date='2024-01-01',
+    end_date='2024-12-31'
+)
+print(f"预处理周线数据: {len(weekly_processed)} 条")
+
+# ========== 查询预处理月线数据 ==========
+monthly_processed = await fdh.get_processed_monthly_async(
+    symbols=['600519.SH'],
+    start_date='2024-01-01',
+    end_date='2024-12-31'
+)
+print(f"预处理月线数据: {len(monthly_processed)} 条")
+
+# ========== 查询基本面估值分位数据 ==========
+valuation = await fdh.get_processed_valuation_pct_async(
+    symbols=['600519.SH'],
+    start_date='2024-01-01',
+    end_date='2024-12-31',
+    indicators=['pe_ttm_pct_1250d', 'pb_pct_1250d', 'peg', 'f_score']
+)
+print(f"估值分位数据: {len(valuation)} 条")
+print(valuation[['time', 'symbol', 'pe_ttm_pct_1250d', 'pb_pct_1250d', 'peg', 'f_score']].tail())
+
+# ========== 查询季度基本面指标（F-Score等）==========
+quarterly = await fdh.get_quarterly_fundamental_async(
+    symbols=['600519.SH', '000858.SZ'],
+    start_date='2020-01-01',
+    end_date='2024-12-31'
+)
+print(f"季度基本面数据: {len(quarterly)} 条")
+print(quarterly[['ts_code', 'end_date_time', 'f_score', 'roe_5y_avg', 'ni_cfo_corr_3y']].head(10))
+
+# ========== 查询合并基本面数据（日度+季度）==========
+combined = await fdh.get_fundamental_combined_async(
+    symbols=['600519.SH'],
+    start_date='2024-01-01',
+    end_date='2024-12-31',
+    include_fscore=True
+)
+print(f"合并基本面数据: {len(combined)} 条")
+print(combined[['time', 'symbol', 'pe_ttm', 'pb', 'f_score', 'roe_5y_avg']].tail())
+
+await fdh.close()
+```
+
 ### 预处理流水线使用示例
 
 ```python
@@ -604,6 +674,12 @@ print(f"建议: {freshness['recommendation']}")
 | 申万行业日线行情 | `get_sw_daily()` / `get_sw_daily_async()` | ts_code, start_date, end_date |
 | 交易日历 | `get_trade_cal()` / `get_trade_cal_async()` | exchange, start_date, end_date, is_open |
 | 指数成分权重 | `get_index_weight()` / `get_index_weight_async()` | index_code, start_date, end_date, trade_date |
+| 预处理日线 | `get_processed_daily()` / `get_processed_daily_async()` | symbols (可选), start_date (可选), end_date (可选), indicators (可选) |
+| 预处理周线 | `get_processed_weekly()` / `get_processed_weekly_async()` | symbols (可选), start_date (可选), end_date (可选), indicators (可选) |
+| 预处理月线 | `get_processed_monthly()` / `get_processed_monthly_async()` | symbols (可选), start_date (可选), end_date (可选), indicators (可选) |
+| 估值分位 | `get_processed_valuation_pct()` / `get_processed_valuation_pct_async()` | symbols (可选), start_date (可选), end_date (可选), indicators (可选) |
+| 季度基本面 | `get_quarterly_fundamental()` / `get_quarterly_fundamental_async()` | symbols (可选), start_date (可选), end_date (可选) |
+| 合并基本面 | `get_fundamental_combined()` / `get_fundamental_combined_async()` | symbols (可选), start_date, end_date, include_fscore |
 
 **GDP数据说明**:
 - 日期格式使用季度末日期，如 `2024-03-31` 表示 2024Q1，`2024-06-30` 表示 2024Q2
@@ -756,6 +832,87 @@ print(f"建议: {freshness['recommendation']}")
 - `minute_15` - 15分钟线
 - `minute_30` - 30分钟线
 - `minute_60` - 60分钟线
+
+**预处理数据表说明**:
+
+预处理数据表存储经过预计算的数据，包括技术指标和基本面指标。
+
+**预处理日线/周线/月线数据**:
+- 数据来源: `processed_daily_qfq`, `processed_weekly_qfq`, `processed_monthly_qfq` 表
+- 返回字段: `time`, `symbol`, `open`, `high`, `low`, `close`, `volume`, `amount` 及技术指标
+- 技术指标可选: `ma_20`, `ma_50`, `macd_dif`, `macd_dea`, `macd_hist`, `rsi_14`, `atr_14`
+- SDK 示例:
+  ```python
+  # 获取预处理日线数据（含技术指标）
+  daily = await fdh.get_processed_daily_async(
+      symbols=['600519.SH'],
+      start_date='2024-01-01',
+      end_date='2024-12-31',
+      indicators=['ma_20', 'macd_dif', 'rsi_14']
+  )
+  print(daily[['time', 'symbol', 'close', 'ma_20', 'macd_dif', 'rsi_14']].tail())
+
+  # 获取预处理周线数据
+  weekly = await fdh.get_processed_weekly_async(
+      symbols=['600519.SH'],
+      start_date='2024-01-01',
+      end_date='2024-12-31'
+  )
+
+  # 获取预处理月线数据
+  monthly = await fdh.get_processed_monthly_async(
+      symbols=['600519.SH'],
+      start_date='2024-01-01',
+      end_date='2024-12-31'
+  )
+  ```
+
+**估值分位数据**:
+- 数据来源: `processed_valuation_pct` 表
+- 返回字段: `time`, `symbol` 及估值分位指标
+- 估值分位可选: `pe_ttm`, `pb`, `ps_ttm`, `dv_ttm`, `pe_ttm_pct_1250d`, `pb_pct_1250d`, `ps_ttm_pct_1250d`, `peg`
+- F-Score可选: `f_score`, `f_roa`, `f_cfo`, `f_delta_roa`, `f_accrual`, `f_delta_lever`, `f_delta_liquid`, `f_eq_offer`, `f_delta_margin`, `f_delta_turn`
+- SDK 示例:
+  ```python
+  # 获取估值分位数据
+  valuation = await fdh.get_processed_valuation_pct_async(
+      symbols=['600519.SH'],
+      start_date='2024-01-01',
+      end_date='2024-12-31'
+  )
+  print(valuation[['time', 'symbol', 'pe_ttm', 'pb', 'pe_ttm_pct_1250d', 'f_score']].tail())
+  ```
+
+**季度基本面数据**:
+- 数据来源: `processed_fundamental_quality` 表
+- 返回字段: `ts_code`, `end_date_time`, `ann_date_time`, `f_ann_date_time`, F-Score系列字段, 补充指标字段
+- F-Score字段: `f_score`, `f_roa`, `f_cfo`, `f_delta_roa`, `f_accrual`, `f_delta_lever`, `f_delta_liquid`, `f_eq_offer`, `f_delta_margin`, `f_delta_turn`
+- 补充指标: `roe_5y_avg`, `ni_cfo_corr_3y`, `debt_ratio`, `current_ratio` 等
+- SDK 示例:
+  ```python
+  # 获取季度基本面指标（F-Score等）
+  quarterly = await fdh.get_quarterly_fundamental_async(
+      symbols=['600519.SH'],
+      start_date='2020-01-01',
+      end_date='2024-12-31'
+  )
+  print(quarterly[['ts_code', 'end_date_time', 'f_score', 'roe_5y_avg', 'ni_cfo_corr_3y']])
+  ```
+
+**合并基本面数据**:
+- 数据来源: `v_fundamental_combined` 视图
+- 日度数据（估值分位）与季度数据（F-Score）按时间合并
+- SDK 示例:
+  ```python
+  # 获取合并后的基本面数据
+  combined = await fdh.get_fundamental_combined_async(
+      symbols=['600519.SH'],
+      start_date='2024-01-01',
+      end_date='2024-12-31',
+      include_fscore=True
+  )
+  print(combined[['time', 'symbol', 'pe_ttm', 'pb', 'f_score', 'roe_5y_avg']].tail())
+  ```
 
 ## CLI 使用示例
 
@@ -1066,6 +1223,40 @@ fdh-cli preprocess run --all --category technical --verbose
 - 基本面指标需要 `daily_basic` 表中的 PE/PB/PS 数据
 - 使用 `--force` 会重新计算所有数据，耗时较长
 - 批处理大小（`--batch-size`）可根据内存情况调整
+
+#### 查询预处理数据
+
+预处理完成后，可以使用 SDK 直接查询预处理数据：
+
+```python
+from finance_data_hub import FinanceDataHub
+from finance_data_hub.config import get_settings
+
+settings = get_settings()
+fdh = FinanceDataHub(settings)
+
+# 查询预处理日线数据
+daily = fdh.get_processed_daily(
+    symbols=['600519.SH'],
+    start_date='2024-01-01',
+    end_date='2024-12-31',
+    indicators=['ma_20', 'macd', 'rsi_14']
+)
+
+# 查询估值分位数据
+valuation = fdh.get_processed_valuation_pct(
+    symbols=['600519.SH'],
+    start_date='2024-01-01',
+    end_date='2024-12-31'
+)
+
+# 查询季度基本面（F-Score等）
+quarterly = fdh.get_quarterly_fundamental(
+    symbols=['600519.SH'],
+    start_date='2020-01-01',
+    end_date='2024-12-31'
+)
+```
 
 
 ### 系统状态查看

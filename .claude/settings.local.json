@@ -54,7 +54,8 @@
       "Bash(uv run pytest:*)",
       "Bash(ls:*)",
       "Bash(fdh-cli preprocess run:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(uv run ruff format:*)"
     ],
     "deny": [],
     "ask": []

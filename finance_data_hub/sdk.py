@@ -21,6 +21,11 @@ from finance_data_hub.config import Settings
 from finance_data_hub.database.manager import DatabaseManager
 from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.router.smart_router import SmartRouter
+from finance_data_hub.preprocessing.storage import (
+    ProcessedDataStorage,
+    FundamentalDataStorage,
+    QuarterlyFundamentalDataStorage
+)
 
 
 
@@ -86,6 +91,11 @@ class FinanceDataHub:
         _ = self.db_manager.get_engine()
         self.ops = DataOperations(self.db_manager)
         self.backend = backend
+
+        # 初始化预处理数据存储
+        self.processed_storage = ProcessedDataStorage(self.db_manager)
+        self.fundamental_storage = FundamentalDataStorage(self.db_manager)
+        self.quarterly_storage = QuarterlyFundamentalDataStorage(self.db_manager)
 
         # 初始化 SmartRouter（如果配置文件存在）
         try:
@@ -1530,19 +1540,27 @@ class FinanceDataHub:
         """
         获取预处理后的日线数据（异步方法）
 
+        从 processed_daily_qfq 表查询预处理数据，包含：
+        - 前复权 OHLCV 数据
+        - 技术指标：MA20, MACD, RSI, ATR 等
+
         Args:
-            symbols: 股票代码列表
-            start_date: 开始日期
-            end_date: 结束日期
-            indicators: 需要的指标列表
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            indicators: 需要的指标列表，None表示返回全部
 
         Returns:
             Optional[pd.DataFrame]: 预处理后的日线数据
         """
-        # TODO: 实现从 processed_daily_qfq 表查询
-        # 当前返回 None，待数据表创建后实现
-        logger.warning("get_processed_daily: Table not yet available. Run SQL migration first.")
-        return None
+        return await self.processed_storage.query(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            freq="daily",
+            adjust_type="qfq",
+            indicators=indicators
+        )
 
     def get_processed_weekly(
         self,
@@ -1574,9 +1592,28 @@ class FinanceDataHub:
         end_date: Optional[str] = None,
         indicators: Optional[List[str]] = None
     ) -> Optional[pd.DataFrame]:
-        """获取预处理后的周线数据（异步方法）"""
-        logger.warning("get_processed_weekly: Table not yet available. Run SQL migration first.")
-        return None
+        """
+        获取预处理后的周线数据（异步方法）
+
+        从 processed_weekly_qfq 表查询预处理数据。
+
+        Args:
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            indicators: 需要的指标列表，None表示返回全部
+
+        Returns:
+            Optional[pd.DataFrame]: 预处理后的周线数据
+        """
+        return await self.processed_storage.query(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            freq="weekly",
+            adjust_type="qfq",
+            indicators=indicators
+        )
 
     def get_processed_monthly(
         self,
@@ -1608,9 +1645,28 @@ class FinanceDataHub:
         end_date: Optional[str] = None,
         indicators: Optional[List[str]] = None
     ) -> Optional[pd.DataFrame]:
-        """获取预处理后的月线数据（异步方法）"""
-        logger.warning("get_processed_monthly: Table not yet available. Run SQL migration first.")
-        return None
+        """
+        获取预处理后的月线数据（异步方法）
+
+        从 processed_monthly_qfq 表查询预处理数据。
+
+        Args:
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            indicators: 需要的指标列表，None表示返回全部
+
+        Returns:
+            Optional[pd.DataFrame]: 预处理后的月线数据
+        """
+        return await self.processed_storage.query(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            freq="monthly",
+            adjust_type="qfq",
+            indicators=indicators
+        )
 
     def get_processed_valuation_pct(
         self,
@@ -1658,9 +1714,33 @@ class FinanceDataHub:
         end_date: Optional[str] = None,
         indicators: Optional[List[str]] = None
     ) -> Optional[pd.DataFrame]:
-        """获取基本面指标数据（异步方法）"""
-        logger.warning("get_processed_valuation_pct: Table not yet available. Run SQL migration first.")
-        return None
+        """
+        获取基本面指标数据（异步方法）
+
+        从 processed_valuation_pct 表查询基本面指标，包含：
+        - 估值分位：PE/PB/PS 的 1年/2年/3年/5年 历史分位数
+        - F-Score：Piotroski 财务质量评分 (0-9)
+
+        Args:
+            symbols: 股票代码列表，None表示不限制股票
+            start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
+            end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            indicators: 需要的指标列表，None表示返回全部
+                     估值分位可选: ['pe_ttm', 'pb', 'ps_ttm', 'dv_ttm',
+                             'pe_ttm_pct_1250d', 'pb_pct_1250d', 'ps_ttm_pct_1250d', 'peg']
+                     财务评分可选: ['f_score', 'f_roa', 'f_cfo', 'f_delta_roa', 'f_accrual',
+                             'f_delta_lever', 'f_delta_liquid', 'f_eq_offer',
+                             'f_delta_margin', 'f_delta_turn']
+
+        Returns:
+            Optional[pd.DataFrame]: 基本面指标数据
+        """
+        return await self.fundamental_storage.query(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            indicators=indicators
+        )
 
     # ============================================================================
     # 季度基本面指标查询（新增）
@@ -1705,42 +1785,25 @@ class FinanceDataHub:
         """
         获取季度基本面指标（异步方法）
 
+        从 processed_fundamental_quality 表查询季度指标，包含：
+        - Piotroski F-Score：财务质量评分 (0-9分)
+        - 5年平均ROE
+        - 3年净利润-经营现金流相关性
+        - 资产负债率、流动比率
+
         Args:
             symbols: 股票代码列表，None表示不限制
-            start_date: 开始日期，None表示从最早开始
+            start_date: 开始日期（报告期格式，如 '2020-01-01'），None表示从最早开始
             end_date: 结束日期，None表示到最新
 
         Returns:
             Optional[pd.DataFrame]: 季度基本面指标数据
         """
-        # 构建查询
-        query = """
-            SELECT * FROM processed_fundamental_quality
-            WHERE 1=1
-        """
-        params = []
-        
-        if symbols:
-            placeholders = ", ".join([f"${i+1}" for i in range(len(symbols))])
-            query += f" AND ts_code IN ({placeholders})"
-            params.extend(symbols)
-        
-        if start_date:
-            params.append(start_date)
-            query += f" AND end_date_time >= ${len(params)}"
-        
-        if end_date:
-            params.append(end_date)
-            query += f" AND end_date_time <= ${len(params)}"
-        
-        query += " ORDER BY ts_code, end_date_time"
-        
-        try:
-            result = await self.ops.execute_query(query, params)
-            return result
-        except Exception as e:
-            logger.warning(f"get_quarterly_fundamental: Query failed - {e}")
-            return None
+        return await self.quarterly_storage.query(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date
+        )
 
     def get_fundamental_combined(
         self,
