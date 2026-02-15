@@ -383,14 +383,6 @@ class FundamentalDataStorage:
         "peg",
     ]
     
-    # F-Score 列
-    FSCORE_COLUMNS = [
-        "f_score",
-        "f_roa", "f_cfo", "f_delta_roa", "f_accrual",
-        "f_delta_lever", "f_delta_liquid", "f_eq_offer",
-        "f_delta_margin", "f_delta_turn"
-    ]
-    
     def __init__(self, db_manager: Optional["DatabaseManager"] = None):
         self.db_manager = db_manager
     
@@ -410,7 +402,7 @@ class FundamentalDataStorage:
             return 0
         
         # 准备数据，过滤多余列
-        allowed_columns = ["time", "symbol"] + self.VALUATION_COLUMNS + self.FSCORE_COLUMNS
+        allowed_columns = ["time", "symbol"] + self.VALUATION_COLUMNS
         available_columns = [c for c in df.columns if c in allowed_columns]
         
         if len(available_columns) <= 2:  # 只有 time 和 symbol
@@ -499,15 +491,10 @@ class FundamentalDataStorage:
             for ind in indicators:
                 if ind in self.VALUATION_COLUMNS:
                     columns.append(ind)
-                elif ind in self.FSCORE_COLUMNS:
-                    columns.append(ind)
                 elif ind == "valuation":
                     columns.extend(self.VALUATION_COLUMNS)
-                elif ind == "fscore":
-                    columns.extend(self.FSCORE_COLUMNS)
         else:
             columns.extend(self.VALUATION_COLUMNS)
-            columns.extend(self.FSCORE_COLUMNS)
         
         # 去重
         columns = list(dict.fromkeys(columns))

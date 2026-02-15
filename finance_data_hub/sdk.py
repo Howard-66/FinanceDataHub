@@ -1680,7 +1680,6 @@ class FinanceDataHub:
 
         从 processed_valuation_pct 表查询基本面指标，包含：
         - 估值分位：PE/PB/PS 的 1年/2年/3年/5年 历史分位数
-        - F-Score：Piotroski 财务质量评分 (0-9)
 
         Args:
             symbols: 股票代码列表，用于批量查询指定股票
@@ -1690,20 +1689,14 @@ class FinanceDataHub:
             end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
             indicators: 需要的指标列表，None表示返回全部
                        估值分位可选: ['pe_ttm_pct_250d', 'pe_ttm_pct_500d', 'pb_pct_250d', ...]
-                       财务评分可选: ['f_score', 'roe_score', 'leverage_score', ...]
 
         Returns:
             Optional[pd.DataFrame]: 基本面指标数据
 
         Example:
             >>> fdh = FinanceDataHub(settings)
-            >>> # 获取估值分位和 F-Score
+            >>> # 获取估值分位
             >>> data = fdh.get_processed_valuation_pct(['600519.SH'], '2024-01-01', '2024-12-31')
-            >>> # 只获取 F-Score
-            >>> data = fdh.get_processed_valuation_pct(
-            ...     ['600519.SH'], '2024-01-01', '2024-12-31',
-            ...     indicators=['f_score']
-            ... )
         """
         return asyncio.run(self.get_processed_valuation_pct_async(symbols, start_date, end_date, indicators))
 
@@ -1719,7 +1712,6 @@ class FinanceDataHub:
 
         从 processed_valuation_pct 表查询基本面指标，包含：
         - 估值分位：PE/PB/PS 的 1年/2年/3年/5年 历史分位数
-        - F-Score：Piotroski 财务质量评分 (0-9)
 
         Args:
             symbols: 股票代码列表，None表示不限制股票
@@ -1728,9 +1720,6 @@ class FinanceDataHub:
             indicators: 需要的指标列表，None表示返回全部
                      估值分位可选: ['pe_ttm', 'pb', 'ps_ttm', 'dv_ttm',
                              'pe_ttm_pct_1250d', 'pb_pct_1250d', 'ps_ttm_pct_1250d', 'peg']
-                     财务评分可选: ['f_score', 'f_roa', 'f_cfo', 'f_delta_roa', 'f_accrual',
-                             'f_delta_lever', 'f_delta_liquid', 'f_eq_offer',
-                             'f_delta_margin', 'f_delta_turn']
 
         Returns:
             Optional[pd.DataFrame]: 基本面指标数据
@@ -1866,30 +1855,46 @@ class FinanceDataHub:
                 pe_ttm_pct_1250d, pb_pct_1250d, ps_ttm_pct_1250d
             """
         
-        query = f"""
-            SELECT {select_cols} FROM v_fundamental_combined
-            WHERE 1=1
-        """
-        params = []
+        params = {}
+        conditions = []
         
         if symbols:
-            placeholders = ", ".join([f"${i+1}" for i in range(len(symbols))])
-            query += f" AND symbol IN ({placeholders})"
-            params.extend(symbols)
+            # Use named parameters
+            placeholders = ", ".join([f":sym_{i}" for i in range(len(symbols))])
+            conditions.append(f"symbol IN ({placeholders})")
+            for i, sym in enumerate(symbols):
+                params[f"sym_{i}"] = sym
         
         if start_date:
-            params.append(start_date)
-            query += f" AND time >= ${len(params)}"
+            conditions.append("time >= :start_date")
+            params["start_date"] = pd.to_datetime(start_date).to_pydatetime()
         
         if end_date:
-            params.append(end_date)
-            query += f" AND time <= ${len(params)}"
+            conditions.append("time <= :end_date")
+            params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
         
-        query += " ORDER BY symbol, time"
+        where_clause = " WHERE 1=1"
+        if conditions:
+            where_clause += " AND " + " AND ".join(conditions)
+        
+        query = f"""
+            SELECT {select_cols} FROM v_fundamental_combined
+            {where_clause}
+            ORDER BY symbol, time
+        """
         
         try:
-            result = await self.ops.execute_query(query, params)
-            return result
+            # Use db_manager.execute_raw_sql instead of ops.execute_query
+            # Fetch all rows immediately to avoid connection closed issues
+            result_proxy = await self.db_manager.execute_raw_sql(query, params)
+            rows = result_proxy.fetchall()
+            
+            if not rows:
+                return pd.DataFrame()
+                
+            columns = result_proxy.keys()
+            return pd.DataFrame(rows, columns=columns)
+            
         except Exception as e:
             logger.warning(f"get_fundamental_combined: Query failed - {e}")
             return None
