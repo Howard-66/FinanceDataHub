@@ -4,11 +4,12 @@
 提供对TimescaleDB表的CRUD操作。
 """
 
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import pandas as pd
-from sqlalchemy import text
 from loguru import logger
+from sqlalchemy import text
 
 from finance_data_hub.database.manager import DatabaseManager
 
@@ -29,6 +30,7 @@ def _normalize_datetime_for_db(value, data_type="daily"):
     except ImportError:
         # Python < 3.9, 使用pytz
         import pytz
+
         ZoneInfo = lambda tz: pytz.timezone(tz)
 
     # 如果是字符串，先转换为 pd.Timestamp
@@ -37,11 +39,15 @@ def _normalize_datetime_for_db(value, data_type="daily"):
 
     if isinstance(value, pd.Timestamp):
         # 中国股市使用Asia/Shanghai时区
-        china_tz = ZoneInfo('Asia/Shanghai')
+        china_tz = ZoneInfo("Asia/Shanghai")
 
         if value.tz is None:
             # 无时区信息，根据数据类型处理
-            if data_type == "daily" or data_type == "daily_basic" or data_type == "adj_factor":
+            if (
+                data_type == "daily"
+                or data_type == "daily_basic"
+                or data_type == "adj_factor"
+            ):
                 # 日线数据：设置为收盘时间 15:00:00
                 value = value.replace(hour=15, minute=0, second=0, microsecond=0)
             # else: minute数据保持原时间
@@ -51,7 +57,7 @@ def _normalize_datetime_for_db(value, data_type="daily"):
         else:
             # 已有时区，转换为中国时间
             # xtquant数据已经转换为Asia/Shanghai时区，直接使用
-            if str(value.tz) == 'Asia/Shanghai':
+            if str(value.tz) == "Asia/Shanghai":
                 return value.to_pydatetime()
             else:
                 return value.tz_convert(china_tz).to_pydatetime()
@@ -127,7 +133,9 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="daily"
+                        )
 
             # 确保所有必需字段都存在，缺失的字段设置为None
             required_fields = {
@@ -140,9 +148,22 @@ class DataOperations:
                         record[field] = default_value
 
             # 清理DataFrame中不属于symbol_daily表的字段
-            valid_fields = {"time", "symbol", "open", "high", "low", "close", "volume", "amount", "change_pct", "change_amount"}
+            valid_fields = {
+                "time",
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+                "change_pct",
+                "change_amount",
+            }
             for record in records:
-                invalid_fields = [key for key in record.keys() if key not in valid_fields]
+                invalid_fields = [
+                    key for key in record.keys() if key not in valid_fields
+                ]
                 for key in invalid_fields:
                     del record[key]
 
@@ -211,13 +232,29 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value, data_type="minute")
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="minute"
+                        )
 
             # 清理DataFrame中不属于symbol_minute表的字段
-            valid_fields = {"time", "symbol", "frequency", "open", "high", "low", "close", "volume", "amount"}
+            valid_fields = {
+                "time",
+                "symbol",
+                "frequency",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+            }
             for record in records:
                 # 删除不属于表结构的字段
-                fields_to_remove = [key for key in record.keys() if key not in valid_fields and key != "time"]
+                fields_to_remove = [
+                    key
+                    for key in record.keys()
+                    if key not in valid_fields and key != "time"
+                ]
                 for field in fields_to_remove:
                     del record[field]
 
@@ -230,7 +267,9 @@ class DataOperations:
                 f"{len(batch)} records (total: {total_inserted})"
             )
 
-        logger.info(f"Total inserted {total_inserted} records to symbol_minute (freq={freq})")
+        logger.info(
+            f"Total inserted {total_inserted} records to symbol_minute (freq={freq})"
+        )
         return total_inserted
 
     async def insert_asset_basic_batch(self, data: pd.DataFrame) -> int:
@@ -280,7 +319,9 @@ class DataOperations:
 
         # PostgreSQL ON CONFLICT 可能返回 -1，使用实际的记录数更可靠
         actual_count = len(records)
-        logger.info(f"Inserted/updated {actual_count} asset_basic records (batch: {len(records)})")
+        logger.info(
+            f"Inserted/updated {actual_count} asset_basic records (batch: {len(records)})"
+        )
         return actual_count
 
     async def insert_daily_basic_batch(
@@ -344,7 +385,9 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value, data_type="daily_basic")
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="daily_basic"
+                        )
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)
@@ -429,12 +472,11 @@ class DataOperations:
 
         return [row.symbol for row in rows]
 
-
     async def get_symbol_daily(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取日线 OHLCV 数据
@@ -445,7 +487,7 @@ class DataOperations:
             end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
 
         Returns:
-            Optional[pd.DataFrame]: 日线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
+            Optional[pd.DataFrame]: 日线数据，包含 time, symbol, open, high, low, close, volume, amount 列
         """
         # 自动检查并初始化数据库连接（如果需要）
         if self.db_manager._engine is None:
@@ -483,7 +525,7 @@ class DataOperations:
         where_clause = " AND ".join(conditions)
 
         query = text(f"""
-            SELECT time, symbol, open, high, low, close, volume, amount, adj_factor
+            SELECT time, symbol, open, high, low, close, volume, amount
             FROM symbol_daily
             WHERE {where_clause}
             ORDER BY symbol, time
@@ -504,7 +546,7 @@ class DataOperations:
         symbols: List[str],
         start_date: str,
         end_date: str,
-        frequency: str = "minute_1"
+        frequency: str = "minute_1",
     ) -> Optional[pd.DataFrame]:
         """
         获取分钟级 OHLCV 数据
@@ -556,7 +598,7 @@ class DataOperations:
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取每日基本面指标数据
@@ -624,8 +666,7 @@ class DataOperations:
         return data
 
     async def get_asset_basic(
-        self,
-        symbols: Optional[List[str]] = None
+        self, symbols: Optional[List[str]] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取股票基本信息
@@ -658,7 +699,6 @@ class DataOperations:
 
         data = pd.DataFrame([row._asdict() for row in rows])
         return data
-
 
     async def check_table_exists(self, table_name: str) -> bool:
         """
@@ -726,7 +766,9 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value, data_type="adj_factor")
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="adj_factor"
+                        )
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)
@@ -744,7 +786,7 @@ class DataOperations:
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取指定时间范围内的复权因子
@@ -811,10 +853,7 @@ class DataOperations:
         return data
 
     async def get_weekly_data(
-        self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        self, symbols: List[str], start_date: str, end_date: str
     ) -> Optional[pd.DataFrame]:
         """
         获取周线聚合的 OHLCV 数据
@@ -862,10 +901,7 @@ class DataOperations:
         return data
 
     async def get_monthly_data(
-        self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        self, symbols: List[str], start_date: str, end_date: str
     ) -> Optional[pd.DataFrame]:
         """
         获取月线聚合的 OHLCV 数据
@@ -913,10 +949,7 @@ class DataOperations:
         return data
 
     async def get_daily_basic_weekly(
-        self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        self, symbols: List[str], start_date: str, end_date: str
     ) -> Optional[pd.DataFrame]:
         """
         获取周线聚合的每日基础指标
@@ -962,10 +995,7 @@ class DataOperations:
         return data
 
     async def get_daily_basic_monthly(
-        self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        self, symbols: List[str], start_date: str, end_date: str
     ) -> Optional[pd.DataFrame]:
         """
         获取月线聚合的每日基础指标
@@ -1011,10 +1041,7 @@ class DataOperations:
         return data
 
     async def get_adj_factor_weekly(
-        self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        self, symbols: List[str], start_date: str, end_date: str
     ) -> Optional[pd.DataFrame]:
         """
         获取周线聚合的复权因子数据
@@ -1058,10 +1085,7 @@ class DataOperations:
         return data
 
     async def get_adj_factor_monthly(
-        self,
-        symbols: List[str],
-        start_date: str,
-        end_date: str
+        self, symbols: List[str], start_date: str, end_date: str
     ) -> Optional[pd.DataFrame]:
         """
         获取月线聚合的复权因子数据
@@ -1153,7 +1177,9 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="daily"
+                        )
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)
@@ -1168,9 +1194,7 @@ class DataOperations:
         return total_inserted
 
     async def get_cn_gdp(
-        self,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        self, start_date: Optional[str] = None, end_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取中国GDP数据
@@ -1187,8 +1211,14 @@ class DataOperations:
             await self.db_manager.initialize()
 
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = """
@@ -1299,7 +1329,9 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="daily"
+                        )
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)
@@ -1314,9 +1346,7 @@ class DataOperations:
         return total_inserted
 
     async def get_cn_ppi(
-        self,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        self, start_date: Optional[str] = None, end_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取中国PPI数据
@@ -1329,8 +1359,14 @@ class DataOperations:
             Optional[pd.DataFrame]: PPI数据，包含time, month及所有PPI指标字段
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = """
@@ -1415,7 +1451,9 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="daily"
+                        )
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)
@@ -1430,9 +1468,7 @@ class DataOperations:
         return total_inserted
 
     async def get_cn_m(
-        self,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        self, start_date: Optional[str] = None, end_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取中国货币供应量数据
@@ -1445,8 +1481,14 @@ class DataOperations:
             Optional[pd.DataFrame]: 货币供应量数据，包含time, month及所有指标字段
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = """
@@ -1559,7 +1601,9 @@ class DataOperations:
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
-                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="daily"
+                        )
 
             async with self.db_manager._engine.begin() as conn:
                 result = await conn.execute(text(insert_sql), records)
@@ -1574,9 +1618,7 @@ class DataOperations:
         return total_inserted
 
     async def get_cn_pmi(
-        self,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        self, start_date: Optional[str] = None, end_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:
         """
         获取中国PMI数据
@@ -1589,8 +1631,14 @@ class DataOperations:
             Optional[pd.DataFrame]: PMI数据，包含time, month及所有指标字段
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = """
@@ -1700,7 +1748,9 @@ class DataOperations:
             # 转换日期为datetime对象（PostgreSQL TIMESTAMPTZ格式）
             # 使用统一的日期规范化函数，确保添加Asia/Shanghai时区
             for record in records:
-                record["trade_date"] = _normalize_datetime_for_db(record["trade_date"], "daily")
+                record["trade_date"] = _normalize_datetime_for_db(
+                    record["trade_date"], "daily"
+                )
 
             async with self.db_manager._engine.begin() as conn:
                 await conn.execute(text(insert_sql), records)
@@ -1715,7 +1765,7 @@ class DataOperations:
         self,
         ts_code: Optional[str] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取大盘指数每日指标数据
@@ -1733,8 +1783,14 @@ class DataOperations:
             await self.db_manager.initialize()
 
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = """
@@ -1867,7 +1923,9 @@ class DataOperations:
             # 转换日期为datetime对象（PostgreSQL TIMESTAMPTZ格式）
             # 使用统一的日期规范化函数，确保添加Asia/Shanghai时区
             for record in records:
-                record["trade_date"] = _normalize_datetime_for_db(record["trade_date"], "daily")
+                record["trade_date"] = _normalize_datetime_for_db(
+                    record["trade_date"], "daily"
+                )
 
             async with self.db_manager._engine.begin() as conn:
                 await conn.execute(text(insert_sql), records)
@@ -1882,7 +1940,7 @@ class DataOperations:
         self,
         ts_code: Optional[str] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取申万行业日线行情数据
@@ -1900,8 +1958,14 @@ class DataOperations:
             await self.db_manager.initialize()
 
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = """
@@ -1947,7 +2011,9 @@ class DataOperations:
 
         return data
 
-    async def get_latest_sw_daily_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+    async def get_latest_sw_daily_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取最新的申万行业日线行情日期
 
@@ -1977,7 +2043,9 @@ class DataOperations:
 
         return None
 
-    async def insert_income_batch(self, df: pd.DataFrame, batch_size: int = 1000) -> int:
+    async def insert_income_batch(
+        self, df: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
         """
         批量插入利润表数据
 
@@ -1993,7 +2061,9 @@ class DataOperations:
 
         # 确保 end_date_time 列存在且格式正确
         if "end_date_time" not in df.columns:
-            df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+            df["end_date_time"] = pd.to_datetime(
+                df["end_date"], format="%Y%m%d", errors="coerce"
+            )
 
         # 验证时间列有有效值
         if df["end_date_time"].isna().all():
@@ -2012,7 +2082,9 @@ class DataOperations:
 
         return total_inserted
 
-    async def _insert_income_with_retry(self, df: pd.DataFrame, max_retries: int = 3) -> int:
+    async def _insert_income_with_retry(
+        self, df: pd.DataFrame, max_retries: int = 3
+    ) -> int:
         """
         带重试机制的插入利润表数据
 
@@ -2028,10 +2100,14 @@ class DataOperations:
                 return await self.__insert_income_batch(df)
             except Exception as e:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    logger.warning(
+                        f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}"
+                    )
                     await asyncio.sleep(1.0 * (attempt + 1))
                 else:
-                    logger.error(f"Insert income batch failed after {max_retries} attempts: {e}")
+                    logger.error(
+                        f"Insert income batch failed after {max_retries} attempts: {e}"
+                    )
                     raise
 
         return 0
@@ -2059,8 +2135,8 @@ class DataOperations:
                     # 时间字段需要时区感知的datetime
                     if pd.notna(val):
                         try:
-                            if hasattr(val, 'tzinfo') and val.tzinfo is None:
-                                row_data[col] = val.tz_localize('UTC')
+                            if hasattr(val, "tzinfo") and val.tzinfo is None:
+                                row_data[col] = val.tz_localize("UTC")
                             else:
                                 row_data[col] = val
                         except (ValueError, TypeError):
@@ -2069,7 +2145,7 @@ class DataOperations:
                         row_data[col] = None
                 elif col == "update_flag":
                     row_data[col] = str(val) if pd.notna(val) else None
-                elif hasattr(val, 'item'):
+                elif hasattr(val, "item"):
                     # numpy类型转换为Python原生类型
                     try:
                         row_data[col] = val.item()
@@ -2121,8 +2197,14 @@ class DataOperations:
             pd.DataFrame: 利润表数据
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         query = """
             SELECT * FROM income WHERE 1=1
@@ -2153,7 +2235,9 @@ class DataOperations:
 
         return None
 
-    async def get_latest_income_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+    async def get_latest_income_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取最新的利润表数据日期
 
@@ -2198,7 +2282,9 @@ class DataOperations:
 
         return [row.ts_code for row in rows]
 
-    async def get_latest_index_dailybasic_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+    async def get_latest_index_dailybasic_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取最新的大盘指数每日指标日期
 
@@ -2250,61 +2336,190 @@ class DataOperations:
 
         # 财务指标字段列表（除了ts_code, ann_date, end_date, end_date_time）
         indicator_columns = [
-            "eps", "dt_eps", "total_revenue_ps", "revenue_ps", "capital_rese_ps",
-            "surplus_rese_ps", "undist_profit_ps", "extra_item", "profit_dedt", "gross_margin",
-            "current_ratio", "quick_ratio", "cash_ratio",
-            "invturn_days", "arturn_days", "inv_turn",
-            "ar_turn", "ca_turn", "fa_turn",
-            "assets_turn", "op_income",
-            "valuechange_income", "interst_income", "daa",
-            "ebit", "ebitda", "fcff", "fcfe", "current_exint",
-            "noncurrent_exint", "interestdebt", "netdebt", "tangible_asset", "working_capital",
-            "networking_capital", "invest_capital", "retained_earnings", "diluted2_eps",
-            "bps", "ocfps", "retainedps", "cfps", "ebit_ps", "fcff_ps", "fcfe_ps",
-            "netprofit_margin", "grossprofit_margin",
-            "cogs_of_sales", "expense_of_sales",
-            "profit_to_gr", "saleexp_to_gr", "adminexp_of_gr", "finaexp_of_gr",
-            "impai_ttm", "gc_of_gr", "op_of_gr", "ebit_of_gr",
-            "roe", "roe_waa", "roe_dt", "roa", "npta", "roic",
-            "roe_yearly", "roa2_yearly", "roe_avg",
-            "opincome_of_ebt", "investincome_of_ebt", "n_op_profit_of_ebt",
-            "tax_to_ebt", "dtprofit_to_profit",
-            "salescash_to_or", "ocf_to_or", "ocf_to_opincome", "capitalized_to_da",
-            "debt_to_assets", "assets_to_eqt", "dp_assets_to_eqt",
-            "ca_to_assets", "nca_to_assets", "tbassets_to_totalassets",
-            "int_to_talcap", "eqt_to_talcapital",
-            "currentdebt_to_debt", "longdeb_to_debt", "ocf_to_shortdebt",
-            "debt_to_eqt", "eqt_to_debt", "eqt_to_interestdebt",
-            "tangibleasset_to_debt", "tangasset_to_intdebt", "tangibleasset_to_netdebt",
-            "ocf_to_debt", "ocf_to_interestdebt", "ocf_to_netdebt",
-            "ebit_to_interest", "longdebt_to_workingcapital", "ebitda_to_debt",
-            "turn_days", "roa_yearly", "roa_dp",
-            "fixed_assets", "profit_prefin_exp", "non_op_profit",
-            "op_to_ebt", "nop_to_ebt",
-            "ocf_to_profit", "cash_to_liqdebt", "cash_to_liqdebt_withinterest",
-            "op_to_liqdebt", "op_to_debt", "roic_yearly", "total_fa_trun", "profit_to_op",
-            "q_opincome", "q_investincome", "q_dtprofit", "q_eps",
-            "q_netprofit_margin", "q_gsprofit_margin", "q_exp_to_sales",
-            "q_profit_to_gr", "q_saleexp_to_gr", "q_adminexp_to_gr", "q_finaexp_to_gr",
-            "q_impair_to_gr_ttm", "q_gc_to_gr", "q_op_to_gr",
-            "q_roe", "q_dt_roe", "q_npta",
-            "q_opincome_to_ebt", "q_investincome_to_ebt", "q_dtprofit_to_profit",
-            "q_salescash_to_or", "q_ocf_to_sales", "q_ocf_to_or",
-            "basic_eps_yoy", "dt_eps_yoy", "cfps_yoy",
-            "op_yoy", "ebt_yoy", "netprofit_yoy", "dt_netprofit_yoy", "ocf_yoy", "roe_yoy", "bps_yoy",
-            "assets_yoy", "eqt_yoy", "tr_yoy", "or_yoy",
-            "q_gr_yoy", "q_gr_qoq", "q_sales_yoy", "q_sales_qoq",
-            "q_op_yoy", "q_op_qoq",
-            "q_profit_yoy", "q_profit_qoq", "q_netprofit_yoy", "q_netprofit_qoq",
+            "eps",
+            "dt_eps",
+            "total_revenue_ps",
+            "revenue_ps",
+            "capital_rese_ps",
+            "surplus_rese_ps",
+            "undist_profit_ps",
+            "extra_item",
+            "profit_dedt",
+            "gross_margin",
+            "current_ratio",
+            "quick_ratio",
+            "cash_ratio",
+            "invturn_days",
+            "arturn_days",
+            "inv_turn",
+            "ar_turn",
+            "ca_turn",
+            "fa_turn",
+            "assets_turn",
+            "op_income",
+            "valuechange_income",
+            "interst_income",
+            "daa",
+            "ebit",
+            "ebitda",
+            "fcff",
+            "fcfe",
+            "current_exint",
+            "noncurrent_exint",
+            "interestdebt",
+            "netdebt",
+            "tangible_asset",
+            "working_capital",
+            "networking_capital",
+            "invest_capital",
+            "retained_earnings",
+            "diluted2_eps",
+            "bps",
+            "ocfps",
+            "retainedps",
+            "cfps",
+            "ebit_ps",
+            "fcff_ps",
+            "fcfe_ps",
+            "netprofit_margin",
+            "grossprofit_margin",
+            "cogs_of_sales",
+            "expense_of_sales",
+            "profit_to_gr",
+            "saleexp_to_gr",
+            "adminexp_of_gr",
+            "finaexp_of_gr",
+            "impai_ttm",
+            "gc_of_gr",
+            "op_of_gr",
+            "ebit_of_gr",
+            "roe",
+            "roe_waa",
+            "roe_dt",
+            "roa",
+            "npta",
+            "roic",
+            "roe_yearly",
+            "roa2_yearly",
+            "roe_avg",
+            "opincome_of_ebt",
+            "investincome_of_ebt",
+            "n_op_profit_of_ebt",
+            "tax_to_ebt",
+            "dtprofit_to_profit",
+            "salescash_to_or",
+            "ocf_to_or",
+            "ocf_to_opincome",
+            "capitalized_to_da",
+            "debt_to_assets",
+            "assets_to_eqt",
+            "dp_assets_to_eqt",
+            "ca_to_assets",
+            "nca_to_assets",
+            "tbassets_to_totalassets",
+            "int_to_talcap",
+            "eqt_to_talcapital",
+            "currentdebt_to_debt",
+            "longdeb_to_debt",
+            "ocf_to_shortdebt",
+            "debt_to_eqt",
+            "eqt_to_debt",
+            "eqt_to_interestdebt",
+            "tangibleasset_to_debt",
+            "tangasset_to_intdebt",
+            "tangibleasset_to_netdebt",
+            "ocf_to_debt",
+            "ocf_to_interestdebt",
+            "ocf_to_netdebt",
+            "ebit_to_interest",
+            "longdebt_to_workingcapital",
+            "ebitda_to_debt",
+            "turn_days",
+            "roa_yearly",
+            "roa_dp",
+            "fixed_assets",
+            "profit_prefin_exp",
+            "non_op_profit",
+            "op_to_ebt",
+            "nop_to_ebt",
+            "ocf_to_profit",
+            "cash_to_liqdebt",
+            "cash_to_liqdebt_withinterest",
+            "op_to_liqdebt",
+            "op_to_debt",
+            "roic_yearly",
+            "total_fa_trun",
+            "profit_to_op",
+            "q_opincome",
+            "q_investincome",
+            "q_dtprofit",
+            "q_eps",
+            "q_netprofit_margin",
+            "q_gsprofit_margin",
+            "q_exp_to_sales",
+            "q_profit_to_gr",
+            "q_saleexp_to_gr",
+            "q_adminexp_to_gr",
+            "q_finaexp_to_gr",
+            "q_impair_to_gr_ttm",
+            "q_gc_to_gr",
+            "q_op_to_gr",
+            "q_roe",
+            "q_dt_roe",
+            "q_npta",
+            "q_opincome_to_ebt",
+            "q_investincome_to_ebt",
+            "q_dtprofit_to_profit",
+            "q_salescash_to_or",
+            "q_ocf_to_sales",
+            "q_ocf_to_or",
+            "basic_eps_yoy",
+            "dt_eps_yoy",
+            "cfps_yoy",
+            "op_yoy",
+            "ebt_yoy",
+            "netprofit_yoy",
+            "dt_netprofit_yoy",
+            "ocf_yoy",
+            "roe_yoy",
+            "bps_yoy",
+            "assets_yoy",
+            "eqt_yoy",
+            "tr_yoy",
+            "or_yoy",
+            "q_gr_yoy",
+            "q_gr_qoq",
+            "q_sales_yoy",
+            "q_sales_qoq",
+            "q_op_yoy",
+            "q_op_qoq",
+            "q_profit_yoy",
+            "q_profit_qoq",
+            "q_netprofit_yoy",
+            "q_netprofit_qoq",
             "equity_yoy",
-            "rd_exp", "update_flag",
+            "rd_exp",
+            "update_flag",
         ]
 
         # 构建INSERT语句
-        columns_str = ", ".join([
-            "ts_code", "ann_date", "ann_date_time", "end_date", "end_date_time"
-        ] + indicator_columns)
-        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "ann_date_time", "end_date", "end_date_time"] + indicator_columns])
+        columns_str = ", ".join(
+            ["ts_code", "ann_date", "ann_date_time", "end_date", "end_date_time"]
+            + indicator_columns
+        )
+        values_str = ", ".join(
+            [
+                ":" + col
+                for col in [
+                    "ts_code",
+                    "ann_date",
+                    "ann_date_time",
+                    "end_date",
+                    "end_date_time",
+                ]
+                + indicator_columns
+            ]
+        )
 
         # ON CONFLICT部分
         update_parts = []
@@ -2323,10 +2538,23 @@ class DataOperations:
         total_inserted = 0
 
         # 所有需要插入的列名
-        all_columns = ["ts_code", "ann_date", "ann_date_time", "end_date", "end_date_time"] + indicator_columns
+        all_columns = [
+            "ts_code",
+            "ann_date",
+            "ann_date_time",
+            "end_date",
+            "end_date_time",
+        ] + indicator_columns
 
         # 非数值字段列表（不需要clip）
-        non_numeric_columns = {"ts_code", "ann_date", "end_date", "ann_date_time", "end_date_time", "update_flag"}
+        non_numeric_columns = {
+            "ts_code",
+            "ann_date",
+            "end_date",
+            "ann_date_time",
+            "end_date_time",
+            "update_flag",
+        }
 
         for i in range(0, len(data), batch_size):
             batch = data.iloc[i : i + batch_size].copy()
@@ -2343,20 +2571,30 @@ class DataOperations:
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
-                    elif key in ("end_date_time", "ann_date_time") or isinstance(value, pd.Timestamp):
-                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+                    elif key in ("end_date_time", "ann_date_time") or isinstance(
+                        value, pd.Timestamp
+                    ):
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="daily"
+                        )
                     elif key == "update_flag":
                         record[key] = str(value) if value is not None else None
-                    elif key not in non_numeric_columns and isinstance(value, (int, float)):
+                    elif key not in non_numeric_columns and isinstance(
+                        value, (int, float)
+                    ):
                         # Clip所有数值到DECIMAL(20,4)的安全范围
                         # max = 10^16 - 1 = 9999999999999999
                         max_val = 9_999_999_999_999_999
                         min_val = -9_999_999_999_999_999
                         if value > max_val:
-                            logger.warning(f"Clipping {key} value {value} to max {max_val}")
+                            logger.warning(
+                                f"Clipping {key} value {value} to max {max_val}"
+                            )
                             record[key] = max_val
                         elif value < min_val:
-                            logger.warning(f"Clipping {key} value {value} to min {min_val}")
+                            logger.warning(
+                                f"Clipping {key} value {value} to min {min_val}"
+                            )
                             record[key] = min_val
 
             async with self.db_manager._engine.begin() as conn:
@@ -2375,7 +2613,7 @@ class DataOperations:
         self,
         ts_code: Optional[str] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取财务指标数据
@@ -2389,8 +2627,14 @@ class DataOperations:
             Optional[pd.DataFrame]: 财务指标数据
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = "SELECT * FROM fina_indicator WHERE 1=1"
@@ -2420,7 +2664,9 @@ class DataOperations:
         data = pd.DataFrame([row._asdict() for row in rows])
         return data
 
-    async def get_latest_fina_indicator_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+    async def get_latest_fina_indicator_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取最新的财务指标数据日期
 
@@ -2450,7 +2696,9 @@ class DataOperations:
 
         return None
 
-    async def insert_income_batch(self, df: pd.DataFrame, batch_size: int = 1000) -> int:
+    async def insert_income_batch(
+        self, df: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
         """
         批量插入利润表数据
 
@@ -2466,7 +2714,9 @@ class DataOperations:
 
         # 确保 end_date_time 列存在且格式正确
         if "end_date_time" not in df.columns:
-            df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+            df["end_date_time"] = pd.to_datetime(
+                df["end_date"], format="%Y%m%d", errors="coerce"
+            )
 
         # 验证时间列有有效值
         if df["end_date_time"].isna().all():
@@ -2485,7 +2735,9 @@ class DataOperations:
 
         return total_inserted
 
-    async def _insert_income_with_retry(self, df: pd.DataFrame, max_retries: int = 3) -> int:
+    async def _insert_income_with_retry(
+        self, df: pd.DataFrame, max_retries: int = 3
+    ) -> int:
         """
         带重试机制的插入利润表数据
 
@@ -2501,10 +2753,14 @@ class DataOperations:
                 return await self.__insert_income_batch(df)
             except Exception as e:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    logger.warning(
+                        f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}"
+                    )
                     await asyncio.sleep(1.0 * (attempt + 1))
                 else:
-                    logger.error(f"Insert income batch failed after {max_retries} attempts: {e}")
+                    logger.error(
+                        f"Insert income batch failed after {max_retries} attempts: {e}"
+                    )
                     raise
 
         return 0
@@ -2532,8 +2788,8 @@ class DataOperations:
                     # 时间字段需要时区感知的datetime
                     if pd.notna(val):
                         try:
-                            if hasattr(val, 'tzinfo') and val.tzinfo is None:
-                                row_data[col] = val.tz_localize('UTC')
+                            if hasattr(val, "tzinfo") and val.tzinfo is None:
+                                row_data[col] = val.tz_localize("UTC")
                             else:
                                 row_data[col] = val
                         except (ValueError, TypeError):
@@ -2542,7 +2798,7 @@ class DataOperations:
                         row_data[col] = None
                 elif col == "update_flag":
                     row_data[col] = str(val) if pd.notna(val) else None
-                elif hasattr(val, 'item'):
+                elif hasattr(val, "item"):
                     # numpy类型转换为Python原生类型
                     try:
                         row_data[col] = val.item()
@@ -2594,8 +2850,14 @@ class DataOperations:
             pd.DataFrame: 利润表数据
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         query = """
             SELECT * FROM income WHERE 1=1
@@ -2626,7 +2888,9 @@ class DataOperations:
 
         return None
 
-    async def get_latest_income_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+    async def get_latest_income_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取最新的利润表数据日期
 
@@ -2678,42 +2942,139 @@ class DataOperations:
 
         # 现金流量表字段列表（除了ts_code, ann_date, f_ann_date, end_date, end_date_time）
         cashflow_columns = [
-            "comp_type", "report_type", "end_type", "net_profit", "finan_exp",
-            "c_fr_sale_sg", "recp_tax_rends", "n_depos_incr_fi", "n_incr_loans_cb",
-            "n_inc_borr_oth_fi", "prem_fr_orig_contr", "n_incr_insured_dep", "n_reinsur_prem",
-            "n_incr_disp_tfa", "ifc_cash_incr", "n_incr_disp_faas", "n_incr_loans_oth_bank",
-            "n_cap_incr_repur", "c_fr_oth_operate_a", "c_inf_fr_operate_a", "c_paid_goods_s",
-            "c_paid_to_for_empl", "c_paid_for_taxes", "n_incr_clt_loan_adv", "n_incr_dep_cbob",
-            "c_pay_claims_orig_inco", "pay_handling_chrg", "pay_comm_insur_plcy",
-            "oth_cash_pay_oper_act", "st_cash_out_act", "n_cashflow_act", "oth_recp_ral_inv_act",
-            "c_disp_withdrwl_invest", "c_recp_return_invest", "n_recp_disp_fiolta",
-            "n_recp_disp_sobu", "stot_inflows_inv_act", "c_pay_acq_const_fiolta",
-            "c_paid_invest", "n_disp_subs_oth_biz", "oth_pay_ral_inv_act", "n_incr_pledge_loan",
-            "stot_out_inv_act", "n_cashflow_inv_act", "c_recp_borrow", "proc_issue_bonds",
-            "oth_cash_recp_ral_fnc_act", "stot_cash_in_fnc_act", "free_cashflow",
-            "c_prepay_amt_borr", "c_pay_dist_dpcp_int_exp", "incl_dvd_profit_paid_sc_ms",
-            "oth_cashpay_ral_fnc_act", "stot_cashout_fnc_act", "n_cash_flows_fnc_act",
-            "eff_fx_flu_cash", "n_incr_cash_cash_equ", "c_cash_equ_beg_period",
-            "c_cash_equ_end_period", "c_recp_cap_contrib", "incl_cash_rec_saims",
-            "uncon_invest_loss", "prov_depr_assets", "depr_fa_coga_dpba", "amort_intang_assets",
-            "lt_amort_deferred_exp", "decr_deferred_exp", "incr_acc_exp", "loss_disp_fiolta",
-            "loss_scr_fa", "loss_fv_chg", "invest_loss", "decr_def_inc_tax_assets",
-            "incr_def_inc_tax_liab", "decr_inventories", "decr_oper_payable", "incr_oper_payable",
-            "others", "im_net_cashflow_oper_act", "conv_debt_into_cap", "conv_copbonds_due_within_1y",
-            "fa_fnc_leases", "im_n_incr_cash_equ", "net_dism_capital_add", "net_cash_rece_sec",
-            "credit_impa_loss", "use_right_asset_dep", "oth_loss_asset", "end_bal_cash",
-            "beg_bal_cash", "end_bal_cash_equ", "beg_bal_cash_equ", "update_flag"
+            "comp_type",
+            "report_type",
+            "end_type",
+            "net_profit",
+            "finan_exp",
+            "c_fr_sale_sg",
+            "recp_tax_rends",
+            "n_depos_incr_fi",
+            "n_incr_loans_cb",
+            "n_inc_borr_oth_fi",
+            "prem_fr_orig_contr",
+            "n_incr_insured_dep",
+            "n_reinsur_prem",
+            "n_incr_disp_tfa",
+            "ifc_cash_incr",
+            "n_incr_disp_faas",
+            "n_incr_loans_oth_bank",
+            "n_cap_incr_repur",
+            "c_fr_oth_operate_a",
+            "c_inf_fr_operate_a",
+            "c_paid_goods_s",
+            "c_paid_to_for_empl",
+            "c_paid_for_taxes",
+            "n_incr_clt_loan_adv",
+            "n_incr_dep_cbob",
+            "c_pay_claims_orig_inco",
+            "pay_handling_chrg",
+            "pay_comm_insur_plcy",
+            "oth_cash_pay_oper_act",
+            "st_cash_out_act",
+            "n_cashflow_act",
+            "oth_recp_ral_inv_act",
+            "c_disp_withdrwl_invest",
+            "c_recp_return_invest",
+            "n_recp_disp_fiolta",
+            "n_recp_disp_sobu",
+            "stot_inflows_inv_act",
+            "c_pay_acq_const_fiolta",
+            "c_paid_invest",
+            "n_disp_subs_oth_biz",
+            "oth_pay_ral_inv_act",
+            "n_incr_pledge_loan",
+            "stot_out_inv_act",
+            "n_cashflow_inv_act",
+            "c_recp_borrow",
+            "proc_issue_bonds",
+            "oth_cash_recp_ral_fnc_act",
+            "stot_cash_in_fnc_act",
+            "free_cashflow",
+            "c_prepay_amt_borr",
+            "c_pay_dist_dpcp_int_exp",
+            "incl_dvd_profit_paid_sc_ms",
+            "oth_cashpay_ral_fnc_act",
+            "stot_cashout_fnc_act",
+            "n_cash_flows_fnc_act",
+            "eff_fx_flu_cash",
+            "n_incr_cash_cash_equ",
+            "c_cash_equ_beg_period",
+            "c_cash_equ_end_period",
+            "c_recp_cap_contrib",
+            "incl_cash_rec_saims",
+            "uncon_invest_loss",
+            "prov_depr_assets",
+            "depr_fa_coga_dpba",
+            "amort_intang_assets",
+            "lt_amort_deferred_exp",
+            "decr_deferred_exp",
+            "incr_acc_exp",
+            "loss_disp_fiolta",
+            "loss_scr_fa",
+            "loss_fv_chg",
+            "invest_loss",
+            "decr_def_inc_tax_assets",
+            "incr_def_inc_tax_liab",
+            "decr_inventories",
+            "decr_oper_payable",
+            "incr_oper_payable",
+            "others",
+            "im_net_cashflow_oper_act",
+            "conv_debt_into_cap",
+            "conv_copbonds_due_within_1y",
+            "fa_fnc_leases",
+            "im_n_incr_cash_equ",
+            "net_dism_capital_add",
+            "net_cash_rece_sec",
+            "credit_impa_loss",
+            "use_right_asset_dep",
+            "oth_loss_asset",
+            "end_bal_cash",
+            "beg_bal_cash",
+            "end_bal_cash_equ",
+            "beg_bal_cash_equ",
+            "update_flag",
         ]
 
         # 构建INSERT语句
-        columns_str = ", ".join([
-            "ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"
-        ] + cashflow_columns)
-        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"] + cashflow_columns])
+        columns_str = ", ".join(
+            [
+                "ts_code",
+                "ann_date",
+                "ann_date_time",
+                "f_ann_date",
+                "f_ann_date_time",
+                "end_date",
+                "end_date_time",
+            ]
+            + cashflow_columns
+        )
+        values_str = ", ".join(
+            [
+                ":" + col
+                for col in [
+                    "ts_code",
+                    "ann_date",
+                    "ann_date_time",
+                    "f_ann_date",
+                    "f_ann_date_time",
+                    "end_date",
+                    "end_date_time",
+                ]
+                + cashflow_columns
+            ]
+        )
 
         # ON CONFLICT部分
         update_parts = []
-        for col in ["ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date"] + cashflow_columns:
+        for col in [
+            "ann_date",
+            "ann_date_time",
+            "f_ann_date",
+            "f_ann_date_time",
+            "end_date",
+        ] + cashflow_columns:
             update_parts.append(f"{col} = EXCLUDED.{col}")
         update_str = ", ".join(update_parts)
 
@@ -2728,20 +3089,54 @@ class DataOperations:
         total_inserted = 0
 
         # 所有需要插入的列名
-        all_columns = ["ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"] + cashflow_columns
+        all_columns = [
+            "ts_code",
+            "ann_date",
+            "ann_date_time",
+            "f_ann_date",
+            "f_ann_date_time",
+            "end_date",
+            "end_date_time",
+        ] + cashflow_columns
 
         # 可能包含大数值的字段（需要clip到安全范围）
         large_value_columns = {
-            "net_profit", "finan_exp", "c_fr_sale_sg", "recp_tax_rends", "c_inf_fr_operate_a",
-            "c_paid_goods_s", "c_paid_to_for_empl", "c_paid_for_taxes", "st_cash_out_act",
-            "n_cashflow_act", "c_disp_withdrwl_invest", "c_recp_return_invest",
-            "stot_inflows_inv_act", "c_pay_acq_const_fiolta", "c_paid_invest",
-            "stot_out_inv_act", "n_cashflow_inv_act", "c_recp_borrow", "proc_issue_bonds",
-            "stot_cash_in_fnc_act", "free_cashflow", "c_prepay_amt_borr",
-            "c_pay_dist_dpcp_int_exp", "stot_cashout_fnc_act", "n_cash_flows_fnc_act",
-            "n_incr_cash_cash_equ", "c_cash_equ_beg_period", "c_cash_equ_end_period",
-            "c_recp_cap_contrib", "prov_depr_assets", "depr_fa_coga_dpba", "amort_intang_assets",
-            "end_bal_cash", "beg_bal_cash", "end_bal_cash_equ", "beg_bal_cash_equ"
+            "net_profit",
+            "finan_exp",
+            "c_fr_sale_sg",
+            "recp_tax_rends",
+            "c_inf_fr_operate_a",
+            "c_paid_goods_s",
+            "c_paid_to_for_empl",
+            "c_paid_for_taxes",
+            "st_cash_out_act",
+            "n_cashflow_act",
+            "c_disp_withdrwl_invest",
+            "c_recp_return_invest",
+            "stot_inflows_inv_act",
+            "c_pay_acq_const_fiolta",
+            "c_paid_invest",
+            "stot_out_inv_act",
+            "n_cashflow_inv_act",
+            "c_recp_borrow",
+            "proc_issue_bonds",
+            "stot_cash_in_fnc_act",
+            "free_cashflow",
+            "c_prepay_amt_borr",
+            "c_pay_dist_dpcp_int_exp",
+            "stot_cashout_fnc_act",
+            "n_cash_flows_fnc_act",
+            "n_incr_cash_cash_equ",
+            "c_cash_equ_beg_period",
+            "c_cash_equ_end_period",
+            "c_recp_cap_contrib",
+            "prov_depr_assets",
+            "depr_fa_coga_dpba",
+            "amort_intang_assets",
+            "end_bal_cash",
+            "beg_bal_cash",
+            "end_bal_cash_equ",
+            "beg_bal_cash_equ",
         }
 
         for i in range(0, len(data), batch_size):
@@ -2759,17 +3154,27 @@ class DataOperations:
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
-                    elif key in ("end_date_time", "ann_date_time", "f_ann_date_time") or isinstance(value, pd.Timestamp):
-                        record[key] = _normalize_datetime_for_db(value, data_type="daily")
+                    elif key in (
+                        "end_date_time",
+                        "ann_date_time",
+                        "f_ann_date_time",
+                    ) or isinstance(value, pd.Timestamp):
+                        record[key] = _normalize_datetime_for_db(
+                            value, data_type="daily"
+                        )
                     elif key in large_value_columns and isinstance(value, (int, float)):
                         # Clip大数值到DECIMAL(20,4)的安全范围
                         max_val = 9_999_999_999_999_999
                         min_val = -9_999_999_999_999_999
                         if value > max_val:
-                            logger.warning(f"Clipping {key} value {value} to max {max_val}")
+                            logger.warning(
+                                f"Clipping {key} value {value} to max {max_val}"
+                            )
                             record[key] = max_val
                         elif value < min_val:
-                            logger.warning(f"Clipping {key} value {value} to min {min_val}")
+                            logger.warning(
+                                f"Clipping {key} value {value} to min {min_val}"
+                            )
                             record[key] = min_val
 
             async with self.db_manager._engine.begin() as conn:
@@ -2788,7 +3193,7 @@ class DataOperations:
         self,
         ts_code: Optional[str] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取现金流量表数据
@@ -2802,8 +3207,14 @@ class DataOperations:
             Optional[pd.DataFrame]: 现金流量表数据
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = "SELECT * FROM cashflow WHERE 1=1"
@@ -2833,7 +3244,9 @@ class DataOperations:
         data = pd.DataFrame([row._asdict() for row in rows])
         return data
 
-    async def get_latest_cashflow_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+    async def get_latest_cashflow_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取最新的现金流量表数据日期
 
@@ -2863,7 +3276,9 @@ class DataOperations:
 
         return None
 
-    async def insert_income_batch(self, df: pd.DataFrame, batch_size: int = 1000) -> int:
+    async def insert_income_batch(
+        self, df: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
         """
         批量插入利润表数据
 
@@ -2879,7 +3294,9 @@ class DataOperations:
 
         # 确保 end_date_time 列存在且格式正确
         if "end_date_time" not in df.columns:
-            df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+            df["end_date_time"] = pd.to_datetime(
+                df["end_date"], format="%Y%m%d", errors="coerce"
+            )
 
         # 验证时间列有有效值
         if df["end_date_time"].isna().all():
@@ -2898,7 +3315,9 @@ class DataOperations:
 
         return total_inserted
 
-    async def _insert_income_with_retry(self, df: pd.DataFrame, max_retries: int = 3) -> int:
+    async def _insert_income_with_retry(
+        self, df: pd.DataFrame, max_retries: int = 3
+    ) -> int:
         """
         带重试机制的插入利润表数据
 
@@ -2914,10 +3333,14 @@ class DataOperations:
                 return await self.__insert_income_batch(df)
             except Exception as e:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    logger.warning(
+                        f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}"
+                    )
                     await asyncio.sleep(1.0 * (attempt + 1))
                 else:
-                    logger.error(f"Insert income batch failed after {max_retries} attempts: {e}")
+                    logger.error(
+                        f"Insert income batch failed after {max_retries} attempts: {e}"
+                    )
                     raise
 
         return 0
@@ -2945,8 +3368,8 @@ class DataOperations:
                     # 时间字段需要时区感知的datetime
                     if pd.notna(val):
                         try:
-                            if hasattr(val, 'tzinfo') and val.tzinfo is None:
-                                row_data[col] = val.tz_localize('UTC')
+                            if hasattr(val, "tzinfo") and val.tzinfo is None:
+                                row_data[col] = val.tz_localize("UTC")
                             else:
                                 row_data[col] = val
                         except (ValueError, TypeError):
@@ -2955,7 +3378,7 @@ class DataOperations:
                         row_data[col] = None
                 elif col == "update_flag":
                     row_data[col] = str(val) if pd.notna(val) else None
-                elif hasattr(val, 'item'):
+                elif hasattr(val, "item"):
                     # numpy类型转换为Python原生类型
                     try:
                         row_data[col] = val.item()
@@ -3007,8 +3430,14 @@ class DataOperations:
             pd.DataFrame: 利润表数据
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         query = """
             SELECT * FROM income WHERE 1=1
@@ -3039,7 +3468,9 @@ class DataOperations:
 
         return None
 
-    async def get_latest_income_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+    async def get_latest_income_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取最新的利润表数据日期
 
@@ -3091,50 +3522,200 @@ class DataOperations:
 
         # 资产负债表字段列表（除了ts_code, ann_date, f_ann_date, end_date, end_date_time）
         balancesheet_columns = [
-            "comp_type", "report_type", "end_type", "total_share", "cap_rese",
-            "undistr_porfit", "surplus_rese", "special_rese", "money_cap", "trad_asset",
-            "notes_receiv", "accounts_receiv", "oth_receiv", "prepayment", "div_receiv",
-            "int_receiv", "inventories", "amor_exp", "nca_within_1y", "sett_rsrv",
-            "loanto_oth_bank_fi", "premium_receiv", "reinsur_receiv", "reinsur_res_receiv",
-            "pur_resale_fa", "oth_cur_assets", "total_cur_assets", "fa_avail_for_sale",
-            "htm_invest", "lt_eqt_invest", "invest_real_estate", "time_deposits", "oth_assets",
-            "lt_rec", "fix_assets", "cip", "const_materials", "fixed_assets_disp",
-            "produc_bio_assets", "oil_and_gas_assets", "intan_assets", "r_and_d", "goodwill",
-            "lt_amor_exp", "defer_tax_assets", "decr_in_disbur", "oth_nca", "total_nca",
-            "cash_reser_cb", "depos_in_oth_bfi", "prec_metals", "deriv_assets",
-            "rr_reins_une_prem", "rr_reins_outstd_cla", "rr_reins_lins_liab", "rr_reins_lthins_liab",
-            "refund_depos", "ph_pledge_loans", "refund_cap_depos", "indept_acct_assets",
-            "client_depos", "client_prov", "transac_seat_fee", "invest_as_receiv", "total_assets",
-            "lt_borr", "st_borr", "cb_borr", "depos_ib_deposits", "loan_oth_bank", "trading_fl",
-            "notes_payable", "acct_payable", "adv_receipts", "sold_for_repur_fa", "comm_payable",
-            "payroll_payable", "taxes_payable", "int_payable", "div_payable", "oth_payable",
-            "acc_exp", "deferred_inc", "st_bonds_payable", "payable_to_reinsurer", "rsrv_insur_cont",
-            "acting_trading_sec", "acting_uw_sec", "non_cur_liab_due_1y", "oth_cur_liab",
-            "total_cur_liab", "bond_payable", "lt_payable", "specific_payables", "estimated_liab",
-            "defer_tax_liab", "defer_inc_non_cur_liab", "oth_ncl", "total_ncl", "depos_oth_bfi",
-            "deriv_liab", "depos", "agency_bus_liab", "oth_liab", "prem_receiv_adva",
-            "depos_received", "ph_invest", "reser_une_prem", "reser_outstd_claims", "reser_lins_liab",
-            "reser_lthins_liab", "indept_acc_liab", "pledge_borr", "indem_payable", "policy_div_payable",
-            "total_liab", "treasury_share", "ordin_risk_reser", "forex_differ", "invest_loss_unconf",
-            "minority_int", "total_hldr_eqy_exc_min_int", "total_hldr_eqy_inc_min_int",
-            "total_liab_hldr_eqy", "lt_payroll_payable", "oth_comp_income", "oth_eqt_tools",
-            "oth_eqt_tools_p_shr", "lending_funds", "acc_receivable", "st_fin_payable", "payables",
-            "hfs_assets", "hfs_sales", "cost_fin_assets", "fair_value_fin_assets", "cip_total",
-            "oth_pay_total", "long_pay_total", "debt_invest", "oth_debt_invest", "oth_eq_invest",
-            "oth_illiq_fin_assets", "oth_eq_ppbond", "receiv_financing", "use_right_assets",
-            "lease_liab", "contract_assets", "contract_liab", "accounts_receiv_bill", "accounts_pay",
-            "oth_rcv_total", "fix_assets_total", "update_flag"
+            "comp_type",
+            "report_type",
+            "end_type",
+            "total_share",
+            "cap_rese",
+            "undistr_porfit",
+            "surplus_rese",
+            "special_rese",
+            "money_cap",
+            "trad_asset",
+            "notes_receiv",
+            "accounts_receiv",
+            "oth_receiv",
+            "prepayment",
+            "div_receiv",
+            "int_receiv",
+            "inventories",
+            "amor_exp",
+            "nca_within_1y",
+            "sett_rsrv",
+            "loanto_oth_bank_fi",
+            "premium_receiv",
+            "reinsur_receiv",
+            "reinsur_res_receiv",
+            "pur_resale_fa",
+            "oth_cur_assets",
+            "total_cur_assets",
+            "fa_avail_for_sale",
+            "htm_invest",
+            "lt_eqt_invest",
+            "invest_real_estate",
+            "time_deposits",
+            "oth_assets",
+            "lt_rec",
+            "fix_assets",
+            "cip",
+            "const_materials",
+            "fixed_assets_disp",
+            "produc_bio_assets",
+            "oil_and_gas_assets",
+            "intan_assets",
+            "r_and_d",
+            "goodwill",
+            "lt_amor_exp",
+            "defer_tax_assets",
+            "decr_in_disbur",
+            "oth_nca",
+            "total_nca",
+            "cash_reser_cb",
+            "depos_in_oth_bfi",
+            "prec_metals",
+            "deriv_assets",
+            "rr_reins_une_prem",
+            "rr_reins_outstd_cla",
+            "rr_reins_lins_liab",
+            "rr_reins_lthins_liab",
+            "refund_depos",
+            "ph_pledge_loans",
+            "refund_cap_depos",
+            "indept_acct_assets",
+            "client_depos",
+            "client_prov",
+            "transac_seat_fee",
+            "invest_as_receiv",
+            "total_assets",
+            "lt_borr",
+            "st_borr",
+            "cb_borr",
+            "depos_ib_deposits",
+            "loan_oth_bank",
+            "trading_fl",
+            "notes_payable",
+            "acct_payable",
+            "adv_receipts",
+            "sold_for_repur_fa",
+            "comm_payable",
+            "payroll_payable",
+            "taxes_payable",
+            "int_payable",
+            "div_payable",
+            "oth_payable",
+            "acc_exp",
+            "deferred_inc",
+            "st_bonds_payable",
+            "payable_to_reinsurer",
+            "rsrv_insur_cont",
+            "acting_trading_sec",
+            "acting_uw_sec",
+            "non_cur_liab_due_1y",
+            "oth_cur_liab",
+            "total_cur_liab",
+            "bond_payable",
+            "lt_payable",
+            "specific_payables",
+            "estimated_liab",
+            "defer_tax_liab",
+            "defer_inc_non_cur_liab",
+            "oth_ncl",
+            "total_ncl",
+            "depos_oth_bfi",
+            "deriv_liab",
+            "depos",
+            "agency_bus_liab",
+            "oth_liab",
+            "prem_receiv_adva",
+            "depos_received",
+            "ph_invest",
+            "reser_une_prem",
+            "reser_outstd_claims",
+            "reser_lins_liab",
+            "reser_lthins_liab",
+            "indept_acc_liab",
+            "pledge_borr",
+            "indem_payable",
+            "policy_div_payable",
+            "total_liab",
+            "treasury_share",
+            "ordin_risk_reser",
+            "forex_differ",
+            "invest_loss_unconf",
+            "minority_int",
+            "total_hldr_eqy_exc_min_int",
+            "total_hldr_eqy_inc_min_int",
+            "total_liab_hldr_eqy",
+            "lt_payroll_payable",
+            "oth_comp_income",
+            "oth_eqt_tools",
+            "oth_eqt_tools_p_shr",
+            "lending_funds",
+            "acc_receivable",
+            "st_fin_payable",
+            "payables",
+            "hfs_assets",
+            "hfs_sales",
+            "cost_fin_assets",
+            "fair_value_fin_assets",
+            "cip_total",
+            "oth_pay_total",
+            "long_pay_total",
+            "debt_invest",
+            "oth_debt_invest",
+            "oth_eq_invest",
+            "oth_illiq_fin_assets",
+            "oth_eq_ppbond",
+            "receiv_financing",
+            "use_right_assets",
+            "lease_liab",
+            "contract_assets",
+            "contract_liab",
+            "accounts_receiv_bill",
+            "accounts_pay",
+            "oth_rcv_total",
+            "fix_assets_total",
+            "update_flag",
         ]
 
         # 构建INSERT语句
-        columns_str = ", ".join([
-            "ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"
-        ] + balancesheet_columns)
-        values_str = ", ".join([":" + col for col in ["ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"] + balancesheet_columns])
+        columns_str = ", ".join(
+            [
+                "ts_code",
+                "ann_date",
+                "ann_date_time",
+                "f_ann_date",
+                "f_ann_date_time",
+                "end_date",
+                "end_date_time",
+            ]
+            + balancesheet_columns
+        )
+        values_str = ", ".join(
+            [
+                ":" + col
+                for col in [
+                    "ts_code",
+                    "ann_date",
+                    "ann_date_time",
+                    "f_ann_date",
+                    "f_ann_date_time",
+                    "end_date",
+                    "end_date_time",
+                ]
+                + balancesheet_columns
+            ]
+        )
 
         # ON CONFLICT部分
         update_parts = []
-        for col in ["ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date"] + balancesheet_columns:
+        for col in [
+            "ann_date",
+            "ann_date_time",
+            "f_ann_date",
+            "f_ann_date_time",
+            "end_date",
+        ] + balancesheet_columns:
             update_parts.append(f"{col} = EXCLUDED.{col}")
         update_str = ", ".join(update_parts)
 
@@ -3149,20 +3730,62 @@ class DataOperations:
         total_inserted = 0
 
         # 所有需要插入的列名
-        all_columns = ["ts_code", "ann_date", "ann_date_time", "f_ann_date", "f_ann_date_time", "end_date", "end_date_time"] + balancesheet_columns
+        all_columns = [
+            "ts_code",
+            "ann_date",
+            "ann_date_time",
+            "f_ann_date",
+            "f_ann_date_time",
+            "end_date",
+            "end_date_time",
+        ] + balancesheet_columns
 
         # 可能包含大数值的字段（需要clip到安全范围）
         large_value_columns = {
-            "total_share", "cap_rese", "undistr_porfit", "surplus_rese", "money_cap",
-            "total_cur_assets", "total_nca", "total_assets", "total_cur_liab", "total_ncl",
-            "total_liab", "total_hldr_eqy_exc_min_int", "total_hldr_eqy_inc_min_int",
-            "total_liab_hldr_eqy", "fix_assets", "fix_assets_total", "lending_funds",
-            "acc_receivable", "payables", "hfs_assets", "cost_fin_assets", "fair_value_fin_assets",
-            "cip", "cip_total", "oth_cur_assets", "oth_nca", "oth_assets", "oth_liab",
-            "oth_payable", "oth_pay_total", "lt_payable", "long_pay_total", "debt_invest",
-            "oth_debt_invest", "oth_eq_invest", "oth_illiq_fin_assets", "receiv_financing",
-            "use_right_assets", "lease_liab", "contract_assets", "contract_liab",
-            "accounts_receiv", "accounts_receiv_bill", "oth_rcv_total"
+            "total_share",
+            "cap_rese",
+            "undistr_porfit",
+            "surplus_rese",
+            "money_cap",
+            "total_cur_assets",
+            "total_nca",
+            "total_assets",
+            "total_cur_liab",
+            "total_ncl",
+            "total_liab",
+            "total_hldr_eqy_exc_min_int",
+            "total_hldr_eqy_inc_min_int",
+            "total_liab_hldr_eqy",
+            "fix_assets",
+            "fix_assets_total",
+            "lending_funds",
+            "acc_receivable",
+            "payables",
+            "hfs_assets",
+            "cost_fin_assets",
+            "fair_value_fin_assets",
+            "cip",
+            "cip_total",
+            "oth_cur_assets",
+            "oth_nca",
+            "oth_assets",
+            "oth_liab",
+            "oth_payable",
+            "oth_pay_total",
+            "lt_payable",
+            "long_pay_total",
+            "debt_invest",
+            "oth_debt_invest",
+            "oth_eq_invest",
+            "oth_illiq_fin_assets",
+            "receiv_financing",
+            "use_right_assets",
+            "lease_liab",
+            "contract_assets",
+            "contract_liab",
+            "accounts_receiv",
+            "accounts_receiv_bill",
+            "oth_rcv_total",
         }
 
         try:
@@ -3187,14 +3810,18 @@ class DataOperations:
                                     row_data[col] = None
                             else:
                                 row_data[col] = None
-                        elif col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
+                        elif col in (
+                            "end_date_time",
+                            "ann_date_time",
+                            "f_ann_date_time",
+                        ):
                             # 时间字段需要转换为带时区的datetime
                             val = row.get(col)
                             if pd.notna(val):
                                 try:
                                     # 如果是tz-naive的Timestamp，添加UTC时区
-                                    if hasattr(val, 'tzinfo') and val.tzinfo is None:
-                                        row_data[col] = val.tz_localize('UTC')
+                                    if hasattr(val, "tzinfo") and val.tzinfo is None:
+                                        row_data[col] = val.tz_localize("UTC")
                                     else:
                                         row_data[col] = val
                                 except (ValueError, TypeError):
@@ -3229,7 +3856,7 @@ class DataOperations:
         self,
         ts_code: Optional[str] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取资产负债表数据
@@ -3243,8 +3870,14 @@ class DataOperations:
             Optional[pd.DataFrame]: 资产负债表数据
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = "SELECT * FROM balancesheet WHERE 1=1"
@@ -3274,7 +3907,9 @@ class DataOperations:
         data = pd.DataFrame([row._asdict() for row in rows])
         return data
 
-    async def get_latest_balancesheet_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+    async def get_latest_balancesheet_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取最新的资产负债表数据日期
 
@@ -3304,7 +3939,9 @@ class DataOperations:
 
         return None
 
-    async def insert_income_batch(self, df: pd.DataFrame, batch_size: int = 1000) -> int:
+    async def insert_income_batch(
+        self, df: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
         """
         批量插入利润表数据
 
@@ -3320,7 +3957,9 @@ class DataOperations:
 
         # 确保 end_date_time 列存在且格式正确
         if "end_date_time" not in df.columns:
-            df["end_date_time"] = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+            df["end_date_time"] = pd.to_datetime(
+                df["end_date"], format="%Y%m%d", errors="coerce"
+            )
 
         # 验证时间列有有效值
         if df["end_date_time"].isna().all():
@@ -3339,7 +3978,9 @@ class DataOperations:
 
         return total_inserted
 
-    async def _insert_income_with_retry(self, df: pd.DataFrame, max_retries: int = 3) -> int:
+    async def _insert_income_with_retry(
+        self, df: pd.DataFrame, max_retries: int = 3
+    ) -> int:
         """
         带重试机制的插入利润表数据
 
@@ -3355,10 +3996,14 @@ class DataOperations:
                 return await self.__insert_income_batch(df)
             except Exception as e:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    logger.warning(
+                        f"Insert income batch failed (attempt {attempt + 1}/{max_retries}): {e}"
+                    )
                     await asyncio.sleep(1.0 * (attempt + 1))
                 else:
-                    logger.error(f"Insert income batch failed after {max_retries} attempts: {e}")
+                    logger.error(
+                        f"Insert income batch failed after {max_retries} attempts: {e}"
+                    )
                     raise
 
         return 0
@@ -3386,8 +4031,8 @@ class DataOperations:
                     # 时间字段需要时区感知的datetime
                     if pd.notna(val):
                         try:
-                            if hasattr(val, 'tzinfo') and val.tzinfo is None:
-                                row_data[col] = val.tz_localize('UTC')
+                            if hasattr(val, "tzinfo") and val.tzinfo is None:
+                                row_data[col] = val.tz_localize("UTC")
                             else:
                                 row_data[col] = val
                         except (ValueError, TypeError):
@@ -3396,7 +4041,7 @@ class DataOperations:
                         row_data[col] = None
                 elif col == "update_flag":
                     row_data[col] = str(val) if pd.notna(val) else None
-                elif hasattr(val, 'item'):
+                elif hasattr(val, "item"):
                     # numpy类型转换为Python原生类型
                     try:
                         row_data[col] = val.item()
@@ -3448,8 +4093,14 @@ class DataOperations:
             pd.DataFrame: 利润表数据
         """
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         query = """
             SELECT * FROM income WHERE 1=1
@@ -3480,7 +4131,9 @@ class DataOperations:
 
         return None
 
-    async def get_latest_income_date(self, ts_code: Optional[str] = None) -> Optional[str]:
+    async def get_latest_income_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取最新的利润表数据日期
 
@@ -3514,7 +4167,9 @@ class DataOperations:
     # 申万行业分类数据操作
     # ===========================
 
-    async def insert_sw_industry_classify_batch(self, data: pd.DataFrame, batch_size: int = 1000) -> int:
+    async def insert_sw_industry_classify_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
         """
         批量插入申万行业分类数据
 
@@ -3574,7 +4229,9 @@ class DataOperations:
         logger.info(f"Total inserted {total_inserted} records to sw_industry_classify")
         return total_inserted
 
-    async def get_sw_industry_classify(self, level: Optional[str] = None) -> Optional[pd.DataFrame]:
+    async def get_sw_industry_classify(
+        self, level: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
         """
         查询申万行业分类
 
@@ -3651,7 +4308,9 @@ class DataOperations:
     # 申万行业成分股数据操作
     # ===========================
 
-    async def insert_sw_industry_member_batch(self, data: pd.DataFrame, batch_size: int = 1000) -> int:
+    async def insert_sw_industry_member_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
         """
         批量插入申万行业成分股数据
 
@@ -3702,7 +4361,9 @@ class DataOperations:
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
-                    elif key in ("in_date", "out_date") and isinstance(value, pd.Timestamp):
+                    elif key in ("in_date", "out_date") and isinstance(
+                        value, pd.Timestamp
+                    ):
                         # 转换时间戳为Python datetime
                         record[key] = value.to_pydatetime()
 
@@ -3846,10 +4507,14 @@ class DataOperations:
 
             # 转换日期为datetime对象（PostgreSQL TIMESTAMPTZ格式）
             for record in records:
-                record["cal_date"] = _normalize_datetime_for_db(record["cal_date"], "daily")
+                record["cal_date"] = _normalize_datetime_for_db(
+                    record["cal_date"], "daily"
+                )
                 # pretrade_date 可能为 NaT
                 if pd.notna(record["pretrade_date"]):
-                    record["pretrade_date"] = _normalize_datetime_for_db(record["pretrade_date"], "daily")
+                    record["pretrade_date"] = _normalize_datetime_for_db(
+                        record["pretrade_date"], "daily"
+                    )
                 else:
                     record["pretrade_date"] = None
 
@@ -3886,8 +4551,14 @@ class DataOperations:
             await self.db_manager.initialize()
 
         # 将字符串日期转换为带时区的datetime对象
-        start_dt = _normalize_datetime_for_db(start_date, "daily") if start_date else None
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily") if end_date else None
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
 
         # 构建查询条件
         query = """
@@ -3993,7 +4664,9 @@ class DataOperations:
             return 0
 
         # 确保数据按指数代码、日期和成分代码排序
-        data = data.sort_values(["index_code", "trade_date", "con_code"]).reset_index(drop=True)
+        data = data.sort_values(["index_code", "trade_date", "con_code"]).reset_index(
+            drop=True
+        )
 
         # 准备列名
         columns = ["index_code", "con_code", "trade_date", "weight"]
@@ -4025,7 +4698,9 @@ class DataOperations:
 
             # 转换日期为datetime对象
             for record in records:
-                record["trade_date"] = _normalize_datetime_for_db(record["trade_date"], "daily")
+                record["trade_date"] = _normalize_datetime_for_db(
+                    record["trade_date"], "daily"
+                )
 
             async with self.db_manager._engine.begin() as conn:
                 await conn.execute(text(insert_sql), records)
@@ -4080,7 +4755,9 @@ class DataOperations:
                 params["start_date"] = _normalize_datetime_for_db(start_date, "daily")
             if end_date:
                 conditions.append("trade_date <= :end_date")
-                params["end_date"] = _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+                params["end_date"] = _normalize_datetime_for_db(
+                    end_date + " 23:59:59", "daily"
+                )
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
