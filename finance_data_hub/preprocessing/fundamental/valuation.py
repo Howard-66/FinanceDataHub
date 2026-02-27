@@ -385,7 +385,7 @@ class PEGCalculator:
             # 调试：检查合并后的数据
             matched = merged[merged["netprofit_yoy"].notna()]
             valid_peg = merged[(merged["netprofit_yoy"].notna()) & (merged["netprofit_yoy"] > 0) & (merged["pe_ttm"] > 0)]
-            print(f"[DEBUG] PEG计算: {symbol} 匹配 {len(matched)} 条, 有效PEG {len(valid_peg)} 条")
+            # print(f"[DEBUG] PEG计算: {symbol} 匹配 {len(matched)} 条, 有效PEG {len(valid_peg)} 条")
 
             # 计算 PEG
             merged["peg"] = np.where(
