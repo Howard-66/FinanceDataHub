@@ -211,7 +211,6 @@ jobs:
       all: true
       freq: "daily,weekly,monthly"
       adjust: qfq
-      force: true
     depends_on: [daily_update, adj_factor_update]
     retry:
       max_retries: 2

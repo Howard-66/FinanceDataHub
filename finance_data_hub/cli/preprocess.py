@@ -112,6 +112,73 @@ def _compute_indicators_in_process(df_bytes: bytes, indicators: List[str], adjus
     return pickle.dumps(df)
 
 
+def _compute_with_resample(
+    df_bytes: bytes, indicators: List[str], adjust_type: str, freqs: List[str]
+) -> bytes:
+    """
+    在子进程中执行: 复权 → 指标计算 → 重采样 → 重采样指标计算
+    
+    将原来每个频率一次 pickle 序列化/反序列化合并为一次，减少 3x 开销。
+    
+    Args:
+        df_bytes: pickle序列化的原始DataFrame
+        indicators: 指标名称列表
+        adjust_type: 复权类型
+        freqs: 频率列表 e.g. ["daily", "weekly", "monthly"]
+    
+    Returns:
+        pickle序列化的字典: {freq: DataFrame}
+    """
+    import pandas as pd
+    from ..preprocessing import AdjustProcessor
+    from ..preprocessing.technical.base import create_indicator
+    from ..preprocessing.resample import ResampleProcessor, ResampleFreq
+
+    df = pickle.loads(df_bytes)
+    result = {}
+    
+    if df.empty:
+        for freq in freqs:
+            result[freq] = pd.DataFrame()
+        return pickle.dumps(result)
+
+    # 1. 复权处理
+    adjust_processor = AdjustProcessor()
+    if adjust_type == "qfq":
+        df = adjust_processor.adjust_qfq(df)
+    elif adjust_type == "hfq":
+        df = adjust_processor.adjust_hfq(df)
+
+    # 2. 日线指标计算
+    for ind_name in indicators:
+        try:
+            indicator = create_indicator(ind_name)
+            df = indicator.calculate(df)
+        except Exception:
+            pass
+
+    resample_processor = ResampleProcessor()
+    freq_map = {"weekly": ResampleFreq.WEEKLY, "monthly": ResampleFreq.MONTHLY}
+
+    for freq in freqs:
+        if freq.lower() == "daily":
+            result[freq] = df
+        elif freq.lower() in freq_map:
+            # 3. 重采样
+            data = resample_processor.resample(df, freq_map[freq.lower()])
+            if not data.empty:
+                # 4. 重采样后重新计算指标
+                for ind_name in indicators:
+                    try:
+                        indicator = create_indicator(ind_name)
+                        data = indicator.calculate(data)
+                    except Exception:
+                        pass
+            result[freq] = data
+
+    return pickle.dumps(result)
+
+
 async def _get_all_stock_symbols(db_manager: DatabaseManager) -> List[str]:
     """获取所有股票代码"""
     await db_manager.initialize()
@@ -258,22 +325,22 @@ async def _get_stock_data(
     """获取股票日线数据"""
     import pandas as pd
     
-    # 构建 WHERE 子句
+    # 构建 WHERE 子句 — 使用 ANY(:symbols) 替代 IN (:sym_0, :sym_1, ...)
     conditions = []
     params = {}
     
     if symbols:
-        placeholders = ", ".join([f":sym_{i}" for i in range(len(symbols))])
-        conditions.append(f"d.symbol IN ({placeholders})")
-        for i, sym in enumerate(symbols):
-            params[f"sym_{i}"] = sym
+        conditions.append("d.symbol = ANY(:symbols)" if include_adj_factor else "symbol = ANY(:symbols)")
+        params["symbols"] = symbols
     
     if start_date:
-        conditions.append("d.time >= :start_date")
+        col_prefix = "d." if include_adj_factor else ""
+        conditions.append(f"{col_prefix}time >= :start_date")
         params["start_date"] = pd.to_datetime(start_date).to_pydatetime()
     
     if end_date:
-        conditions.append("d.time <= :end_date")
+        col_prefix = "d." if include_adj_factor else ""
+        conditions.append(f"{col_prefix}time <= :end_date")
         params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
     
     where_clause = ""
@@ -341,7 +408,6 @@ async def _run_technical_preprocess(
         num_workers: 进程池工作进程数（默认None=自动），用于CPU密集型计算
     """
     import pandas as pd
-    from ..preprocessing.resample import ResampleProcessor, ResampleFreq
 
     indicators = indicators or DEFAULT_INDICATORS
     freqs = freqs or ["daily"]
@@ -373,8 +439,7 @@ async def _run_technical_preprocess(
         console.print(f"  全量重算: {len(full_symbols)} 只 (adj_factor变化或首次处理)")
         console.print(f"  增量处理: {len(incr_symbols)} 只 (adj_factor未变)")
 
-    # 初始化处理器和存储
-    resample_processor = ResampleProcessor()
+    # 初始化存储（resample 已移入子进程）
     storage = ProcessedDataStorage(db_manager)
 
     total_symbols = 0
@@ -412,63 +477,34 @@ async def _run_technical_preprocess(
                     progress.advance(task, len(batch_symbols))
                 return len(batch_symbols), 0
 
-            # 使用进程池执行CPU密集型计算（指标计算）
+            # 使用进程池执行CPU密集型计算（复权+指标+重采样，一次 pickle）
             loop = asyncio.get_event_loop()
             df_bytes = pickle.dumps(df)
             result_bytes = await loop.run_in_executor(
                 executor,
-                _compute_indicators_in_process,
+                _compute_with_resample,
                 df_bytes,
                 indicators,
-                adjust_type
+                adjust_type,
+                freqs
             )
-            df = pickle.loads(result_bytes)
+            freq_results = pickle.loads(result_bytes)
 
-            # 添加 last_adj_factor 列
-            for symbol in batch_symbols:
-                if symbol in adj_factor_map:
-                    df.loc[df['symbol'] == symbol, 'last_adj_factor'] = adj_factor_map[symbol]
-
+            # 添加 last_adj_factor 列（向量化 .map()，替代逐股票循环）
             batch_records = 0
 
-            # 处理各个频率
             for freq in freqs:
-                if freq.lower() == "daily":
-                    data = df
-                elif freq.lower() == "weekly":
-                    data = resample_processor.resample(df, ResampleFreq.WEEKLY)
-                    # 对重采样数据重新计算指标（在进程中执行）
-                    if not data.empty:
-                        data_bytes = pickle.dumps(data)
-                        loop = asyncio.get_event_loop()
-                        result_bytes = await loop.run_in_executor(
-                            executor,
-                            _compute_indicators_in_process,
-                            data_bytes,
-                            indicators,
-                            "none"  # 重采样后不需要再复权
-                        )
-                        data = pickle.loads(result_bytes)
-                elif freq.lower() == "monthly":
-                    data = resample_processor.resample(df, ResampleFreq.MONTHLY)
-                    if not data.empty:
-                        data_bytes = pickle.dumps(data)
-                        loop = asyncio.get_event_loop()
-                        result_bytes = await loop.run_in_executor(
-                            executor,
-                            _compute_indicators_in_process,
-                            data_bytes,
-                            indicators,
-                            "none"
-                        )
-                        data = pickle.loads(result_bytes)
-                else:
+                data = freq_results.get(freq)
+                if data is None or data.empty:
                     continue
 
+                # 向量化设置 last_adj_factor
+                if adj_factor_map:
+                    data['last_adj_factor'] = data['symbol'].map(adj_factor_map)
+
                 # 存储数据
-                if not data.empty:
-                    count = await storage.upsert(data, freq=freq, adjust_type=adjust_type)
-                    batch_records += count
+                count = await storage.upsert(data, freq=freq, adjust_type=adjust_type)
+                batch_records += count
 
             if task is not None:
                 progress.advance(task, len(batch_symbols))
@@ -573,9 +609,18 @@ async def _run_fundamental_preprocess(
     end_date: Optional[str] = None,
     batch_size: int = 100,
     verbose: bool = False,
+    force: bool = False,
 ) -> dict:
-    """执行基本面指标预处理"""
+    """执行基本面指标预处理（支持智能增量）
+    
+    智能增量逻辑：
+    1. 查询 processed_valuation_pct 中的最新时间
+    2. 数据拉取：从 最新时间 - 1900天 开始（确保 rolling(1250) 窗口足够）
+    3. 计算指标后，仅 upsert 最新时间之后的新记录
+    4. force=True 时全量重算
+    """
     import pandas as pd
+    from datetime import timedelta
     from ..preprocessing.fundamental.valuation import ValuationPercentile, PEGCalculator
 
     # 获取股票列表（从 daily_basic 表获取，确保有基本面数据）
@@ -583,6 +628,37 @@ async def _run_fundamental_preprocess(
         console.print("[cyan]获取有基本面数据的股票列表...[/cyan]")
         symbols = await _get_all_stock_symbols_from_daily_basic(db_manager)
         console.print(f"共 {len(symbols)} 只股票有基本面数据")
+
+    # === 智能增量：确定时间范围 ===
+    # rolling(1250) 交易日 ≈ 1800 日历日，留余量用 1900
+    WINDOW_BUFFER_DAYS = 1900
+    data_start_date = start_date  # 用户显式指定的 start_date 优先
+    upsert_cutoff = None  # None = upsert 全部
+    incremental_mode = False
+
+    if not force and not start_date:
+        # 查询已处理数据的最新时间
+        try:
+            result = await db_manager.execute_raw_sql(
+                "SELECT MAX(time) FROM processed_valuation_pct"
+            )
+            row = result.fetchone()
+            if row and row[0] is not None:
+                latest_time = pd.to_datetime(row[0])
+                # 数据窗口：从 latest_time - 1900天 开始拉取
+                data_start_date = (latest_time - timedelta(days=WINDOW_BUFFER_DAYS)).strftime("%Y-%m-%d")
+                # 仅 upsert latest_time 之后的数据（回退5天作为安全边际）
+                upsert_cutoff = (latest_time - timedelta(days=5)).to_pydatetime()
+                incremental_mode = True
+                console.print(f"[green]智能增量模式[/green]: 已处理至 {latest_time.strftime('%Y-%m-%d')}")
+                console.print(f"  数据窗口: {data_start_date} → 今天")
+                console.print(f"  写入范围: {(latest_time - timedelta(days=5)).strftime('%Y-%m-%d')} → 今天")
+        except Exception as e:
+            if verbose:
+                console.print(f"[yellow]无法获取最新时间，使用全量模式: {e}[/yellow]")
+
+    if not incremental_mode and not start_date:
+        console.print("[yellow]全量处理模式[/yellow]")
 
     # 初始化处理器和存储
     valuation = ValuationPercentile()
@@ -600,8 +676,9 @@ async def _run_fundamental_preprocess(
         TimeElapsedColumn(),
         console=console,
     ) as progress:
+        mode_label = "增量" if incremental_mode else "全量"
         task = progress.add_task(
-            "[cyan]预处理基本面指标...",
+            f"[cyan]{mode_label}预处理基本面指标...",
             total=len(symbols)
         )
         
@@ -618,9 +695,9 @@ async def _run_fundamental_preprocess(
             
             conditions = [f"symbol IN ({placeholders})"]
             
-            if start_date:
+            if data_start_date:
                 conditions.append("time >= :start_date")
-                params["start_date"] = pd.to_datetime(start_date).to_pydatetime()
+                params["start_date"] = pd.to_datetime(data_start_date).to_pydatetime()
             
             if end_date:
                 conditions.append("time <= :end_date")
@@ -667,6 +744,10 @@ async def _run_fundamental_preprocess(
                 # 计算估值分位
                 df = valuation.calculate(df)
 
+                # 增量模式：仅 upsert 新数据
+                if upsert_cutoff is not None:
+                    df = df[df["time"] >= upsert_cutoff]
+
                 # 存储数据
                 if not df.empty:
                     count = await storage.upsert(df)
@@ -691,9 +772,19 @@ async def _run_quarterly_fundamental_preprocess(
     symbols: Optional[List[str]] = None,
     batch_size: int = 50,
     verbose: bool = False,
+    force: bool = False,
 ) -> dict:
-    """执行季度基本面指标预处理（F-Score等）"""
+    """执行季度基本面指标预处理（F-Score等，支持智能增量）
+    
+    智能增量逻辑：
+    1. 查询 processed_fundamental_quality 中的最新 end_date_time
+    2. 数据始终全量拉取（季度数据量小，且 rolling(20) 需要 5 年窗口）
+    3. F-Score 全量计算（确保累计→TTM 转换准确）
+    4. 仅 upsert end_date_time > latest - 1 季度的新记录
+    5. force=True 时全量写入
+    """
     import pandas as pd
+    from datetime import timedelta
     import json
     from ..preprocessing.fundamental.quality import FScoreCalculator
     from ..preprocessing.storage import QuarterlyFundamentalDataStorage
@@ -704,6 +795,30 @@ async def _run_quarterly_fundamental_preprocess(
         symbols = await _get_all_stock_symbols_from_fina_indicator(db_manager)
         console.print(f"共 {len(symbols)} 只股票有财务数据")
     
+    # === 智能增量：确定 upsert 范围 ===
+    upsert_cutoff = None  # None = upsert 全部
+    incremental_mode = False
+
+    if not force:
+        try:
+            result = await db_manager.execute_raw_sql(
+                "SELECT MAX(end_date_time) FROM processed_fundamental_quality"
+            )
+            row = result.fetchone()
+            if row and row[0] is not None:
+                latest_end_date = pd.to_datetime(row[0])
+                # 回退 1 个季度（约 100 天）作为安全边际
+                upsert_cutoff = (latest_end_date - timedelta(days=100)).to_pydatetime()
+                incremental_mode = True
+                console.print(f"[green]智能增量模式[/green]: 已处理至 {latest_end_date.strftime('%Y-%m-%d')}")
+                console.print(f"  写入范围: {(latest_end_date - timedelta(days=100)).strftime('%Y-%m-%d')} 之后的季度")
+        except Exception as e:
+            if verbose:
+                console.print(f"[yellow]无法获取最新时间，使用全量模式: {e}[/yellow]")
+
+    if not incremental_mode:
+        console.print("[yellow]全量处理模式[/yellow]")
+
     # 加载行业配置
     import os
     config_path = os.path.join(
@@ -728,8 +843,9 @@ async def _run_quarterly_fundamental_preprocess(
         TimeElapsedColumn(),
         console=console,
     ) as progress:
+        mode_label = "增量" if incremental_mode else "全量"
         task = progress.add_task(
-            "[cyan]预处理季度F-Score...",
+            f"[cyan]{mode_label}预处理季度F-Score...",
             total=len(symbols)
         )
         
@@ -810,7 +926,7 @@ async def _run_quarterly_fundamental_preprocess(
                     "ts_code", "end_date", "n_income"
                 ]) if inc_rows else pd.DataFrame()
                 
-                # 计算 F-Score
+                # 计算 F-Score（始终全量计算，确保 TTM 转换准确）
                 fscore_df = calculator.calculate(
                     fina_indicator=fina_df,
                     balancesheet=bs_df,
@@ -835,6 +951,14 @@ async def _run_quarterly_fundamental_preprocess(
                     if col in fscore_df.columns:
                         fscore_df[col] = pd.to_datetime(fscore_df[col])
                 
+                # 增量模式：仅 upsert 新季度数据
+                if upsert_cutoff is not None and "end_date_time" in fscore_df.columns:
+                    fscore_df = fscore_df[fscore_df["end_date_time"] >= upsert_cutoff]
+                
+                if fscore_df.empty:
+                    progress.advance(task, len(batch_symbols))
+                    continue
+
                 # 存储数据
                 count = await storage.upsert(fscore_df)
                 total_records += count
@@ -1054,6 +1178,7 @@ def run_preprocess(
                     end_date=end_date,
                     batch_size=batch_size,
                     verbose=verbose,
+                    force=force,
                 )
                 results["fundamental"] = result
                 console.print(f"\n[green]基本面指标处理完成[/green]")
@@ -1067,6 +1192,7 @@ def run_preprocess(
                     symbols=symbol_list,
                     batch_size=batch_size,
                     verbose=verbose,
+                    force=force,
                 )
                 results["quarterly_fundamental"] = result
                 console.print(f"\n[green]季度F-Score处理完成[/green]")

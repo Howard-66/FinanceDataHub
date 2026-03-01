@@ -9,12 +9,33 @@
 
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from datetime import datetime
+import warnings
 import numpy as np
 import pandas as pd
 from loguru import logger
 
 if TYPE_CHECKING:
     from finance_data_hub.database.manager import DatabaseManager
+
+
+def _series_to_pydatetime(series: pd.Series) -> np.ndarray:
+    """
+    将 datetime Series 转换为 Python datetime 对象的 numpy array。
+    
+    处理：
+    - 抑制 pandas FutureWarning (to_pydatetime 行为变更)
+    - NaT 值转换为 None（asyncpg 不支持 NaT）
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        arr = np.array(series.dt.to_pydatetime(), dtype=object)
+    
+    # NaT → None
+    nat_mask = pd.isna(series)
+    if nat_mask.any():
+        arr[nat_mask.values] = None
+    
+    return arr
 
 
 class ProcessedDataStorage:
@@ -63,12 +84,13 @@ class ProcessedDataStorage:
         df: pd.DataFrame,
         freq: str,
         adjust_type: str,
-        batch_size: int = 5000
+        batch_size: int = 10000
     ) -> int:
         """
         批量插入/更新预处理数据
         
         使用 UPSERT 语义，存在则更新，不存在则插入。
+        复用单一数据库连接处理所有子批次，避免频繁获取/释放连接。
         
         Args:
             df: 预处理后的 DataFrame
@@ -97,13 +119,26 @@ class ProcessedDataStorage:
         # 添加处理时间戳
         df["processed_at"] = datetime.now()
         
-        # 批量 upsert
+        if self.db_manager is None:
+            logger.warning("No db_manager configured, skipping upsert")
+            return 0
+        
+        # 复用单一连接处理所有子批次
         total = 0
-        for i in range(0, len(df), batch_size):
-            batch = df.iloc[i:i+batch_size]
-            count = await self._upsert_batch(batch, table_name)
-            total += count
-            logger.debug(f"Upserted {count} records to {table_name}")
+        try:
+            engine = self.db_manager.get_engine()
+            async with engine.begin() as conn:
+                raw_conn = await conn.get_raw_connection()
+                asyncpg_conn = raw_conn.driver_connection
+                
+                for i in range(0, len(df), batch_size):
+                    batch = df.iloc[i:i+batch_size]
+                    count = await self._upsert_batch(batch, table_name, asyncpg_conn)
+                    total += count
+                    logger.debug(f"Upserted {count} records to {table_name}")
+        except Exception as e:
+            logger.error(f"Upsert failed: {e}")
+            raise
         
         logger.info(f"Total upserted: {total} records to {table_name}")
         return total
@@ -138,17 +173,16 @@ class ProcessedDataStorage:
         # 对于 OHLCV，NaN 行需要处理
         result = result.dropna(subset=["open", "high", "low", "close"])
 
-        # 转换 time 列为带时区的 Python datetime（数据库是 TIMESTAMPTZ）
+        # 转换 time 列为带时区的 datetime（数据库是 TIMESTAMPTZ）
+        # 不再逐行 .apply()，使用向量化操作
         if "time" in result.columns:
             if pd.api.types.is_datetime64_any_dtype(result["time"]):
                 if pd.api.types.is_datetime64tz_dtype(result["time"]):
-                    # 已经是带时区的，转换为 UTC
                     result["time"] = pd.to_datetime(result["time"]).dt.tz_convert('UTC')
                 else:
-                    # 无时区的，先本地化再转换为 UTC
                     result["time"] = pd.to_datetime(result["time"]).dt.tz_localize('UTC')
-                # 转换为 Python datetime（保留时区）
-                result["time"] = result["time"].apply(lambda x: x.to_pydatetime() if pd.notnull(x) else None)
+                # 向量化转换为 Python datetime 数组（无逐行 .apply()）
+                result["time"] = _series_to_pydatetime(result["time"])
 
         return result
 
@@ -157,7 +191,8 @@ class ProcessedDataStorage:
         """
         向量化转换 DataFrame 为 asyncpg 可接受的参数列表
 
-        相比 iterrows() 逐行处理，性能提升 5-10 倍。
+        优化策略：列级预处理确保所有值都是 Python 原生类型，
+        避免最终的逐元素 convert_value() 循环。
 
         Args:
             df: 要转换的 DataFrame
@@ -172,78 +207,86 @@ class ProcessedDataStorage:
         # 只选择需要的列
         prepared = df[columns].copy()
 
-        # 向量化类型转换
+        # 列级类型转换 — 确保每列都是 Python 原生类型
         for col in columns:
             if col not in prepared.columns:
                 continue
 
             dtype = prepared[col].dtype
 
-            # 日期时间列转换 - 保持时区信息（数据库是 TIMESTAMPTZ）
             if pd.api.types.is_datetime64_any_dtype(dtype):
-                # 转换为带时区的 Python datetime（UTC）
+                # datetime 列：向量化转换为 Python datetime 对象
                 if pd.api.types.is_datetime64tz_dtype(dtype):
-                    # 已经是带时区的，转换为 UTC
                     prepared[col] = pd.to_datetime(prepared[col]).dt.tz_convert('UTC')
                 else:
-                    # 无时区的，先本地化再转换为 UTC
                     prepared[col] = pd.to_datetime(prepared[col]).dt.tz_localize('UTC')
-                # 转换为 Python datetime（保留时区）
-                prepared[col] = prepared[col].apply(lambda x: x.to_pydatetime() if pd.notnull(x) else None)
-            # 处理 object 类型但包含 datetime/Timestamp 的情况
+                prepared[col] = _series_to_pydatetime(prepared[col])
             elif dtype == object:
-                # 检查是否包含 datetime 或 Timestamp 对象
-                sample = prepared[col].dropna().iloc[0] if len(prepared[col].dropna()) > 0 else None
-                if isinstance(sample, (pd.Timestamp, datetime)):
-                    def convert_datetime(x):
-                        if pd.isnull(x):
-                            return None
-                        if isinstance(x, pd.Timestamp):
-                            # 确保带时区
-                            if x.tzinfo is None:
-                                x = x.tz_localize('UTC')
-                            else:
-                                x = x.tz_convert('UTC')
-                            return x.to_pydatetime()
-                        elif isinstance(x, datetime):
-                            # 确保带时区
-                            if x.tzinfo is None:
-                                return x.replace(tzinfo=datetime.timezone.utc)
+                # object 列可能包含 datetime/Timestamp — 检查并转换
+                non_null = prepared[col].dropna()
+                if len(non_null) > 0:
+                    sample = non_null.iloc[0]
+                    if isinstance(sample, (pd.Timestamp, datetime)):
+                        # 对 object 列的 datetime 仍需逐元素（但通常很少触发此路径）
+                        def convert_datetime(x):
+                            if pd.isnull(x):
+                                return None
+                            if isinstance(x, pd.Timestamp):
+                                if x.tzinfo is None:
+                                    x = x.tz_localize('UTC')
+                                else:
+                                    x = x.tz_convert('UTC')
+                                return x.to_pydatetime()
+                            elif isinstance(x, datetime):
+                                if x.tzinfo is None:
+                                    import pytz
+                                    return x.replace(tzinfo=pytz.UTC)
+                                return x
                             return x
-                        return x
-                    prepared[col] = prepared[col].apply(convert_datetime)
-            # 浮点列：NaN 转为 None
+                        prepared[col] = prepared[col].apply(convert_datetime)
             elif pd.api.types.is_float_dtype(dtype):
-                prepared[col] = prepared[col].where(prepared[col].notna(), None)
-            # 整数列：NaN 转为 None（需要转为 object 类型）
+                # float 列：先转为 Python float，NaN 自动变为 None
+                # 使用 numpy 向量化：将整列转为 Python list（自动转 float）
+                arr = prepared[col].to_numpy(dtype='float64', na_value=np.nan)
+                # 将 nan 替换为 None，其他转为 Python float
+                prepared[col] = [None if np.isnan(v) else float(v) for v in arr]
             elif pd.api.types.is_integer_dtype(dtype):
-                prepared[col] = prepared[col].where(prepared[col].notna(), None)
-                prepared[col] = prepared[col].astype(object)
+                # integer 列：转为 nullable，再转列表
+                arr = prepared[col].to_numpy(dtype='float64', na_value=np.nan)
+                prepared[col] = [None if np.isnan(v) else int(v) for v in arr]
+            # string 列不需要特殊处理
 
-        # 使用 numpy 快速转换为元组列表
-        records = prepared.to_numpy()
+        # 使用 to_numpy(dtype=object) 获取原始值，然后清理为 Python 原生类型
+        # 注意: itertuples() 会将 Python datetime 重新转为 Pandas Timestamp，故不使用
+        records = prepared.to_numpy(dtype=object)
 
-        # 转换为 Python 原生类型的元组列表
-        def convert_value(v):
-            if v is None or (isinstance(v, float) and np.isnan(v)):
+        def _clean_value(v):
+            """确保值为 Python 原生类型，asyncpg 不接受 pandas 对象"""
+            if v is None:
                 return None
-            elif hasattr(v, 'item'):  # numpy scalar
+            if isinstance(v, float) and np.isnan(v):
+                return None
+            if isinstance(v, pd.Timestamp):
+                if v is pd.NaT or pd.isna(v):
+                    return None
+                if v.tzinfo is None:
+                    v = v.tz_localize('UTC')
+                return v.to_pydatetime()
+            if v is pd.NaT:
+                return None
+            if hasattr(v, 'item'):  # numpy scalar → Python native
                 return v.item()
             return v
 
-        return [tuple(convert_value(v) for v in row) for row in records]
+        return [tuple(_clean_value(v) for v in row) for row in records]
     
-    async def _upsert_batch(self, batch: pd.DataFrame, table_name: str) -> int:
+    async def _upsert_batch(self, batch: pd.DataFrame, table_name: str, asyncpg_conn=None) -> int:
         """
         执行批量 upsert
 
         使用 PostgreSQL 的 ON CONFLICT DO UPDATE 语法。
-        使用向量化数据转换替代 iterrows()，性能提升 5-10 倍。
+        支持外部传入 asyncpg 连接以复用连接（避免频繁获取/释放）。
         """
-        if self.db_manager is None:
-            logger.warning("No db_manager configured, skipping upsert")
-            return 0
-
         # 获取列名
         columns = list(batch.columns)
 
@@ -268,16 +311,18 @@ class ProcessedDataStorage:
         if not values_list:
             return 0
 
+        if asyncpg_conn is not None:
+            # 复用外部传入的连接
+            await asyncpg_conn.executemany(sql, values_list)
+            return len(batch)
+
+        # 兜底：无外部连接时自行获取
         try:
             engine = self.db_manager.get_engine()
             async with engine.begin() as conn:
-                # 获取底层 asyncpg 连接
                 raw_conn = await conn.get_raw_connection()
-                asyncpg_conn = raw_conn.driver_connection
-
-                # 批量执行
-                await asyncpg_conn.executemany(sql, values_list)
-
+                pg_conn = raw_conn.driver_connection
+                await pg_conn.executemany(sql, values_list)
             return len(batch)
         except Exception as e:
             logger.error(f"Upsert failed: {e}")
@@ -497,9 +542,9 @@ class FundamentalDataStorage:
         result = df[available_columns].copy()
         result["processed_at"] = datetime.now()
         
-        # 转换日期，避开 FutureWarning
+        # 转换日期（向量化，避免 .apply()）
         if "time" in result.columns:
-             result["time"] = pd.to_datetime(result["time"]).apply(lambda x: x.to_pydatetime() if pd.notnull(x) else None)
+            result["time"] = _series_to_pydatetime(pd.to_datetime(result["time"]))
         
         # 获取列名
         columns = list(result.columns)
@@ -688,12 +733,21 @@ class QuarterlyFundamentalDataStorage:
         result = df[available_columns].copy()
         result["processed_at"] = datetime.now()
         
-        # 转换日期列
+        # 转换日期列（向量化，避免 .apply()）
         for date_col in self.DATE_COLUMNS:
             if date_col in result.columns:
-                result[date_col] = pd.to_datetime(result[date_col]).apply(
-                    lambda x: x.to_pydatetime() if pd.notnull(x) else None
-                )
+                result[date_col] = _series_to_pydatetime(pd.to_datetime(result[date_col]))
+        
+        # 裁剪数值列，防止 DECIMAL(10,4) 溢出（最大 ±999999.9999）
+        # cfo_ttm 和 ni_ttm 是 DECIMAL(20,4)，不需要裁剪
+        decimal_10_4_cols = [
+            "roa_ttm", "roe_5y_avg", "ni_cfo_corr_3y", "debt_ratio",
+            "current_ratio", "gpm_ttm", "at_ttm"
+        ]
+        max_val = 999999.9999
+        for col in decimal_10_4_cols:
+            if col in result.columns:
+                result[col] = result[col].clip(lower=-max_val, upper=max_val)
         
         # 获取列名
         columns = list(result.columns)

@@ -497,11 +497,14 @@ class FScoreCalculator:
             
             # 计算 TTM
             valid = prev_annual.notna() & prev_same_q.notna()
-            result.loc[non_q4_mask & valid.reindex(result.index, fill_value=False)] = (
-                values[non_q4_mask & valid.reindex(result.index, fill_value=False)]
-                + prev_annual[valid].values
-                - prev_same_q[valid].values
-            )
+            if valid.any():
+                combined_mask = non_q4_mask & valid.reindex(result.index, fill_value=False)
+                ttm_vals = (
+                    values[combined_mask].values
+                    + prev_annual[valid].values
+                    - prev_same_q[valid].values
+                )
+                result.loc[combined_mask] = ttm_vals
         
         return result
     
