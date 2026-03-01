@@ -546,6 +546,7 @@ class FundamentalDataStorage:
         if "time" in result.columns:
             result["time"] = _series_to_pydatetime(pd.to_datetime(result["time"]))
         
+
         # 获取列名
         columns = list(result.columns)
         
@@ -738,17 +739,8 @@ class QuarterlyFundamentalDataStorage:
             if date_col in result.columns:
                 result[date_col] = _series_to_pydatetime(pd.to_datetime(result[date_col]))
         
-        # 裁剪数值列，防止 DECIMAL(10,4) 溢出（最大 ±999999.9999）
-        # cfo_ttm 和 ni_ttm 是 DECIMAL(20,4)，不需要裁剪
-        decimal_10_4_cols = [
-            "roa_ttm", "roe_5y_avg", "ni_cfo_corr_3y", "debt_ratio",
-            "current_ratio", "gpm_ttm", "at_ttm"
-        ]
-        max_val = 999999.9999
-        for col in decimal_10_4_cols:
-            if col in result.columns:
-                result[col] = result[col].clip(lower=-max_val, upper=max_val)
-        
+
+
         # 获取列名
         columns = list(result.columns)
         

@@ -111,7 +111,7 @@ jobs:
     dataset: index_dailybasic
     schedule:
       type: cron
-      hour: 19
+      hour: 20
       minute: 30
       day_of_week: "mon-fri"
     params:
@@ -128,7 +128,7 @@ jobs:
     dataset: sw_daily
     schedule:
       type: cron
-      hour: 19
+      hour: 20
       minute: 45
       day_of_week: "mon-fri"
     params:
@@ -205,7 +205,7 @@ jobs:
     schedule:
       type: cron
       hour: 18
-      minute: 0
+      minute: 40
       day_of_week: "mon-fri"
     params:
       all: true
@@ -224,8 +224,8 @@ jobs:
     category: fundamental
     schedule:
       type: cron
-      hour: 18
-      minute: 30
+      hour: 17
+      minute: 50
       day_of_week: "mon-fri"
     params:
       all: true
@@ -242,8 +242,8 @@ jobs:
     category: quarterly_fundamental
     schedule:
       type: cron
-      hour: 19
-      minute: 0
+      hour: 17
+      minute: 45
       day_of_week: "mon-fri"
     params:
       all: true

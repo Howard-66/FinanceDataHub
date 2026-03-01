@@ -180,16 +180,16 @@ CREATE TABLE IF NOT EXISTS processed_valuation_pct (
     symbol VARCHAR(20) NOT NULL,            -- 股票代码
 
     -- 估值指标原始值
-    pe_ttm DECIMAL(10,4),                   -- 市盈率(TTM)
-    pb DECIMAL(10,4),                       -- 市净率
-    ps_ttm DECIMAL(10,4),                   -- 市销率(TTM)
-    dv_ttm DECIMAL(10,4),                  -- 股息率(TTM)
-    peg DECIMAL(10,4),                      -- PEG = PE_TTM / 净利润增速(%)
+    pe_ttm DECIMAL(20,4),                   -- 市盈率(TTM)
+    pb DECIMAL(20,4),                       -- 市净率
+    ps_ttm DECIMAL(20,4),                   -- 市销率(TTM)
+    dv_ttm DECIMAL(20,4),                  -- 股息率(TTM)
+    peg DECIMAL(20,4),                      -- PEG = PE_TTM / 净利润增速(%)
 
     -- 估值分位数（5年滚动窗口）
-    pe_ttm_pct_1250d DECIMAL(10,4),         -- PE_TTM 5年分位
-    pb_pct_1250d DECIMAL(10,4),             -- PB 5年分位
-    ps_ttm_pct_1250d DECIMAL(10,4),         -- PS_TTM 5年分位
+    pe_ttm_pct_1250d DECIMAL(20,4),         -- PE_TTM 5年分位
+    pb_pct_1250d DECIMAL(20,4),             -- PB 5年分位
+    ps_ttm_pct_1250d DECIMAL(20,4),         -- PS_TTM 5年分位
 
     -- 估值分位数（10年滚动窗口）
     -- pe_ttm_pct_2500d DECIMAL(10,4),         -- PE_TTM 10年分位
@@ -246,16 +246,16 @@ CREATE TABLE IF NOT EXISTS processed_fundamental_quality (
     f_delta_turn SMALLINT,                     -- 周转率上升
     
     -- 补充基本面指标
-    roa_ttm DECIMAL(10,4),                     -- ROA TTM
-    roe_5y_avg DECIMAL(10,4),                  -- 5年平均ROE
-    ni_cfo_corr_3y DECIMAL(10,4),              -- 3年净利润-经营现金流相关性
-    debt_ratio DECIMAL(10,4),                  -- 资产负债率(%)
-    current_ratio DECIMAL(10,4),                -- 流动比率
+    roa_ttm DECIMAL(20,4),                     -- ROA TTM
+    roe_5y_avg DECIMAL(20,4),                  -- 5年平均ROE
+    ni_cfo_corr_3y DECIMAL(20,4),              -- 3年净利润-经营现金流相关性
+    debt_ratio DECIMAL(20,4),                  -- 资产负债率(%)
+    current_ratio DECIMAL(20,4),                -- 流动比率
     -- TTM 指标 (滚动4期聚合)
     cfo_ttm DECIMAL(20,4),                     -- 经营现金流 TTM (4期求和)
     ni_ttm DECIMAL(20,4),                      -- 净利润 TTM (4期求和)
-    gpm_ttm DECIMAL(10,4),                     -- 毛利率 TTM (4期均值)
-    at_ttm DECIMAL(10,4),                      -- 资产周转率 TTM (4期均值)
+    gpm_ttm DECIMAL(20,4),                     -- 毛利率 TTM (4期均值)
+    at_ttm DECIMAL(20,4),                      -- 资产周转率 TTM (4期均值)
     
     -- 行业豁免信息
     exemptions JSONB,                          -- 豁免规则列表

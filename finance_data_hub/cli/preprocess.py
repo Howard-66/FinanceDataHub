@@ -61,7 +61,7 @@ INDICATOR_MAX_WINDOW = 60  # 最大指标窗口(MA_50需要50天)
 LOOKBACK_BUFFER = 20  # 额外缓冲天数
 
 # Phase 2: 并发控制配置
-DEFAULT_MAX_CONCURRENT_BATCHES = 6  # 默认并发批次数（I/O并发）
+DEFAULT_MAX_CONCURRENT_BATCHES = 4  # 默认并发批次数（I/O并发）
 DEFAULT_NUM_WORKERS = None  # 默认工作进程数（None表示自动：min(CPU核心数-1, 4)）
 
 
@@ -177,6 +177,43 @@ def _compute_with_resample(
             result[freq] = data
 
     return pickle.dumps(result)
+
+def _compute_fundamental_in_process(
+    df_bytes: bytes, fina_bytes: bytes
+) -> bytes:
+    """
+    在子进程中执行基本面指标计算（CPU密集型任务）
+
+    计算内容：
+    1. PEG 计算（fina_indicator 数据）
+    2. 估值分位计算（rolling percentile，CPU密集型）
+
+    Args:
+        df_bytes: pickle序列化的 daily_basic DataFrame
+        fina_bytes: pickle序列化的 fina_indicator DataFrame（可能为空 bytes）
+
+    Returns:
+        pickle序列化后的结果DataFrame
+    """
+    import pandas as pd
+    from ..preprocessing.fundamental.valuation import ValuationPercentile, PEGCalculator
+
+    df = pickle.loads(df_bytes)
+    if df.empty:
+        return pickle.dumps(df)
+
+    # PEG 计算
+    if fina_bytes:
+        fina_df = pickle.loads(fina_bytes)
+        if not fina_df.empty:
+            peg_calculator = PEGCalculator()
+            df = peg_calculator.calculate_batch(df, fina_df)
+
+    # 估值分位计算（CPU密集型：rolling percentile）
+    valuation = ValuationPercentile()
+    df = valuation.calculate(df)
+
+    return pickle.dumps(df)
 
 
 async def _get_all_stock_symbols(db_manager: DatabaseManager) -> List[str]:
@@ -414,7 +451,7 @@ async def _run_technical_preprocess(
 
     # 自动确定工作进程数
     if num_workers is None:
-        num_workers = min(os.cpu_count() or 4 - 1, 6)
+        num_workers = min(os.cpu_count() or 4 - 1, 4)
         num_workers = max(1, num_workers)  # 至少1个
 
     # 获取股票列表
@@ -610,18 +647,22 @@ async def _run_fundamental_preprocess(
     batch_size: int = 100,
     verbose: bool = False,
     force: bool = False,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT_BATCHES,
+    num_workers: Optional[int] = None,
 ) -> dict:
-    """执行基本面指标预处理（支持智能增量）
+    """执行基本面指标预处理（支持智能增量 + 多进程 + 异步并发）
     
-    智能增量逻辑：
-    1. 查询 processed_valuation_pct 中的最新时间
-    2. 数据拉取：从 最新时间 - 1900天 开始（确保 rolling(1250) 窗口足够）
-    3. 计算指标后，仅 upsert 最新时间之后的新记录
-    4. force=True 时全量重算
+    优化架构：
+    1. 智能增量：仅处理新数据
+    2. 多进程：CPU密集型的 rolling percentile 计算在子进程执行
+    3. 异步并发：多批次 I/O（DB查询 + upsert）并行执行
     """
     import pandas as pd
     from datetime import timedelta
-    from ..preprocessing.fundamental.valuation import ValuationPercentile, PEGCalculator
+
+    # 自动确定工作进程数
+    if num_workers is None:
+        num_workers = min(os.cpu_count() - 1, 4) if os.cpu_count() and os.cpu_count() > 1 else 1
 
     # 获取股票列表（从 daily_basic 表获取，确保有基本面数据）
     if not symbols:
@@ -630,14 +671,12 @@ async def _run_fundamental_preprocess(
         console.print(f"共 {len(symbols)} 只股票有基本面数据")
 
     # === 智能增量：确定时间范围 ===
-    # rolling(1250) 交易日 ≈ 1800 日历日，留余量用 1900
     WINDOW_BUFFER_DAYS = 1900
-    data_start_date = start_date  # 用户显式指定的 start_date 优先
-    upsert_cutoff = None  # None = upsert 全部
+    data_start_date = start_date
+    upsert_cutoff = None
     incremental_mode = False
 
     if not force and not start_date:
-        # 查询已处理数据的最新时间
         try:
             result = await db_manager.execute_raw_sql(
                 "SELECT MAX(time) FROM processed_valuation_pct"
@@ -645,9 +684,7 @@ async def _run_fundamental_preprocess(
             row = result.fetchone()
             if row and row[0] is not None:
                 latest_time = pd.to_datetime(row[0])
-                # 数据窗口：从 latest_time - 1900天 开始拉取
                 data_start_date = (latest_time - timedelta(days=WINDOW_BUFFER_DAYS)).strftime("%Y-%m-%d")
-                # 仅 upsert latest_time 之后的数据（回退5天作为安全边际）
                 upsert_cutoff = (latest_time - timedelta(days=5)).to_pydatetime()
                 incremental_mode = True
                 console.print(f"[green]智能增量模式[/green]: 已处理至 {latest_time.strftime('%Y-%m-%d')}")
@@ -660,14 +697,11 @@ async def _run_fundamental_preprocess(
     if not incremental_mode and not start_date:
         console.print("[yellow]全量处理模式[/yellow]")
 
-    # 初始化处理器和存储
-    valuation = ValuationPercentile()
-    peg_calculator = PEGCalculator()
     storage = FundamentalDataStorage(db_manager)
-    
     total_symbols = 0
     total_records = 0
-    
+    semaphore = asyncio.Semaphore(max_concurrent)
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -675,96 +709,111 @@ async def _run_fundamental_preprocess(
         TaskProgressColumn(),
         TimeElapsedColumn(),
         console=console,
-    ) as progress:
+    ) as progress, concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
         mode_label = "增量" if incremental_mode else "全量"
-        task = progress.add_task(
-            f"[cyan]{mode_label}预处理基本面指标...",
+        task_id = progress.add_task(
+            f"[cyan]{mode_label}预处理基本面 (并发{max_concurrent}, 进程{num_workers})...",
             total=len(symbols)
         )
-        
-        # 分批处理
-        for i in range(0, len(symbols), batch_size):
-            batch_symbols = symbols[i:i+batch_size]
-            
-            if verbose:
-                progress.console.print(f"  批次 {i//batch_size + 1}: {len(batch_symbols)} 只股票")
-            
-            # 获取 daily_basic 数据（包含 PE, PB, PS）
-            placeholders = ", ".join([f":sym_{j}" for j in range(len(batch_symbols))])
-            params = {f"sym_{j}": sym for j, sym in enumerate(batch_symbols)}
-            
-            conditions = [f"symbol IN ({placeholders})"]
-            
-            if data_start_date:
-                conditions.append("time >= :start_date")
-                params["start_date"] = pd.to_datetime(data_start_date).to_pydatetime()
-            
-            if end_date:
-                conditions.append("time <= :end_date")
-                params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
-            
-            where_clause = " AND ".join(conditions)
 
-            # 获取 daily_basic 数据（包含 PE, PB, PS, DV_TTM）
-            sql = f"""
-                SELECT time, symbol, pe_ttm, pb, ps_ttm, dv_ttm
-                FROM daily_basic
-                WHERE {where_clause}
-                ORDER BY symbol, time
-            """
+        async def process_batch(batch_syms: List[str]) -> tuple:
+            """处理单个批次（I/O + CPU 并发）"""
+            async with semaphore:
+                import pandas as pd
+                placeholders = ", ".join([f":sym_{j}" for j in range(len(batch_syms))])
+                params = {f"sym_{j}": sym for j, sym in enumerate(batch_syms)}
 
-            # 获取财务数据用于计算 PEG（直接使用 ann_date_time）
-            fina_sql = f"""
-                SELECT ts_code, ann_date_time, end_date_time, netprofit_yoy
-                FROM fina_indicator
-                WHERE ts_code IN ({placeholders})
-                  AND ann_date_time IS NOT NULL
-                ORDER BY ts_code, ann_date_time
-            """
+                conditions = [f"symbol IN ({placeholders})"]
+                if data_start_date:
+                    conditions.append("time >= :start_date")
+                    params["start_date"] = pd.to_datetime(data_start_date).to_pydatetime()
+                if end_date:
+                    conditions.append("time <= :end_date")
+                    params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
+                where_clause = " AND ".join(conditions)
 
-            try:
-                result = await db_manager.execute_raw_sql(sql, params)
-                rows = result.fetchall()
+                sql = f"""
+                    SELECT time, symbol, pe_ttm, pb, ps_ttm, dv_ttm
+                    FROM daily_basic
+                    WHERE {where_clause}
+                    ORDER BY symbol, time
+                """
+                fina_sql = f"""
+                    SELECT ts_code, ann_date_time, end_date_time, netprofit_yoy
+                    FROM fina_indicator
+                    WHERE ts_code IN ({placeholders})
+                      AND ann_date_time IS NOT NULL
+                    ORDER BY ts_code, ann_date_time
+                """
 
+                # 并行查询两张表
+                db_result, fina_result = await asyncio.gather(
+                    db_manager.execute_raw_sql(sql, params),
+                    db_manager.execute_raw_sql(fina_sql, params),
+                )
+
+                rows = db_result.fetchall()
                 if not rows:
-                    progress.advance(task, len(batch_symbols))
-                    continue
+                    progress.advance(task_id, len(batch_syms))
+                    return 0, 0
 
                 df = pd.DataFrame(rows, columns=["time", "symbol", "pe_ttm", "pb", "ps_ttm", "dv_ttm"])
-
-                # 获取财务数据用于计算 PEG
-                fina_result = await db_manager.execute_raw_sql(fina_sql, params)
                 fina_rows = fina_result.fetchall()
+                fina_df = pd.DataFrame(
+                    fina_rows,
+                    columns=["ts_code", "ann_date_time", "end_date_time", "netprofit_yoy"]
+                ) if fina_rows else pd.DataFrame()
 
-                if fina_rows:
-                    fina_df = pd.DataFrame(fina_rows, columns=["ts_code", "ann_date_time", "end_date_time", "netprofit_yoy"])
-                    # 计算 PEG
-                    df = peg_calculator.calculate_batch(df, fina_df)
-
-                # 计算估值分位
-                df = valuation.calculate(df)
+                # 在子进程中执行 CPU 密集型计算
+                loop = asyncio.get_event_loop()
+                df_bytes = pickle.dumps(df)
+                fina_bytes = pickle.dumps(fina_df) if not fina_df.empty else b""
+                result_bytes = await loop.run_in_executor(
+                    executor,
+                    _compute_fundamental_in_process,
+                    df_bytes,
+                    fina_bytes,
+                )
+                df = pickle.loads(result_bytes)
 
                 # 增量模式：仅 upsert 新数据
                 if upsert_cutoff is not None:
                     df = df[df["time"] >= upsert_cutoff]
 
-                # 存储数据
+                batch_records = 0
                 if not df.empty:
-                    count = await storage.upsert(df)
-                    total_records += count
-                
-                total_symbols += len(batch_symbols)
-                
-            except Exception as e:
+                    batch_records = await storage.upsert(df)
+
+                progress.advance(task_id, len(batch_syms))
+                return len(batch_syms), batch_records
+
+        # 创建所有批次任务
+        batch_tasks = []
+        for i in range(0, len(symbols), batch_size):
+            batch_syms = symbols[i:i+batch_size]
+            if verbose:
+                progress.console.print(f"  批次 {i//batch_size + 1}: {len(batch_syms)} 只股票")
+            batch_tasks.append(process_batch(batch_syms))
+
+        # 并发执行所有批次
+        results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"批次处理失败: {result}")
                 if verbose:
-                    progress.console.print(f"  [yellow]批次处理失败: {e}[/yellow]")
-            
-            progress.advance(task, len(batch_symbols))
-    
+                    progress.console.print(f"  [red]批次失败: {result}[/red]")
+                continue
+            batch_count, batch_records = result
+            total_symbols += batch_count
+            total_records += batch_records
+
     return {
         "symbols_processed": total_symbols,
         "records_processed": total_records,
     }
+
+
 
 
 async def _run_quarterly_fundamental_preprocess(
@@ -1147,10 +1196,11 @@ def run_preprocess(
             
             results = {}
             
+            # 转换num_workers（0表示自动）
+            workers = None if num_workers == 0 else num_workers
+
             if category in ["technical", "all"]:
                 console.print("[bold cyan]== 技术指标预处理 ==[/bold cyan]\n")
-                # 转换num_workers（0表示自动）
-                workers = None if num_workers == 0 else num_workers
                 result = await _run_technical_preprocess(
                     db_manager,
                     symbols=symbol_list,
@@ -1179,6 +1229,8 @@ def run_preprocess(
                     batch_size=batch_size,
                     verbose=verbose,
                     force=force,
+                    max_concurrent=max_concurrent,
+                    num_workers=workers,
                 )
                 results["fundamental"] = result
                 console.print(f"\n[green]基本面指标处理完成[/green]")
