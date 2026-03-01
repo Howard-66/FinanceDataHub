@@ -338,3 +338,215 @@ class TestPreprocessPipeline:
         
         with pytest.raises(ValueError):
             pipeline.run()  # 没有设置数据应该报错
+
+
+class TestVectorizedMultiSymbol:
+    """Phase 3: 多股票向量化指标测试"""
+
+    @pytest.fixture
+    def multi_symbol_data(self):
+        """创建包含3只股票的价格数据"""
+        np.random.seed(42)
+        n = 60
+        dates = pd.date_range('2024-01-01', periods=n, freq='D')
+        symbols = ['600519.SH', '000858.SZ', '601398.SH']
+
+        dfs = []
+        for sym in symbols:
+            prices = 100 + np.cumsum(np.random.randn(n) * 2)
+            dfs.append(pd.DataFrame({
+                'time': dates,
+                'symbol': sym,
+                'open': prices - 1,
+                'high': prices + 2,
+                'low': prices - 2,
+                'close': prices,
+                'volume': [1000000] * n,
+            }))
+        return pd.concat(dfs, ignore_index=True)
+
+    def test_ma_multi_symbol(self, multi_symbol_data):
+        """MA 在多股票 DataFrame 中正确按股票分组计算"""
+        from finance_data_hub.preprocessing.technical import MAIndicator
+
+        indicator = MAIndicator(period=20)
+        result = indicator.calculate(multi_symbol_data)
+
+        assert 'ma_20' in result.columns
+        assert len(result) == len(multi_symbol_data)
+        # 每只股票都有值
+        for sym in ['600519.SH', '000858.SZ', '601398.SH']:
+            sym_data = result[result['symbol'] == sym]
+            assert not sym_data['ma_20'].isna().all()
+
+    def test_macd_multi_symbol(self, multi_symbol_data):
+        """MACD 在多股票 DataFrame 中正确按股票分组计算"""
+        from finance_data_hub.preprocessing.technical import MACDIndicator
+
+        indicator = MACDIndicator()
+        result = indicator.calculate(multi_symbol_data)
+
+        assert 'macd_dif' in result.columns
+        assert 'macd_dea' in result.columns
+        assert 'macd_hist' in result.columns
+        assert len(result) == len(multi_symbol_data)
+
+    def test_rsi_multi_symbol(self, multi_symbol_data):
+        """RSI 在多股票 DataFrame 中正确按股票分组计算"""
+        from finance_data_hub.preprocessing.technical import RSIIndicator
+
+        indicator = RSIIndicator(period=14)
+        result = indicator.calculate(multi_symbol_data)
+
+        assert 'rsi_14' in result.columns
+        # RSI 在 0-100 之间
+        valid_rsi = result['rsi_14'].dropna()
+        assert (valid_rsi >= 0).all()
+        assert (valid_rsi <= 100).all()
+
+    def test_atr_multi_symbol(self, multi_symbol_data):
+        """ATR 在多股票 DataFrame 中正确按股票分组计算"""
+        from finance_data_hub.preprocessing.technical import ATRIndicator
+
+        indicator = ATRIndicator(period=14)
+        result = indicator.calculate(multi_symbol_data)
+
+        assert 'atr_14' in result.columns
+        valid_atr = result['atr_14'].dropna()
+        assert (valid_atr > 0).all()
+
+    def test_single_vs_multi_consistency(self, multi_symbol_data):
+        """向量化结果与逐股票单独计算结果一致"""
+        from finance_data_hub.preprocessing.technical import MAIndicator
+
+        indicator = MAIndicator(period=20)
+
+        # 多股票批量计算
+        result_batch = indicator.calculate(multi_symbol_data)
+
+        # 逐股票单独计算
+        for sym in ['600519.SH', '000858.SZ', '601398.SH']:
+            single_df = multi_symbol_data[multi_symbol_data['symbol'] == sym].copy()
+            result_single = indicator.calculate(single_df)
+            batch_values = result_batch.loc[
+                result_batch['symbol'] == sym, 'ma_20'
+            ].values
+            single_values = result_single['ma_20'].values
+            np.testing.assert_allclose(batch_values, single_values, rtol=1e-10)
+
+    def test_batch_compute_entry(self, multi_symbol_data):
+        """批量计算入口函数 compute_indicators_batch 正常工作"""
+        from finance_data_hub.preprocessing.technical.vectorized import compute_indicators_batch
+
+        result = compute_indicators_batch(
+            multi_symbol_data,
+            ["ma_20", "macd", "rsi_14", "atr_14"]
+        )
+        assert 'ma_20' in result.columns
+        assert 'macd_dif' in result.columns
+        assert 'rsi_14' in result.columns
+        assert 'atr_14' in result.columns
+        assert len(result) == len(multi_symbol_data)
+
+
+class TestFScoreTTMVectorized:
+    """Phase 3: F-Score TTM 向量化测试"""
+
+    @pytest.fixture
+    def financial_data(self):
+        """创建2只股票8个季度的财务数据"""
+        ts_codes = ['600519.SH', '000858.SZ']
+        end_dates = pd.to_datetime([
+            '2022-03-31', '2022-06-30', '2022-09-30', '2022-12-31',
+            '2023-03-31', '2023-06-30', '2023-09-30', '2023-12-31',
+        ])
+
+        fina_rows = []
+        bs_rows = []
+        cf_rows = []
+        inc_rows = []
+
+        for ts_code in ts_codes:
+            for i, ed in enumerate(end_dates):
+                fina_rows.append({
+                    'ts_code': ts_code, 'end_date': ed, 'ann_date': ed + pd.Timedelta(days=30),
+                    'roa': 2.0 + i * 0.5, 'roe': 10.0 + i, 'roe_yearly': 10.0 + i,
+                    'grossprofit_margin': 50.0 + i, 'q_gsprofit_margin': 50.0 + i * 0.3,
+                    'q_roe': 3.0 + i * 0.2, 'assets_turn': 0.5 + i * 0.02,
+                    'current_ratio': 1.5 + i * 0.1, 'roe_dt': 9.0 + i,
+                    'debt_to_assets': 30.0, 'netprofit_yoy': 5.0 + i,
+                })
+                bs_rows.append({
+                    'ts_code': ts_code, 'end_date': ed, 'f_ann_date': ed + pd.Timedelta(days=30),
+                    'total_assets': 1000000 + i * 50000, 'total_liab': 400000 + i * 10000,
+                    'total_ncl': 200000 + i * 5000, 'total_cur_assets': 500000 + i * 30000,
+                    'total_cur_liab': 300000 + i * 10000, 'total_share': 100000,
+                })
+                cf_rows.append({
+                    'ts_code': ts_code, 'end_date': ed,
+                    'n_cashflow_act': 50000 + i * 5000,
+                })
+                inc_rows.append({
+                    'ts_code': ts_code, 'end_date': ed,
+                    'n_income': 40000 + i * 4000,
+                })
+
+        fina_df = pd.DataFrame(fina_rows)
+        bs_df = pd.DataFrame(bs_rows)
+        cf_df = pd.DataFrame(cf_rows)
+        inc_df = pd.DataFrame(inc_rows)
+
+        return fina_df, bs_df, cf_df, inc_df
+
+    def test_fscore_calculates_with_multi_stock(self, financial_data):
+        """F-Score 计算器在多股票数据上正常工作"""
+        from finance_data_hub.preprocessing.fundamental.quality import FScoreCalculator
+
+        fina_df, bs_df, cf_df, inc_df = financial_data
+        calculator = FScoreCalculator()
+        result = calculator.calculate(fina_df, bs_df, cf_df, inc_df)
+
+        assert not result.empty
+        assert 'f_score' in result.columns
+        # 两只股票都有结果
+        assert result['ts_code'].nunique() == 2
+        # F-Score 在 0-9 之间
+        valid_scores = result['f_score'].dropna()
+        assert (valid_scores >= 0).all()
+        assert (valid_scores <= 9).all()
+
+    def test_cumulative_to_ttm_vectorized(self, financial_data):
+        """向量化 _calc_cumulative_to_ttm 产生有效 TTM 值"""
+        from finance_data_hub.preprocessing.fundamental.quality import FScoreCalculator
+
+        fina_df, bs_df, cf_df, inc_df = financial_data
+        calculator = FScoreCalculator()
+        result = calculator.calculate(fina_df, bs_df, cf_df, inc_df)
+
+        # roa_ttm 应包含有效值（至少 Q4 值直接可用）
+        assert 'roa_ttm' in result.columns
+        assert result['roa_ttm'].notna().any()
+
+    def test_ni_cfo_corr_vectorized(self, financial_data):
+        """向量化 _calc_ni_cfo_corr_3y 使用 rolling.corr 产生有效值"""
+        from finance_data_hub.preprocessing.fundamental.quality import FScoreCalculator
+
+        fina_df, bs_df, cf_df, inc_df = financial_data
+        calculator = FScoreCalculator()
+        result = calculator.calculate(fina_df, bs_df, cf_df, inc_df)
+
+        assert 'ni_cfo_corr_3y' in result.columns
+        # 8 个季度中，至少后几个有 rolling corr 值
+        assert result['ni_cfo_corr_3y'].notna().any()
+
+    def test_roe_5y_avg_vectorized(self, financial_data):
+        """向量化 _calc_roe_5y_avg 产生有效值"""
+        from finance_data_hub.preprocessing.fundamental.quality import FScoreCalculator
+
+        fina_df, bs_df, cf_df, inc_df = financial_data
+        calculator = FScoreCalculator()
+        result = calculator.calculate(fina_df, bs_df, cf_df, inc_df)
+
+        assert 'roe_5y_avg' in result.columns
+        assert result['roe_5y_avg'].notna().any()
+

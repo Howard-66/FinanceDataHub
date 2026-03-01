@@ -950,7 +950,7 @@ def run_preprocess(
     max_concurrent: int = typer.Option(
         DEFAULT_MAX_CONCURRENT_BATCHES,
         "--max-concurrent",
-        "-c",
+        "-C",
         help="最大并发批次数（I/O并发，默认4）"
     ),
     num_workers: int = typer.Option(

@@ -1109,7 +1109,7 @@ fdh-cli preprocess status
 | `--force` | 强制全量重新计算（忽略智能增量检测） | `--force` |
 | `--batch-size, -b` | 批处理大小 | `--batch-size 100` |
 | `--verbose, -v` | 显示详细日志 | `--verbose` |
-| `--max-concurrent, -c` | 最大并发批次数（I/O并发） | `--max-concurrent 6` |
+| `--max-concurrent, -C` | 最大并发批次数（I/O并发） | `--max-concurrent 6` |
 | `--num-workers, -w` | 进程池工作进程数（CPU并发，0=自动） | `--num-workers 4` |
 
 #### 预处理类别
