@@ -35,10 +35,11 @@ CREATE TABLE IF NOT EXISTS processed_daily_qfq (
     
     -- ATR 指标 (简化版: 14)
     atr_14 DECIMAL(20,6),                   -- 14日 ATR
-    
+
     -- 元数据
+    last_adj_factor DECIMAL(20,10),         -- 最新复权因子(用于智能增量检测)
     processed_at TIMESTAMPTZ DEFAULT NOW(), -- 处理时间
-    
+
     PRIMARY KEY (symbol, time)
 );
 
@@ -94,10 +95,11 @@ CREATE TABLE IF NOT EXISTS processed_weekly_qfq (
     
     -- ATR 指标
     atr_14 DECIMAL(20,6),
-    
+
     -- 元数据
+    last_adj_factor DECIMAL(20,10),         -- 最新复权因子(用于智能增量检测)
     processed_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     PRIMARY KEY (symbol, time)
 );
 
@@ -146,10 +148,11 @@ CREATE TABLE IF NOT EXISTS processed_monthly_qfq (
     
     -- ATR 指标
     atr_14 DECIMAL(20,6),
-    
+
     -- 元数据
+    last_adj_factor DECIMAL(20,10),         -- 最新复权因子(用于智能增量检测)
     processed_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     PRIMARY KEY (symbol, time)
 );
 

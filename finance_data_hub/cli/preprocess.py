@@ -10,6 +10,9 @@
 from typing import Optional, List
 from datetime import datetime, timedelta
 import asyncio
+import concurrent.futures
+import os
+import pickle
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -22,6 +25,7 @@ from rich.progress import (
     TaskProgressColumn,
     TimeElapsedColumn,
 )
+from loguru import logger
 
 from ..config import get_settings
 from ..database.manager import DatabaseManager
@@ -52,6 +56,61 @@ DEFAULT_INDICATORS = [
 # 默认频率
 DEFAULT_FREQS = ["daily", "weekly", "monthly"]
 
+# 增量预处理配置
+INDICATOR_MAX_WINDOW = 60  # 最大指标窗口(MA_50需要50天)
+LOOKBACK_BUFFER = 20  # 额外缓冲天数
+
+# Phase 2: 并发控制配置
+DEFAULT_MAX_CONCURRENT_BATCHES = 6  # 默认并发批次数（I/O并发）
+DEFAULT_NUM_WORKERS = None  # 默认工作进程数（None表示自动：min(CPU核心数-1, 4)）
+
+
+def _compute_indicators_in_process(df_bytes: bytes, indicators: List[str], adjust_type: str) -> bytes:
+    """
+    在子进程中执行指标计算（CPU密集型任务）
+
+    这是多进程优化的核心函数，在独立进程中执行：
+    1. 数据反序列化
+    2. 复权处理
+    3. 技术指标计算（CPU密集型，使用TA-Lib）
+    4. 结果序列化返回
+
+    Args:
+        df_bytes: pickle序列化的DataFrame
+        indicators: 指标名称列表
+        adjust_type: 复权类型 (qfq/hfq/none)
+
+    Returns:
+        pickle序列化后的结果DataFrame
+    """
+    import pandas as pd
+    from ..preprocessing import AdjustProcessor
+    from ..preprocessing.technical.base import create_indicator
+
+    # 反序列化DataFrame
+    df = pickle.loads(df_bytes)
+
+    if df.empty:
+        return pickle.dumps(df)
+
+    # 复权处理
+    adjust_processor = AdjustProcessor()
+    if adjust_type == "qfq":
+        df = adjust_processor.adjust_qfq(df)
+    elif adjust_type == "hfq":
+        df = adjust_processor.adjust_hfq(df)
+
+    # 计算技术指标（CPU密集型）
+    for ind_name in indicators:
+        try:
+            indicator = create_indicator(ind_name)
+            df = indicator.calculate(df)
+        except Exception:
+            # 跳过失败的指标
+            pass
+
+    return pickle.dumps(df)
+
 
 async def _get_all_stock_symbols(db_manager: DatabaseManager) -> List[str]:
     """获取所有股票代码"""
@@ -66,6 +125,97 @@ async def _get_all_stock_symbols(db_manager: DatabaseManager) -> List[str]:
     result = await db_manager.execute_raw_sql(sql)
     rows = result.fetchall()
     return [row[0] for row in rows]
+
+
+async def _classify_stocks_by_adj_factor(
+    db_manager: DatabaseManager,
+    symbols: List[str],
+    verbose: bool = False
+) -> tuple[List[str], List[str], dict]:
+    """
+    根据 adj_factor 变化情况将股票分类为全量组和增量组
+
+    核心逻辑：
+    - 前复权公式：复权后价格 = 原始价格 × (当日adj_factor / 最新adj_factor)
+    - 当最新 adj_factor 变化时，所有历史前复权价格都会改变
+    - 但每天只有约5%的股票发生除权除息（adj_factor变化）
+
+    Args:
+        db_manager: 数据库管理器
+        symbols: 股票代码列表
+        verbose: 是否显示详细信息
+
+    Returns:
+        (full_symbols, incr_symbols, adj_factor_map)
+        - full_symbols: 需要全量重算的股票（adj_factor变化或从未处理过）
+        - incr_symbols: 可以增量处理的股票（adj_factor未变）
+        - adj_factor_map: symbol -> 最新adj_factor的字典
+    """
+    if not symbols:
+        return [], [], {}
+
+    sql = """
+        WITH current_adj AS (
+            SELECT DISTINCT ON (symbol) symbol, adj_factor as current_adj
+            FROM adj_factor
+            WHERE symbol = ANY(:symbols)
+            ORDER BY symbol, time DESC
+        ),
+        processed_adj AS (
+            SELECT DISTINCT ON (symbol) symbol, last_adj_factor
+            FROM processed_daily_qfq
+            WHERE symbol = ANY(:symbols)
+            ORDER BY symbol, time DESC
+        )
+        SELECT
+            c.symbol,
+            c.current_adj,
+            CASE
+                WHEN p.last_adj_factor IS NULL THEN true
+                WHEN ABS(c.current_adj - p.last_adj_factor) > 1e-10 THEN true
+                ELSE false
+            END AS needs_full
+        FROM current_adj c
+        LEFT JOIN processed_adj p ON c.symbol = p.symbol
+    """
+
+    try:
+        result = await db_manager.execute_raw_sql(sql, {"symbols": symbols})
+
+        full_symbols = []
+        incr_symbols = []
+        adj_factor_map = {}
+
+        for row in result.fetchall():
+            symbol = row[0]
+            current_adj = row[1]
+            needs_full = row[2]
+
+            adj_factor_map[symbol] = current_adj
+            if needs_full:
+                full_symbols.append(symbol)
+            else:
+                incr_symbols.append(symbol)
+
+        # 检查是否有股票在adj_factor表中不存在（新股或数据缺失）
+        processed_symbols = set(full_symbols + incr_symbols)
+        missing_symbols = set(symbols) - processed_symbols
+        if missing_symbols:
+            # 缺失的股票视为需要全量处理
+            full_symbols.extend(list(missing_symbols))
+            for sym in missing_symbols:
+                adj_factor_map[sym] = 1.0  # 默认复权因子
+
+        if verbose:
+            console.print(f"  [dim]adj_factor检测: {len(full_symbols)}只全量, {len(incr_symbols)}只增量[/dim]")
+
+        return full_symbols, incr_symbols, adj_factor_map
+
+    except Exception as e:
+        logger.warning(f"adj_factor分类失败，全部按全量处理: {e}")
+        # 失败时全部按全量处理
+        adj_map = {s: 1.0 for s in symbols}
+        return symbols, [], adj_map
 
 
 async def _get_all_stock_symbols_from_daily_basic(db_manager: DatabaseManager) -> List[str]:
@@ -175,28 +325,156 @@ async def _run_technical_preprocess(
     adjust_type: str = "qfq",
     batch_size: int = 100,
     verbose: bool = False,
+    force: bool = False,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT_BATCHES,
+    num_workers: Optional[int] = DEFAULT_NUM_WORKERS,
 ) -> dict:
-    """执行技术指标预处理"""
+    """
+    执行技术指标预处理（支持智能增量更新 + 并发优化）
+
+    Phase 2 优化：
+    1. 异步批次并发：使用 asyncio.Semaphore 控制 I/O 并发度
+    2. 多进程 CPU 加速：使用 ProcessPoolExecutor 并行计算指标
+
+    Args:
+        max_concurrent: 最大并发批次数（默认4），控制同时处理的批次数量
+        num_workers: 进程池工作进程数（默认None=自动），用于CPU密集型计算
+    """
     import pandas as pd
     from ..preprocessing.resample import ResampleProcessor, ResampleFreq
-    
+
     indicators = indicators or DEFAULT_INDICATORS
     freqs = freqs or ["daily"]
-    
+
+    # 自动确定工作进程数
+    if num_workers is None:
+        num_workers = min(os.cpu_count() or 4 - 1, 6)
+        num_workers = max(1, num_workers)  # 至少1个
+
     # 获取股票列表
     if not symbols:
         console.print("[cyan]获取股票列表...[/cyan]")
         symbols = await _get_all_stock_symbols(db_manager)
         console.print(f"共 {len(symbols)} 只股票")
-    
+
+    # 智能增量策略：根据 adj_factor 变化分类股票
+    if force:
+        # 强制全量模式
+        full_symbols = symbols
+        incr_symbols = []
+        adj_factor_map = {}
+        console.print("[yellow]强制全量模式: 所有股票将全量重算[/yellow]")
+    else:
+        # 智能增量模式
+        console.print("[cyan]检测 adj_factor 变化...[/cyan]")
+        full_symbols, incr_symbols, adj_factor_map = await _classify_stocks_by_adj_factor(
+            db_manager, symbols, verbose=verbose
+        )
+        console.print(f"  全量重算: {len(full_symbols)} 只 (adj_factor变化或首次处理)")
+        console.print(f"  增量处理: {len(incr_symbols)} 只 (adj_factor未变)")
+
     # 初始化处理器和存储
-    adjust_processor = AdjustProcessor()
     resample_processor = ResampleProcessor()
     storage = ProcessedDataStorage(db_manager)
-    
+
     total_symbols = 0
     total_records = 0
-    
+    total_full = 0
+    total_incr = 0
+
+    # 创建信号量控制并发
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def process_batch(
+        batch_symbols: List[str],
+        is_full: bool,
+        batch_start_date: Optional[str] = None,
+        task=None
+    ) -> tuple[int, int]:
+        """
+        处理单个批次（支持并发控制）
+
+        Returns:
+            (processed_symbols, processed_records)
+        """
+        async with semaphore:
+            # 获取数据
+            df = await _get_stock_data(
+                db_manager,
+                batch_symbols,
+                batch_start_date,
+                end_date,
+                include_adj_factor=True
+            )
+
+            if df.empty:
+                if task is not None:
+                    progress.advance(task, len(batch_symbols))
+                return len(batch_symbols), 0
+
+            # 使用进程池执行CPU密集型计算（指标计算）
+            loop = asyncio.get_event_loop()
+            df_bytes = pickle.dumps(df)
+            result_bytes = await loop.run_in_executor(
+                executor,
+                _compute_indicators_in_process,
+                df_bytes,
+                indicators,
+                adjust_type
+            )
+            df = pickle.loads(result_bytes)
+
+            # 添加 last_adj_factor 列
+            for symbol in batch_symbols:
+                if symbol in adj_factor_map:
+                    df.loc[df['symbol'] == symbol, 'last_adj_factor'] = adj_factor_map[symbol]
+
+            batch_records = 0
+
+            # 处理各个频率
+            for freq in freqs:
+                if freq.lower() == "daily":
+                    data = df
+                elif freq.lower() == "weekly":
+                    data = resample_processor.resample(df, ResampleFreq.WEEKLY)
+                    # 对重采样数据重新计算指标（在进程中执行）
+                    if not data.empty:
+                        data_bytes = pickle.dumps(data)
+                        loop = asyncio.get_event_loop()
+                        result_bytes = await loop.run_in_executor(
+                            executor,
+                            _compute_indicators_in_process,
+                            data_bytes,
+                            indicators,
+                            "none"  # 重采样后不需要再复权
+                        )
+                        data = pickle.loads(result_bytes)
+                elif freq.lower() == "monthly":
+                    data = resample_processor.resample(df, ResampleFreq.MONTHLY)
+                    if not data.empty:
+                        data_bytes = pickle.dumps(data)
+                        loop = asyncio.get_event_loop()
+                        result_bytes = await loop.run_in_executor(
+                            executor,
+                            _compute_indicators_in_process,
+                            data_bytes,
+                            indicators,
+                            "none"
+                        )
+                        data = pickle.loads(result_bytes)
+                else:
+                    continue
+
+                # 存储数据
+                if not data.empty:
+                    count = await storage.upsert(data, freq=freq, adjust_type=adjust_type)
+                    batch_records += count
+
+            if task is not None:
+                progress.advance(task, len(batch_symbols))
+
+            return len(batch_symbols), batch_records
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -204,82 +482,87 @@ async def _run_technical_preprocess(
         TaskProgressColumn(),
         TimeElapsedColumn(),
         console=console,
-    ) as progress:
-        task = progress.add_task(
-            "[cyan]预处理技术指标...",
-            total=len(symbols)
-        )
-        
-        # 分批处理
-        for i in range(0, len(symbols), batch_size):
-            batch_symbols = symbols[i:i+batch_size]
-            
-            if verbose:
-                progress.console.print(f"  批次 {i//batch_size + 1}: {len(batch_symbols)} 只股票")
-            
-            # 获取数据
-            df = await _get_stock_data(
-                db_manager,
-                batch_symbols,
-                start_date,
-                end_date,
-                include_adj_factor=True
+    ) as progress, concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+        # 处理全量组（并发执行）
+        if full_symbols:
+            task_full = progress.add_task(
+                f"[cyan]全量处理 (并发{max_concurrent}, 进程{num_workers})...",
+                total=len(full_symbols)
             )
-            
-            if df.empty:
-                progress.advance(task, len(batch_symbols))
-                continue
-            
-            # 复权处理
-            if adjust_type == "qfq":
-                df = adjust_processor.adjust_qfq(df)
-            elif adjust_type == "hfq":
-                df = adjust_processor.adjust_hfq(df)
-            
-            # 计算技术指标
-            for ind_name in indicators:
-                try:
-                    indicator = create_indicator(ind_name)
-                    df = indicator.calculate(df)
-                except Exception as e:
-                    if verbose:
-                        progress.console.print(f"  [yellow]跳过指标 {ind_name}: {e}[/yellow]")
-            
-            # 处理各个频率
-            for freq in freqs:
-                if freq.lower() == "daily":
-                    data = df
-                elif freq.lower() == "weekly":
-                    data = resample_processor.resample(df, ResampleFreq.WEEKLY)
-                    # 对重采样数据重新计算指标
-                    for ind_name in indicators:
-                        try:
-                            indicator = create_indicator(ind_name)
-                            data = indicator.calculate(data)
-                        except:
-                            pass
-                elif freq.lower() == "monthly":
-                    data = resample_processor.resample(df, ResampleFreq.MONTHLY)
-                    for ind_name in indicators:
-                        try:
-                            indicator = create_indicator(ind_name)
-                            data = indicator.calculate(data)
-                        except:
-                            pass
-                else:
+
+            # 创建所有批次的任务
+            batch_tasks = []
+            for i in range(0, len(full_symbols), batch_size):
+                batch_symbols = full_symbols[i:i+batch_size]
+                if verbose:
+                    progress.console.print(f"  [全量]批次 {i//batch_size + 1}: {len(batch_symbols)} 只股票")
+                batch_tasks.append(process_batch(batch_symbols, True, start_date, task_full))
+
+            # 并发执行所有批次
+            results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+            # 汇总结果
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"批次处理失败: {result}")
+                    progress.console.print(f"  [red]批次失败: {result}[/red]")
                     continue
-                
-                # 存储数据
-                if not data.empty:
-                    count = await storage.upsert(data, freq=freq, adjust_type=adjust_type)
-                    total_records += count
-            
-            total_symbols += len(batch_symbols)
-            progress.advance(task, len(batch_symbols))
-    
+                batch_symbols_count, batch_records = result
+                total_symbols += batch_symbols_count
+                total_full += batch_symbols_count
+                total_records += batch_records
+
+        # 处理增量组（并发执行）
+        if incr_symbols:
+            # 计算增量所需的回溯天数
+            lookback_days = INDICATOR_MAX_WINDOW + LOOKBACK_BUFFER
+
+            # 计算增量数据的起始日期
+            if start_date:
+                incr_start = min(
+                    pd.to_datetime(start_date),
+                    pd.Timestamp.now() - pd.Timedelta(days=lookback_days * 1.5)
+                ).strftime('%Y-%m-%d')
+            else:
+                incr_start = (pd.Timestamp.now() - pd.Timedelta(days=lookback_days * 1.5)).strftime('%Y-%m-%d')
+
+            task_incr = progress.add_task(
+                f"[cyan]增量处理 (并发{max_concurrent}, 进程{num_workers})...",
+                total=len(incr_symbols)
+            )
+
+            # 创建所有批次的任务
+            batch_tasks = []
+            for i in range(0, len(incr_symbols), batch_size):
+                batch_symbols = incr_symbols[i:i+batch_size]
+                if verbose:
+                    progress.console.print(f"  [增量]批次 {i//batch_size + 1}: {len(batch_symbols)} 只股票")
+                batch_tasks.append(process_batch(batch_symbols, False, incr_start, task_incr))
+
+            # 并发执行所有批次
+            results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+            # 汇总结果
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"批次处理失败: {result}")
+                    progress.console.print(f"  [red]批次失败: {result}[/red]")
+                    continue
+                batch_symbols_count, batch_records = result
+                total_symbols += batch_symbols_count
+                total_incr += batch_symbols_count
+                total_records += batch_records
+
+    if full_symbols:
+        console.print(f"  [dim]全量处理完成: {total_full} 只股票[/dim]")
+    if incr_symbols:
+        console.print(f"  [dim]增量处理完成: {total_incr} 只股票[/dim]")
+
     return {
         "symbols_processed": total_symbols,
         "records_processed": total_records,
+        "full_processed": total_full,
+        "incremental_processed": total_incr,
     }
 
 
@@ -461,7 +744,7 @@ async def _run_quarterly_fundamental_preprocess(
             params = {f"sym_{j}": sym for j, sym in enumerate(batch_symbols)}
             
             try:
-                # 获取 fina_indicator 数据
+                # 并行查询4张表（性能优化）
                 fina_sql = f"""
                     SELECT ts_code, end_date, ann_date,
                            roe, roe_yearly, roe_dt, roa, grossprofit_margin, assets_turn,
@@ -471,9 +754,35 @@ async def _run_quarterly_fundamental_preprocess(
                     WHERE ts_code IN ({placeholders})
                     ORDER BY ts_code, end_date
                 """
-                fina_result = await db_manager.execute_raw_sql(fina_sql, params)
-                fina_rows = fina_result.fetchall()
+                bs_sql = f"""
+                    SELECT ts_code, end_date, f_ann_date,
+                           total_assets, total_liab, total_ncl, total_cur_assets, total_cur_liab, total_share
+                    FROM balancesheet
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date
+                """
+                cf_sql = f"""
+                    SELECT ts_code, end_date, n_cashflow_act
+                    FROM cashflow
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date
+                """
+                inc_sql = f"""
+                    SELECT ts_code, end_date, n_income
+                    FROM income
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date
+                """
 
+                # 使用 asyncio.gather 并行执行4个查询
+                fina_result, bs_result, cf_result, inc_result = await asyncio.gather(
+                    db_manager.execute_raw_sql(fina_sql, params),
+                    db_manager.execute_raw_sql(bs_sql, params),
+                    db_manager.execute_raw_sql(cf_sql, params),
+                    db_manager.execute_raw_sql(inc_sql, params),
+                )
+
+                fina_rows = fina_result.fetchall()
                 if not fina_rows:
                     progress.advance(task, len(batch_symbols))
                     continue
@@ -484,43 +793,18 @@ async def _run_quarterly_fundamental_preprocess(
                     "current_ratio", "debt_to_assets", "netprofit_yoy",
                     "q_gsprofit_margin", "q_roe"
                 ])
-                
-                # 获取 balancesheet 数据
-                bs_sql = f"""
-                    SELECT ts_code, end_date, f_ann_date,
-                           total_assets, total_liab, total_ncl, total_cur_assets, total_cur_liab, total_share
-                    FROM balancesheet
-                    WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date
-                """
-                bs_result = await db_manager.execute_raw_sql(bs_sql, params)
+
                 bs_rows = bs_result.fetchall()
                 bs_df = pd.DataFrame(bs_rows, columns=[
                     "ts_code", "end_date", "f_ann_date",
                     "total_assets", "total_liab", "total_ncl", "total_cur_assets", "total_cur_liab", "total_share"
                 ]) if bs_rows else pd.DataFrame()
-                
-                # 获取 cashflow 数据
-                cf_sql = f"""
-                    SELECT ts_code, end_date, n_cashflow_act
-                    FROM cashflow
-                    WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date
-                """
-                cf_result = await db_manager.execute_raw_sql(cf_sql, params)
+
                 cf_rows = cf_result.fetchall()
                 cf_df = pd.DataFrame(cf_rows, columns=[
                     "ts_code", "end_date", "n_cashflow_act"
                 ]) if cf_rows else pd.DataFrame()
-                
-                # 获取 income 数据
-                inc_sql = f"""
-                    SELECT ts_code, end_date, n_income
-                    FROM income
-                    WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date
-                """
-                inc_result = await db_manager.execute_raw_sql(inc_sql, params)
+
                 inc_rows = inc_result.fetchall()
                 inc_df = pd.DataFrame(inc_rows, columns=[
                     "ts_code", "end_date", "n_income"
@@ -663,6 +947,18 @@ def run_preprocess(
         "-v",
         help="显示详细日志"
     ),
+    max_concurrent: int = typer.Option(
+        DEFAULT_MAX_CONCURRENT_BATCHES,
+        "--max-concurrent",
+        "-c",
+        help="最大并发批次数（I/O并发，默认4）"
+    ),
+    num_workers: int = typer.Option(
+        0,
+        "--num-workers",
+        "-w",
+        help="进程池工作进程数（CPU并发，0=自动）"
+    ),
 ):
     """
     执行数据预处理
@@ -729,6 +1025,8 @@ def run_preprocess(
             
             if category in ["technical", "all"]:
                 console.print("[bold cyan]== 技术指标预处理 ==[/bold cyan]\n")
+                # 转换num_workers（0表示自动）
+                workers = None if num_workers == 0 else num_workers
                 result = await _run_technical_preprocess(
                     db_manager,
                     symbols=symbol_list,
@@ -738,6 +1036,9 @@ def run_preprocess(
                     adjust_type=adjust,
                     batch_size=batch_size,
                     verbose=verbose,
+                    force=force,
+                    max_concurrent=max_concurrent,
+                    num_workers=workers,
                 )
                 results["technical"] = result
                 console.print(f"\n[green]技术指标处理完成[/green]")

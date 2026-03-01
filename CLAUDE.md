@@ -1106,9 +1106,11 @@ fdh-cli preprocess status
 | `--end-date` | 结束日期 (YYYY-MM-DD) | `--end-date 2024-12-31` |
 | `--freq, -f` | 频率列表（逗号分隔） | `--freq daily,weekly,monthly` |
 | `--adjust` | 复权类型 | `--adjust qfq` |
-| `--force` | 强制全量重新计算 | `--force` |
+| `--force` | 强制全量重新计算（忽略智能增量检测） | `--force` |
 | `--batch-size, -b` | 批处理大小 | `--batch-size 100` |
 | `--verbose, -v` | 显示详细日志 | `--verbose` |
+| `--max-concurrent, -c` | 最大并发批次数（I/O并发） | `--max-concurrent 6` |
+| `--num-workers, -w` | 进程池工作进程数（CPU并发，0=自动） | `--num-workers 4` |
 
 #### 预处理类别
 
@@ -1162,10 +1164,10 @@ fdh-cli preprocess status
 #### 使用示例
 
 ```bash
-# 首次运行：全量预处理所有类别
+# 首次运行：全量预处理所有类别（强制模式）
 fdh-cli preprocess run --all --category all --force
 
-# 只处理技术指标（日线）
+# 日常更新：智能增量处理技术指标（极快，自动检测复权变动）
 fdh-cli preprocess run --all --category technical
 
 # 处理技术指标（日线+周线+月线）
@@ -1183,8 +1185,11 @@ fdh-cli preprocess run --symbols 601111.SH,600036.SH,600900.SH,600519.SH --categ
 # 处理指定股票
 fdh-cli preprocess run --symbols 600519.SH,000858.SZ --category technical
 
-# 处理指定日期范围（增量更新）
+# 处理指定日期范围（手动增量更新）
 fdh-cli preprocess run --all --start-date 2024-01-01 --end-date 2024-12-31 --category technical
+
+# 高性能计算：自定义并发度与进程数
+fdh-cli preprocess run --all --category technical --max-concurrent 10 --num-workers 8
 
 # 查看预处理状态
 fdh-cli preprocess status
