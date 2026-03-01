@@ -264,7 +264,7 @@ class ProcessedDataStorage:
             """确保值为 Python 原生类型，asyncpg 不接受 pandas 对象"""
             if v is None:
                 return None
-            if isinstance(v, float) and np.isnan(v):
+            if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
                 return None
             if isinstance(v, pd.Timestamp):
                 if v is pd.NaT or pd.isna(v):
