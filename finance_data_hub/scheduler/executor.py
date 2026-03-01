@@ -209,45 +209,180 @@ class TaskExecutor:
     ) -> Dict[str, Any]:
         """
         执行预处理任务
-        
-        调用预处理模块
+
+        调用 fdh-cli preprocess 命令
         """
         category = job_config.category
         params = {**job_config.params, **kwargs}
-        
+
         logger.info(f"Executing preprocess task: {job_id}, category: {category}")
-        
-        # TODO: 实现预处理逻辑（等预处理模块完成后集成）
-        # 目前先返回空结果
-        
+
         if category == "technical":
             return self._preprocess_technical(params)
         elif category == "fundamental":
             return self._preprocess_fundamental(params)
+        elif category == "quarterly_fundamental":
+            return self._preprocess_quarterly_fundamental(params)
         else:
             raise ValueError(f"Unknown preprocess category: {category}")
-    
+
     def _preprocess_technical(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """执行技术指标预处理"""
-        # TODO: 实现技术指标预处理
-        logger.info(f"Technical preprocessing with params: {params}")
-        
-        # 占位实现
+        cmd = self._build_preprocess_command("technical", params)
+        logger.info(f"Executing technical preprocess command: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(self.project_root),
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr or result.stdout
+            raise RuntimeError(f"Technical preprocess failed: {error_msg}")
+
+        output = result.stdout.strip() if result.stdout else ""
+        if output:
+            logger.info(f"Technical preprocess output:\n{output}")
+
+        # 解析输出获取处理记录数
+        records_processed = self._parse_preprocess_output(output)
+
         return {
-            "records_processed": 0,
-            "symbols_count": 0
+            "records_processed": records_processed,
+            "symbols_count": 0  # TODO: 可以从输出解析
         }
-    
+
     def _preprocess_fundamental(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """执行基本面指标预处理"""
-        # TODO: 实现基本面指标预处理
-        logger.info(f"Fundamental preprocessing with params: {params}")
-        
-        # 占位实现
+        cmd = self._build_preprocess_command("fundamental", params)
+        logger.info(f"Executing fundamental preprocess command: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(self.project_root),
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr or result.stdout
+            raise RuntimeError(f"Fundamental preprocess failed: {error_msg}")
+
+        output = result.stdout.strip() if result.stdout else ""
+        if output:
+            logger.info(f"Fundamental preprocess output:\n{output}")
+
+        records_processed = self._parse_preprocess_output(output)
+
         return {
-            "records_processed": 0,
+            "records_processed": records_processed,
             "symbols_count": 0
         }
+
+    def _preprocess_quarterly_fundamental(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """执行季度基本面指标预处理（F-Score等）"""
+        cmd = self._build_preprocess_command("quarterly_fundamental", params)
+        logger.info(f"Executing quarterly fundamental preprocess command: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(self.project_root),
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr or result.stdout
+            raise RuntimeError(f"Quarterly fundamental preprocess failed: {error_msg}")
+
+        output = result.stdout.strip() if result.stdout else ""
+        if output:
+            logger.info(f"Quarterly fundamental preprocess output:\n{output}")
+
+        records_processed = self._parse_preprocess_output(output)
+
+        return {
+            "records_processed": records_processed,
+            "symbols_count": 0
+        }
+
+    def _build_preprocess_command(
+        self,
+        category: str,
+        params: Dict[str, Any]
+    ) -> List[str]:
+        """构建预处理命令"""
+        # 使用 fdh-cli 命令
+        venv_fdh_cli = self.project_root / ".venv" / "bin" / "fdh-cli"
+        if venv_fdh_cli.exists():
+            cmd = [str(venv_fdh_cli), "preprocess", "run"]
+        else:
+            cmd = [self.python_path, "-m", "finance_data_hub.cli.main", "preprocess", "run"]
+
+        # 添加 category 参数
+        cmd.extend(["--category", category])
+
+        # 处理 all 参数（处理全部股票）
+        if params.get("all"):
+            cmd.append("--all")
+
+        # 处理 freq 参数
+        freq = params.get("freq")
+        if freq:
+            cmd.extend(["--freq", freq])
+
+        # 处理 adjust 参数
+        adjust = params.get("adjust")
+        if adjust:
+            cmd.extend(["--adjust", adjust])
+
+        # 处理 force 参数（全量重新计算）
+        if params.get("force"):
+            cmd.append("--force")
+
+        # 处理 symbols 参数
+        symbols = params.get("symbols")
+        if symbols:
+            if isinstance(symbols, list):
+                symbols = ",".join(symbols)
+            cmd.extend(["--symbols", symbols])
+
+        # 处理 start_date 参数
+        start_date = params.get("start_date")
+        if start_date:
+            cmd.extend(["--start-date", start_date])
+
+        # 处理 end_date 参数
+        end_date = params.get("end_date")
+        if end_date:
+            cmd.extend(["--end-date", end_date])
+
+        # 添加 verbose 参数
+        if params.get("verbose"):
+            cmd.append("--verbose")
+
+        return cmd
+
+    def _parse_preprocess_output(self, output: str) -> int:
+        """解析预处理命令输出，获取处理记录数"""
+        import re
+
+        # 尝试匹配 "总处理记录: X" 或 "Total upserted: X" 等格式
+        patterns = [
+            r"总处理记录:\s*(\d+)",
+            r"Total upserted:\s*(\d+)",
+            r"records_processed:\s*(\d+)",
+            r"处理记录:\s*(\d+)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, output, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+
+        return 0
 
 
 class RetryExecutor:
