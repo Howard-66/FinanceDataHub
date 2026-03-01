@@ -56,13 +56,43 @@ DEFAULT_FREQS = ["daily", "weekly", "monthly"]
 async def _get_all_stock_symbols(db_manager: DatabaseManager) -> List[str]:
     """获取所有股票代码"""
     await db_manager.initialize()
-    
+
     sql = """
-        SELECT DISTINCT symbol 
-        FROM symbol_daily 
+        SELECT DISTINCT symbol
+        FROM symbol_daily
         ORDER BY symbol
     """
-    
+
+    result = await db_manager.execute_raw_sql(sql)
+    rows = result.fetchall()
+    return [row[0] for row in rows]
+
+
+async def _get_all_stock_symbols_from_daily_basic(db_manager: DatabaseManager) -> List[str]:
+    """从 daily_basic 表获取有基本面数据的股票代码"""
+    await db_manager.initialize()
+
+    sql = """
+        SELECT DISTINCT symbol
+        FROM daily_basic
+        ORDER BY symbol
+    """
+
+    result = await db_manager.execute_raw_sql(sql)
+    rows = result.fetchall()
+    return [row[0] for row in rows]
+
+
+async def _get_all_stock_symbols_from_fina_indicator(db_manager: DatabaseManager) -> List[str]:
+    """从 fina_indicator 表获取有财务数据的股票代码"""
+    await db_manager.initialize()
+
+    sql = """
+        SELECT DISTINCT ts_code
+        FROM fina_indicator
+        ORDER BY ts_code
+    """
+
     result = await db_manager.execute_raw_sql(sql)
     rows = result.fetchall()
     return [row[0] for row in rows]
@@ -265,11 +295,11 @@ async def _run_fundamental_preprocess(
     import pandas as pd
     from ..preprocessing.fundamental.valuation import ValuationPercentile, PEGCalculator
 
-    # 获取股票列表
+    # 获取股票列表（从 daily_basic 表获取，确保有基本面数据）
     if not symbols:
-        console.print("[cyan]获取股票列表...[/cyan]")
-        symbols = await _get_all_stock_symbols(db_manager)
-        console.print(f"共 {len(symbols)} 只股票")
+        console.print("[cyan]获取有基本面数据的股票列表...[/cyan]")
+        symbols = await _get_all_stock_symbols_from_daily_basic(db_manager)
+        console.print(f"共 {len(symbols)} 只股票有基本面数据")
 
     # 初始化处理器和存储
     valuation = ValuationPercentile()
@@ -384,12 +414,12 @@ async def _run_quarterly_fundamental_preprocess(
     import json
     from ..preprocessing.fundamental.quality import FScoreCalculator
     from ..preprocessing.storage import QuarterlyFundamentalDataStorage
-    
-    # 获取股票列表
+
+    # 获取股票列表（从 fina_indicator 表获取，确保有财务数据）
     if not symbols:
-        console.print("[cyan]获取股票列表...[/cyan]")
-        symbols = await _get_all_stock_symbols(db_manager)
-        console.print(f"共 {len(symbols)} 只股票")
+        console.print("[cyan]获取有财务数据的股票列表...[/cyan]")
+        symbols = await _get_all_stock_symbols_from_fina_indicator(db_manager)
+        console.print(f"共 {len(symbols)} 只股票有财务数据")
     
     # 加载行业配置
     import os

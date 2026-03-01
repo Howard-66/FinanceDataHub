@@ -55,7 +55,8 @@
       "Bash(ls:*)",
       "Bash(fdh-cli preprocess run:*)",
       "Bash(findstr:*)",
-      "Bash(uv run ruff format:*)"
+      "Bash(uv run ruff format:*)",
+      "Bash(uv run python3 -c \":*)"
     ],
     "deny": [],
     "ask": []
