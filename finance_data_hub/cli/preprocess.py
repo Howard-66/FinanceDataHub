@@ -57,8 +57,13 @@ DEFAULT_INDICATORS = [
 DEFAULT_FREQS = ["daily", "weekly", "monthly"]
 
 # 增量预处理配置
-INDICATOR_MAX_WINDOW = 60  # 最大指标窗口(MA_50需要50天)
-LOOKBACK_BUFFER = 20  # 额外缓冲天数
+# 指标计算所需的最小记录数（按频率）
+# 使用记录数而非天数，更精确地控制历史数据需求
+RESAMPLE_MIN_RECORDS = {
+    "daily": 80,      # MA50需要50条，加buffer
+    "weekly": 70,     # MA50需要50条，加buffer（约需350天日线数据）
+    "monthly": 30,    # MA20需要20条，加buffer（约需600天日线数据）
+}
 
 # Phase 2: 并发控制配置
 DEFAULT_MAX_CONCURRENT_BATCHES = 4  # 默认并发批次数（I/O并发）
@@ -419,6 +424,74 @@ async def _get_stock_data(
     return pd.DataFrame(rows, columns=columns)
 
 
+async def _get_stock_data_by_records(
+    db_manager: DatabaseManager,
+    symbols: List[str],
+    records_per_symbol: int,
+    end_date: Optional[str] = None,
+):
+    """
+    按记录数获取股票日线数据
+
+    对每个股票获取最近的 N 条记录，比按日期范围更精确。
+    使用窗口函数 ROW_NUMBER() 实现。
+
+    Args:
+        db_manager: 数据库管理器
+        symbols: 股票代码列表
+        records_per_symbol: 每个股票获取的记录数
+        end_date: 结束日期（可选，用于增量处理时限制最新日期）
+
+    Returns:
+        DataFrame with columns: time, symbol, open, high, low, close, volume, amount, adj_factor
+    """
+    import pandas as pd
+
+    if not symbols:
+        return pd.DataFrame()
+
+    # 构建日期条件
+    date_condition = ""
+    params = {"symbols": symbols, "limit": records_per_symbol}
+
+    if end_date:
+        date_condition = "AND d.time <= :end_date"
+        params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
+
+    # 使用窗口函数获取每个symbol最近的N条记录
+    sql = f"""
+        SELECT time, symbol, open, high, low, close, volume, amount, adj_factor
+        FROM (
+            SELECT
+                d.time,
+                d.symbol,
+                d.open,
+                d.high,
+                d.low,
+                d.close,
+                d.volume,
+                d.amount,
+                COALESCE(a.adj_factor, 1.0) as adj_factor,
+                ROW_NUMBER() OVER (PARTITION BY d.symbol ORDER BY d.time DESC) as rn
+            FROM symbol_daily d
+            LEFT JOIN adj_factor a ON d.symbol = a.symbol AND d.time = a.time
+            WHERE d.symbol = ANY(:symbols)
+            {date_condition}
+        ) t
+        WHERE rn <= :limit
+        ORDER BY symbol, time
+    """
+
+    result = await db_manager.execute_raw_sql(sql, params)
+    rows = result.fetchall()
+
+    if not rows:
+        return pd.DataFrame()
+
+    columns = ["time", "symbol", "open", "high", "low", "close", "volume", "amount", "adj_factor"]
+    return pd.DataFrame(rows, columns=columns)
+
+
 async def _run_technical_preprocess(
     db_manager: DatabaseManager,
     symbols: Optional[List[str]] = None,
@@ -491,23 +564,41 @@ async def _run_technical_preprocess(
         batch_symbols: List[str],
         is_full: bool,
         batch_start_date: Optional[str] = None,
-        task=None
+        task=None,
+        records_limit: Optional[int] = None,
     ) -> tuple[int, int]:
         """
         处理单个批次（支持并发控制）
+
+        Args:
+            batch_symbols: 股票代码列表
+            is_full: 是否全量处理
+            batch_start_date: 开始日期（全量模式使用）
+            task: 进度任务
+            records_limit: 每个股票获取的记录数（增量模式使用，优先级高于batch_start_date）
 
         Returns:
             (processed_symbols, processed_records)
         """
         async with semaphore:
             # 获取数据
-            df = await _get_stock_data(
-                db_manager,
-                batch_symbols,
-                batch_start_date,
-                end_date,
-                include_adj_factor=True
-            )
+            if records_limit is not None:
+                # 增量模式：按记录数获取，更精确
+                df = await _get_stock_data_by_records(
+                    db_manager,
+                    batch_symbols,
+                    records_per_symbol=records_limit,
+                    end_date=end_date,
+                )
+            else:
+                # 全量模式：按日期范围获取
+                df = await _get_stock_data(
+                    db_manager,
+                    batch_symbols,
+                    batch_start_date,
+                    end_date,
+                    include_adj_factor=True
+                )
 
             if df.empty:
                 if task is not None:
@@ -587,17 +678,18 @@ async def _run_technical_preprocess(
 
         # 处理增量组（并发执行）
         if incr_symbols:
-            # 计算增量所需的回溯天数
-            lookback_days = INDICATOR_MAX_WINDOW + LOOKBACK_BUFFER
+            # 根据目标频率计算所需的最小记录数
+            # 使用记录数而非天数，更精确地控制历史数据需求
+            max_records_needed = max(
+                RESAMPLE_MIN_RECORDS.get(freq.lower(), 80)
+                for freq in freqs
+            )
+            # 转换为日线记录数（日线→周线约1:5，日线→月线约1:22）
+            # 为保险起见，多取一些记录
+            records_per_symbol = max_records_needed * 22  # 足够覆盖月线所需的日线数据
 
-            # 计算增量数据的起始日期
-            if start_date:
-                incr_start = min(
-                    pd.to_datetime(start_date),
-                    pd.Timestamp.now() - pd.Timedelta(days=lookback_days * 1.5)
-                ).strftime('%Y-%m-%d')
-            else:
-                incr_start = (pd.Timestamp.now() - pd.Timedelta(days=lookback_days * 1.5)).strftime('%Y-%m-%d')
+            if verbose:
+                console.print(f"  [dim]增量数据: 每只股票取最近 {records_per_symbol} 条日线记录[/dim]")
 
             task_incr = progress.add_task(
                 f"[cyan]增量处理 (并发{max_concurrent}, 进程{num_workers})...",
@@ -610,7 +702,7 @@ async def _run_technical_preprocess(
                 batch_symbols = incr_symbols[i:i+batch_size]
                 if verbose:
                     progress.console.print(f"  [增量]批次 {i//batch_size + 1}: {len(batch_symbols)} 只股票")
-                batch_tasks.append(process_batch(batch_symbols, False, incr_start, task_incr))
+                batch_tasks.append(process_batch(batch_symbols, False, None, task_incr, records_per_symbol))
 
             # 并发执行所有批次
             results = await asyncio.gather(*batch_tasks, return_exceptions=True)
