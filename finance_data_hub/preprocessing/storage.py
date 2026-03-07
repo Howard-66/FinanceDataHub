@@ -854,3 +854,447 @@ class QuarterlyFundamentalDataStorage:
         except Exception as e:
             logger.error(f"Quarterly query failed: {e}")
             return pd.DataFrame()
+
+
+class IndustryValuationStorage:
+    """
+    行业差异化估值指标存储管理器
+
+    管理根据行业配置自动选择核心估值指标的预处理数据存储。
+    """
+
+    TABLE_NAME = "processed_industry_valuation"
+
+    # 行业信息列
+    INDUSTRY_COLUMNS = [
+        "l1_code", "l1_name", "l2_code", "l2_name", "l3_code", "l3_name"
+    ]
+
+    # 核心指标列
+    CORE_INDICATOR_COLUMNS = [
+        "core_indicator_type", "core_indicator_value",
+        "core_indicator_pct_1250d", "core_indicator_industry_pct"
+    ]
+
+    # 参考指标列
+    REF_INDICATOR_COLUMNS = [
+        "ref_indicator_type", "ref_indicator_value",
+        "ref_indicator_pct_1250d", "ref_indicator_industry_pct"
+    ]
+
+    # 原始估值指标列
+    VALUATION_COLUMNS = [
+        "pe_ttm", "pb", "ps_ttm", "peg", "dv_ttm"
+    ]
+
+    # 豁免标记列
+    EXEMPTION_COLUMNS = [
+        "is_exempted", "exemption_reason"
+    ]
+
+    def __init__(self, db_manager: Optional["DatabaseManager"] = None):
+        self.db_manager = db_manager
+
+    async def upsert(
+        self,
+        df: pd.DataFrame,
+        batch_size: int = 5000
+    ) -> int:
+        """
+        批量插入/更新行业差异化估值数据
+
+        Args:
+            df: 包含行业差异化估值指标的 DataFrame
+                必须包含: time, symbol
+            batch_size: 批处理大小
+
+        Returns:
+            影响的记录数
+        """
+        if self.db_manager is None:
+            logger.warning("No db_manager configured")
+            return 0
+
+        if df.empty:
+            return 0
+
+        # 准备数据，过滤多余列
+        allowed_columns = (
+            ["time", "symbol"] +
+            self.INDUSTRY_COLUMNS +
+            self.CORE_INDICATOR_COLUMNS +
+            self.REF_INDICATOR_COLUMNS +
+            self.VALUATION_COLUMNS +
+            self.EXEMPTION_COLUMNS
+        )
+        available_columns = [c for c in df.columns if c in allowed_columns]
+
+        if len(available_columns) <= 2:  # 只有 time 和 symbol
+            logger.warning("No valid industry valuation columns found in DataFrame")
+            return 0
+
+        result = df[available_columns].copy()
+        result["processed_at"] = datetime.now()
+
+        # 转换日期列
+        if "time" in result.columns:
+            result["time"] = _series_to_pydatetime(pd.to_datetime(result["time"]))
+
+        # 处理布尔列
+        if "is_exempted" in result.columns:
+            result["is_exempted"] = result["is_exempted"].fillna(False).astype(bool)
+
+        # 获取列名
+        columns = list(result.columns)
+
+        # 构建 SQL
+        cols_str = ", ".join(columns)
+        placeholders = ", ".join([f"${i+1}" for i in range(len(columns))])
+
+        # 构建更新语句（排除主键）
+        update_cols = [c for c in columns if c not in ["symbol", "time"]]
+        update_str = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
+
+        sql = f"""
+            INSERT INTO {self.TABLE_NAME} ({cols_str})
+            VALUES ({placeholders})
+            ON CONFLICT (symbol, time)
+            DO UPDATE SET {update_str}
+        """
+
+        # 使用向量化方法转换数据
+        values_list = ProcessedDataStorage._prepare_values_list(result, columns)
+
+        if not values_list:
+            return 0
+
+        total = 0
+        try:
+            engine = self.db_manager.get_engine()
+            async with engine.begin() as conn:
+                raw_conn = await conn.get_raw_connection()
+                asyncpg_conn = raw_conn.driver_connection
+
+                for i in range(0, len(values_list), batch_size):
+                    batch = values_list[i:i+batch_size]
+                    await asyncpg_conn.executemany(sql, batch)
+                    total += len(batch)
+
+            logger.info(f"Upserted {total} records to {self.TABLE_NAME}")
+            return total
+        except Exception as e:
+            logger.error(f"Industry valuation upsert failed: {e}")
+            raise
+
+    async def query(
+        self,
+        symbols: Optional[List[str]] = None,
+        l2_names: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        include_exempted: bool = True
+    ) -> pd.DataFrame:
+        """
+        查询行业差异化估值数据
+
+        Args:
+            symbols: 股票代码列表
+            l2_names: 二级行业名称列表
+            start_date: 开始日期
+            end_date: 结束日期
+            include_exempted: 是否包含豁免数据
+
+        Returns:
+            行业差异化估值 DataFrame
+        """
+        if self.db_manager is None:
+            return pd.DataFrame()
+
+        conditions = []
+        params = {}
+
+        if symbols:
+            placeholders = ", ".join([f":sym_{i}" for i in range(len(symbols))])
+            conditions.append(f"symbol IN ({placeholders})")
+            for i, sym in enumerate(symbols):
+                params[f"sym_{i}"] = sym
+
+        if l2_names:
+            placeholders = ", ".join([f":l2_{i}" for i in range(len(l2_names))])
+            conditions.append(f"l2_name IN ({placeholders})")
+            for i, l2 in enumerate(l2_names):
+                params[f"l2_{i}"] = l2
+
+        if start_date:
+            if isinstance(start_date, str):
+                start_date = pd.to_datetime(start_date).to_pydatetime()
+            conditions.append("time >= :start_date")
+            params["start_date"] = start_date
+
+        if end_date:
+            if isinstance(end_date, str):
+                end_date = pd.to_datetime(end_date).to_pydatetime()
+            conditions.append("time <= :end_date")
+            params["end_date"] = end_date
+
+        if not include_exempted:
+            conditions.append("is_exempted = FALSE")
+
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        sql = f"""
+            SELECT * FROM {self.TABLE_NAME}
+            {where_clause}
+            ORDER BY symbol, time
+        """
+
+        try:
+            result = await self.db_manager.execute_raw_sql(sql, params)
+            rows = result.fetchall()
+
+            if not rows:
+                return pd.DataFrame()
+
+            columns = result.keys()
+            return pd.DataFrame(rows, columns=columns)
+        except Exception as e:
+            logger.error(f"Industry valuation query failed: {e}")
+            return pd.DataFrame()
+
+    async def get_latest_date(self) -> Optional[datetime]:
+        """获取最新数据日期"""
+        if self.db_manager is None:
+            return None
+
+        sql = f"SELECT MAX(time) FROM {self.TABLE_NAME}"
+        try:
+            result = await self.db_manager.execute_raw_sql(sql)
+            row = result.fetchone()
+            return row[0] if row and row[0] else None
+        except Exception as e:
+            logger.error(f"Get latest date failed: {e}")
+            return None
+
+
+class IndustryValuationStorage:
+    """
+    行业差异化估值指标存储管理器
+
+    管理根据行业配置自动选择核心估值指标的预处理数据存储。
+    """
+
+    TABLE_NAME = "processed_industry_valuation"
+
+    # 行业信息列
+    INDUSTRY_COLUMNS = [
+        "l1_code", "l1_name", "l2_code", "l2_name", "l3_code", "l3_name"
+    ]
+
+    # 核心指标列
+    CORE_INDICATOR_COLUMNS = [
+        "core_indicator_type", "core_indicator_value",
+        "core_indicator_pct_1250d", "core_indicator_industry_pct"
+    ]
+
+    # 参考指标列
+    REF_INDICATOR_COLUMNS = [
+        "ref_indicator_type", "ref_indicator_value",
+        "ref_indicator_pct_1250d", "ref_indicator_industry_pct"
+    ]
+
+    # 原始估值指标列
+    VALUATION_COLUMNS = [
+        "pe_ttm", "pb", "ps_ttm", "peg", "dv_ttm"
+    ]
+
+    # 豁免标记列
+    EXEMPTION_COLUMNS = [
+        "is_exempted", "exemption_reason"
+    ]
+
+    def __init__(self, db_manager: Optional["DatabaseManager"] = None):
+        self.db_manager = db_manager
+
+    async def upsert(
+        self,
+        df: pd.DataFrame,
+        batch_size: int = 5000
+    ) -> int:
+        """
+        批量插入/更新行业差异化估值数据
+
+        Args:
+            df: 包含行业差异化估值指标的 DataFrame
+                必须包含: time, symbol
+            batch_size: 批处理大小
+
+        Returns:
+            影响的记录数
+        """
+        if self.db_manager is None:
+            logger.warning("No db_manager configured")
+            return 0
+
+        if df.empty:
+            return 0
+
+        # 准备数据，过滤多余列
+        allowed_columns = (
+            ["time", "symbol"] +
+            self.INDUSTRY_COLUMNS +
+            self.CORE_INDICATOR_COLUMNS +
+            self.REF_INDICATOR_COLUMNS +
+            self.VALUATION_COLUMNS +
+            self.EXEMPTION_COLUMNS
+        )
+        available_columns = [c for c in df.columns if c in allowed_columns]
+
+        if len(available_columns) <= 2:  # 只有 time 和 symbol
+            logger.warning("No valid industry valuation columns found in DataFrame")
+            return 0
+
+        result = df[available_columns].copy()
+        result["processed_at"] = datetime.now()
+
+        # 转换日期列
+        if "time" in result.columns:
+            result["time"] = _series_to_pydatetime(pd.to_datetime(result["time"]))
+
+        # 处理布尔列
+        if "is_exempted" in result.columns:
+            result["is_exempted"] = result["is_exempted"].fillna(False).astype(bool)
+
+        # 获取列名
+        columns = list(result.columns)
+
+        # 构建 SQL
+        cols_str = ", ".join(columns)
+        placeholders = ", ".join([f"${i+1}" for i in range(len(columns))])
+
+        # 构建更新语句（排除主键）
+        update_cols = [c for c in columns if c not in ["symbol", "time"]]
+        update_str = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
+
+        sql = f"""
+            INSERT INTO {self.TABLE_NAME} ({cols_str})
+            VALUES ({placeholders})
+            ON CONFLICT (symbol, time)
+            DO UPDATE SET {update_str}
+        """
+
+        # 使用向量化方法转换数据
+        values_list = ProcessedDataStorage._prepare_values_list(result, columns)
+
+        if not values_list:
+            return 0
+
+        total = 0
+        try:
+            engine = self.db_manager.get_engine()
+            async with engine.begin() as conn:
+                raw_conn = await conn.get_raw_connection()
+                asyncpg_conn = raw_conn.driver_connection
+
+                for i in range(0, len(values_list), batch_size):
+                    batch = values_list[i:i+batch_size]
+                    await asyncpg_conn.executemany(sql, batch)
+                    total += len(batch)
+
+            logger.info(f"Upserted {total} records to {self.TABLE_NAME}")
+            return total
+        except Exception as e:
+            logger.error(f"Industry valuation upsert failed: {e}")
+            raise
+
+    async def query(
+        self,
+        symbols: Optional[List[str]] = None,
+        l2_names: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        include_exempted: bool = True
+    ) -> pd.DataFrame:
+        """
+        查询行业差异化估值数据
+
+        Args:
+            symbols: 股票代码列表
+            l2_names: 二级行业名称列表
+            start_date: 开始日期
+            end_date: 结束日期
+            include_exempted: 是否包含豁免数据
+
+        Returns:
+            行业差异化估值 DataFrame
+        """
+        if self.db_manager is None:
+            return pd.DataFrame()
+
+        conditions = []
+        params = {}
+
+        if symbols:
+            placeholders = ", ".join([f":sym_{i}" for i in range(len(symbols))])
+            conditions.append(f"symbol IN ({placeholders})")
+            for i, sym in enumerate(symbols):
+                params[f"sym_{i}"] = sym
+
+        if l2_names:
+            placeholders = ", ".join([f":l2_{i}" for i in range(len(l2_names))])
+            conditions.append(f"l2_name IN ({placeholders})")
+            for i, l2 in enumerate(l2_names):
+                params[f"l2_{i}"] = l2
+
+        if start_date:
+            if isinstance(start_date, str):
+                start_date = pd.to_datetime(start_date).to_pydatetime()
+            conditions.append("time >= :start_date")
+            params["start_date"] = start_date
+
+        if end_date:
+            if isinstance(end_date, str):
+                end_date = pd.to_datetime(end_date).to_pydatetime()
+            conditions.append("time <= :end_date")
+            params["end_date"] = end_date
+
+        if not include_exempted:
+            conditions.append("is_exempted = FALSE")
+
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        sql = f"""
+            SELECT * FROM {self.TABLE_NAME}
+            {where_clause}
+            ORDER BY symbol, time
+        """
+
+        try:
+            result = await self.db_manager.execute_raw_sql(sql, params)
+            rows = result.fetchall()
+
+            if not rows:
+                return pd.DataFrame()
+
+            columns = result.keys()
+            return pd.DataFrame(rows, columns=columns)
+        except Exception as e:
+            logger.error(f"Industry valuation query failed: {e}")
+            return pd.DataFrame()
+
+    async def get_latest_date(self) -> Optional[datetime]:
+        """获取最新数据日期"""
+        if self.db_manager is None:
+            return None
+
+        sql = f"SELECT MAX(time) FROM {self.TABLE_NAME}"
+        try:
+            result = await self.db_manager.execute_raw_sql(sql)
+            row = result.fetchone()
+            return row[0] if row and row[0] else None
+        except Exception as e:
+            logger.error(f"Get latest date failed: {e}")
+            return None

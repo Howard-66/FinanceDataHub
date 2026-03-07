@@ -379,3 +379,75 @@ CREATE INDEX IF NOT EXISTS idx_preprocess_log_status
     ON preprocess_execution_log (status);
 
 COMMENT ON TABLE preprocess_execution_log IS '预处理任务执行日志';
+
+
+-- =====================================================
+-- 8. 行业差异化估值指标表
+-- =====================================================
+CREATE TABLE IF NOT EXISTS processed_industry_valuation (
+    time TIMESTAMPTZ NOT NULL,              -- 交易日期
+    symbol VARCHAR(20) NOT NULL,            -- 股票代码
+
+    -- 行业信息（来自 sw_industry_member）
+    l1_code VARCHAR(20),                    -- 一级行业代码
+    l1_name VARCHAR(100),                   -- 一级行业名称
+    l2_code VARCHAR(20),                    -- 二级行业代码（关联 industry_config.json 的 key）
+    l2_name VARCHAR(100),                   -- 二级行业名称
+    l3_code VARCHAR(20),                    -- 三级行业代码
+    l3_name VARCHAR(100),                   -- 三级行业名称
+
+    -- 核心估值指标（根据行业配置自动选择 PE/PB/PS/PEG）
+    core_indicator_type VARCHAR(10) NOT NULL,   -- 核心指标类型 (PE/PB/PS/PEG)
+    core_indicator_value DECIMAL(20,6),         -- 核心指标值，无效时为 NULL
+    core_indicator_pct_1250d DECIMAL(8,4),      -- 核心指标自身历史5年分位 (0-100)
+    core_indicator_industry_pct DECIMAL(8,4),   -- 核心指标行业内相对分位 (0-100)
+
+    -- 参考估值指标
+    ref_indicator_type VARCHAR(10),             -- 参考指标类型 (PE/PB/PS/PEG)
+    ref_indicator_value DECIMAL(20,6),          -- 参考指标值
+    ref_indicator_pct_1250d DECIMAL(8,4),       -- 参考指标自身历史分位
+    ref_indicator_industry_pct DECIMAL(8,4),    -- 参考指标行业内分位
+
+    -- 其他常用估值指标（便于对比）
+    pe_ttm DECIMAL(20,6),                   -- PE_TTM（原始值）
+    pb DECIMAL(20,6),                       -- PB
+    ps_ttm DECIMAL(20,6),                   -- PS_TTM
+    peg DECIMAL(20,6),                      -- PEG
+    dv_ttm DECIMAL(20,6),                   -- 股息率
+
+    -- 豁免标记
+    is_exempted BOOLEAN DEFAULT FALSE,      -- 是否有指标豁免
+    exemption_reason VARCHAR(100),          -- 豁免原因 (NO_INDUSTRY_CLASSIFICATION/INVALID_CORE_INDICATOR)
+
+    -- 元数据
+    processed_at TIMESTAMPTZ DEFAULT NOW(),
+
+    PRIMARY KEY (symbol, time)
+);
+
+-- 转换为超表
+SELECT create_hypertable('processed_industry_valuation', 'time',
+    if_not_exists => TRUE,
+    create_default_indexes => FALSE,
+    chunk_time_interval => INTERVAL '1 month'
+);
+
+-- 创建索引
+CREATE INDEX IF NOT EXISTS idx_industry_valuation_symbol
+    ON processed_industry_valuation (symbol);
+CREATE INDEX IF NOT EXISTS idx_industry_valuation_time
+    ON processed_industry_valuation (time DESC);
+CREATE INDEX IF NOT EXISTS idx_industry_valuation_l2
+    ON processed_industry_valuation (l2_name, time DESC);
+CREATE INDEX IF NOT EXISTS idx_industry_valuation_exempted
+    ON processed_industry_valuation (is_exempted, time DESC);
+
+-- 表和列注释
+COMMENT ON TABLE processed_industry_valuation IS '行业差异化估值指标表，根据行业配置自动选择核心估值指标';
+COMMENT ON COLUMN processed_industry_valuation.l2_name IS '二级行业名称，关联 industry_config.json 的配置';
+COMMENT ON COLUMN processed_industry_valuation.core_indicator_type IS '核心估值指标类型，银行用PB、成长股用PEG等';
+COMMENT ON COLUMN processed_industry_valuation.core_indicator_value IS '核心指标值，无效时为NULL（如亏损企业PE为负）';
+COMMENT ON COLUMN processed_industry_valuation.core_indicator_pct_1250d IS '核心指标在过去5年的自身历史分位，0-100';
+COMMENT ON COLUMN processed_industry_valuation.core_indicator_industry_pct IS '核心指标在同行业内的截面分位，0-100';
+COMMENT ON COLUMN processed_industry_valuation.is_exempted IS '是否有指标豁免，如无行业分类或核心指标无效';
+COMMENT ON COLUMN processed_industry_valuation.exemption_reason IS '豁免原因：NO_INDUSTRY_CLASSIFICATION/INVALID_CORE_INDICATOR';

@@ -1154,6 +1154,165 @@ async def _get_table_stats(db_manager: DatabaseManager, table_name: str) -> dict
     }
 
 
+async def _run_industry_valuation_preprocess(
+    db_manager: DatabaseManager,
+    symbols: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    batch_size: int = 100,
+    verbose: bool = False,
+    force: bool = False,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT_BATCHES,
+) -> dict:
+    """执行行业差异化估值预处理（支持并发优化）
+
+    根据行业配置自动选择核心估值指标（PE/PB/PS/PEG），
+    计算自身历史分位和行业内相对分位。
+
+    并发优化：
+    1. I/O 并发：使用 asyncio.Semaphore 控制批次并发度
+    2. 批量查询：一次查询多只股票的数据，减少数据库往返
+
+    数据来源:
+    - processed_valuation_pct: 估值数据
+    - sw_industry_member: 行业分类
+    - industry_config.json: 行业配置
+    """
+    import pandas as pd
+    from ..preprocessing.fundamental.industry_valuation import IndustryValuationCalculator
+    from ..preprocessing.storage import IndustryValuationStorage, FundamentalDataStorage
+
+    # 1. 获取股票列表
+    if not symbols:
+        console.print("[cyan]获取股票列表...[/cyan]")
+        symbols = await _get_all_stock_symbols_from_daily_basic(db_manager)
+        console.print(f"共 {len(symbols)} 只股票")
+
+    # 2. 确定日期范围
+    if not start_date:
+        result = await db_manager.execute_raw_sql(
+            "SELECT MIN(time) FROM processed_valuation_pct"
+        )
+        row = result.fetchone()
+        if row and row[0]:
+            start_date = row[0].strftime("%Y-%m-%d")
+        else:
+            start_date = (pd.Timestamp.now() - pd.DateOffset(years=5)).strftime("%Y-%m-%d")
+
+    if not end_date:
+        result = await db_manager.execute_raw_sql(
+            "SELECT MAX(time) FROM processed_valuation_pct"
+        )
+        row = result.fetchone()
+        if row and row[0]:
+            end_date = row[0].strftime("%Y-%m-%d")
+        else:
+            end_date = pd.Timestamp.now().strftime("%Y-%m-%d")
+
+    console.print(f"日期范围: {start_date} ~ {end_date}")
+
+    # 3. 预查询行业分类数据（一次性查询所有股票的行业分类，减少数据库往返）
+    console.print("[cyan]预查询行业分类数据...[/cyan]")
+    all_industry_sql = """
+        SELECT ts_code, l1_code, l1_name, l2_code, l2_name, l3_code, l3_name
+        FROM sw_industry_member
+        WHERE is_new = 'Y'
+    """
+    result = await db_manager.execute_raw_sql(all_industry_sql)
+    industry_rows = result.fetchall()
+    all_industry_df = pd.DataFrame(industry_rows, columns=[
+        "ts_code", "l1_code", "l1_name", "l2_code", "l2_name", "l3_code", "l3_name"
+    ])
+    console.print(f"  行业分类: {len(all_industry_df)} 条记录")
+
+    # 4. 初始化
+    calculator = IndustryValuationCalculator()
+    storage = IndustryValuationStorage(db_manager)
+    valuation_storage = FundamentalDataStorage(db_manager)
+
+    total_symbols = 0
+    total_records = 0
+
+    # 创建信号量控制并发
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def process_batch(batch_symbols: List[str]) -> tuple[int, int]:
+        """处理单个批次"""
+        async with semaphore:
+            try:
+                # 查询估值数据
+                valuation_df = await valuation_storage.query(
+                    symbols=batch_symbols,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+
+                if valuation_df.empty:
+                    return 0, 0
+
+                # 从预查询的行业数据中筛选
+                industry_df = all_industry_df[all_industry_df["ts_code"].isin(batch_symbols)]
+
+                if industry_df.empty:
+                    return 0, 0
+
+                # 计算行业差异化估值
+                calc_result = calculator.calculate(
+                    valuation_df=valuation_df,
+                    industry_members_df=industry_df
+                )
+
+                if calc_result.empty:
+                    return 0, 0
+
+                # 写入数据库
+                count = await storage.upsert(calc_result, batch_size=1000)
+                return calc_result["symbol"].nunique(), count
+
+            except Exception as e:
+                if verbose:
+                    console.print(f"[red]批次处理失败: {e}[/red]")
+                return 0, 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(
+            f"[cyan]预处理行业差异化估值 (并发{max_concurrent})...",
+            total=len(symbols)
+        )
+
+        # 创建所有批次的任务
+        batch_tasks = []
+        for i in range(0, len(symbols), batch_size):
+            batch_symbols = symbols[i:i+batch_size]
+            batch_tasks.append(process_batch(batch_symbols))
+
+        # 并发执行所有批次
+        results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+        # 汇总结果
+        for result in results:
+            if isinstance(result, Exception):
+                if verbose:
+                    console.print(f"[red]批次异常: {result}[/red]")
+                continue
+            symbols_count, records_count = result
+            total_symbols += symbols_count
+            total_records += records_count
+            progress.advance(task, batch_size)
+
+    return {
+        "symbols_processed": total_symbols,
+        "records_processed": total_records,
+    }
+
+
 @preprocess_app.command("run")
 def run_preprocess(
     all_data: bool = typer.Option(
@@ -1166,7 +1325,7 @@ def run_preprocess(
         None,
         "--category",
         "-c",
-        help="预处理类别 (technical, fundamental, quarterly_fundamental, all)"
+        help="预处理类别 (technical, fundamental, quarterly_fundamental, industry_valuation, all)"
     ),
     symbols: Optional[str] = typer.Option(
         None,
@@ -1342,7 +1501,24 @@ def run_preprocess(
                 console.print(f"\n[green]季度F-Score处理完成[/green]")
                 console.print(f"  处理股票: {result['symbols_processed']}")
                 console.print(f"  处理记录: {result['records_processed']}\n")
-            
+
+            if category in ["industry_valuation", "all"]:
+                console.print("[bold cyan]== 行业差异化估值预处理 ==[/bold cyan]\n")
+                result = await _run_industry_valuation_preprocess(
+                    db_manager,
+                    symbols=symbol_list,
+                    start_date=start_date,
+                    end_date=end_date,
+                    batch_size=batch_size,
+                    verbose=verbose,
+                    force=force,
+                    max_concurrent=max_concurrent,
+                )
+                results["industry_valuation"] = result
+                console.print(f"\n[green]行业差异化估值处理完成[/green]")
+                console.print(f"  处理股票: {result['symbols_processed']}")
+                console.print(f"  处理记录: {result['records_processed']}\n")
+
             # 汇总
             total_records = sum(r.get("records_processed", 0) for r in results.values())
             console.print(Panel(

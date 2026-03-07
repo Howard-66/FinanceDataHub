@@ -50,8 +50,8 @@ from typing import Optional, List, Dict, Any
 import pandas as pd
 import numpy as np
 from loguru import logger
-import json
-from pathlib import Path
+
+from .industry_config import IndustryConfigLoader, get_industry_config_loader
 
 
 class FScoreCalculator:
@@ -89,27 +89,16 @@ class FScoreCalculator:
     def __init__(self, industry_config_path: Optional[str] = None):
         """
         初始化 F-Score 计算器
-        
+
         Args:
             industry_config_path: 行业配置文件路径,默认使用项目根目录下的 industry_config.json
         """
-        self.industry_config = {}
-        if industry_config_path:
-            self._load_industry_config(industry_config_path)
-    
-    def _load_industry_config(self, config_path: str):
-        """加载行业配置"""
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                self.industry_config = json.load(f)
-            logger.info(f"Loaded industry config with {len(self.industry_config)} industries")
-        except Exception as e:
-            logger.warning(f"Failed to load industry config: {e}")
-    
+        # 使用集中的行业配置加载器
+        self._config_loader = get_industry_config_loader(industry_config_path)
+
     def get_exemptions_for_industry(self, industry_name: str) -> List[str]:
         """获取行业的豁免规则"""
-        config = self.industry_config.get(industry_name, {})
-        return config.get("exemptions", [])
+        return self._config_loader.get_exemptions(industry_name)
     
     @property
     def columns(self) -> List[str]:

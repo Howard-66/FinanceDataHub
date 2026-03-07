@@ -1794,6 +1794,87 @@ class FinanceDataHub:
             end_date=end_date
         )
 
+    # ============================================================================
+    # 行业差异化估值查询
+    # ============================================================================
+
+    def get_industry_valuation(
+        self,
+        symbols: Optional[List[str]] = None,
+        l2_names: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        include_exempted: bool = True
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取行业差异化估值数据（同步方法）
+
+        从 processed_industry_valuation 表查询，根据行业配置自动选择核心估值指标。
+
+        Args:
+            symbols: 股票代码列表，None表示不限制
+            l2_names: 二级行业名称列表，用于筛选特定行业
+            start_date: 开始日期（YYYY-MM-DD），None表示从最早开始
+            end_date: 结束日期（YYYY-MM-DD），None表示到最新
+            include_exempted: 是否包含豁免数据（无行业分类或核心指标无效）
+
+        Returns:
+            Optional[pd.DataFrame]: 行业差异化估值数据
+
+        数据说明:
+            - core_indicator_type: 核心估值指标类型（PE/PB/PS/PEG），根据行业配置自动选择
+            - core_indicator_value: 核心指标值
+            - core_indicator_pct_1250d: 核心指标自身历史5年分位（0-100）
+            - core_indicator_industry_pct: 核心指标行业内相对分位（0-100）
+            - is_exempted: 是否豁免（无行业分类或核心指标无效）
+
+        Example:
+            >>> fdh = FinanceDataHub(settings)
+            >>> # 获取所有股票的行业差异化估值
+            >>> data = fdh.get_industry_valuation(start_date='2024-01-01', end_date='2024-12-31')
+            >>> # 筛选低估股票（核心指标历史分位<20%）
+            >>> undervalued = data[data['core_indicator_pct_1250d'] < 20]
+            >>> # 按行业分组查看
+            >>> for l2_name, group in undervalued.groupby('l2_name'):
+            ...     print(f"{l2_name}: 核心指标={group.iloc[0]['core_indicator_type']}")
+        """
+        return asyncio.run(self.get_industry_valuation_async(
+            symbols, l2_names, start_date, end_date, include_exempted
+        ))
+
+    async def get_industry_valuation_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        l2_names: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        include_exempted: bool = True
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取行业差异化估值数据（异步方法）
+
+        Args:
+            symbols: 股票代码列表，None表示不限制
+            l2_names: 二级行业名称列表
+            start_date: 开始日期，None表示从最早开始
+            end_date: 结束日期，None表示到最新
+            include_exempted: 是否包含豁免数据
+
+        Returns:
+            Optional[pd.DataFrame]: 行业差异化估值数据
+        """
+        if not hasattr(self, 'industry_valuation_storage'):
+            from finance_data_hub.preprocessing.storage import IndustryValuationStorage
+            self.industry_valuation_storage = IndustryValuationStorage(self.db_manager)
+
+        return await self.industry_valuation_storage.query(
+            symbols=symbols,
+            l2_names=l2_names,
+            start_date=start_date,
+            end_date=end_date,
+            include_exempted=include_exempted
+        )
+
     def get_fundamental_combined(
         self,
         symbols: Optional[List[str]] = None,

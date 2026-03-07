@@ -223,6 +223,8 @@ class TaskExecutor:
             return self._preprocess_fundamental(params)
         elif category == "quarterly_fundamental":
             return self._preprocess_quarterly_fundamental(params)
+        elif category == "industry_valuation":
+            return self._preprocess_industry_valuation(params)
         else:
             raise ValueError(f"Unknown preprocess category: {category}")
 
@@ -300,6 +302,33 @@ class TaskExecutor:
         output = result.stdout.strip() if result.stdout else ""
         if output:
             logger.info(f"Quarterly fundamental preprocess output:\n{output}")
+
+        records_processed = self._parse_preprocess_output(output)
+
+        return {
+            "records_processed": records_processed,
+            "symbols_count": 0
+        }
+
+    def _preprocess_industry_valuation(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """执行行业差异化估值预处理（根据行业自动选择核心估值指标）"""
+        cmd = self._build_preprocess_command("industry_valuation", params)
+        logger.info(f"Executing industry valuation preprocess command: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(self.project_root),
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr or result.stdout
+            raise RuntimeError(f"Industry valuation preprocess failed: {error_msg}")
+
+        output = result.stdout.strip() if result.stdout else ""
+        if output:
+            logger.info(f"Industry valuation preprocess output:\n{output}")
 
         records_processed = self._parse_preprocess_output(output)
 

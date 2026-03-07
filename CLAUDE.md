@@ -680,6 +680,7 @@ print(f"建议: {freshness['recommendation']}")
 | 估值分位 | `get_processed_valuation_pct()` / `get_processed_valuation_pct_async()` | symbols (可选), start_date (可选), end_date (可选), indicators (可选) |
 | 季度基本面 | `get_quarterly_fundamental()` / `get_quarterly_fundamental_async()` | symbols (可选), start_date (可选), end_date (可选) |
 | 合并基本面 | `get_fundamental_combined()` / `get_fundamental_combined_async()` | symbols (可选), start_date, end_date, include_fscore |
+| 行业差异化估值 | `get_industry_valuation()` / `get_industry_valuation_async()` | symbols (可选), l2_names (可选), start_date (可选), end_date (可选), include_exempted |
 
 **GDP数据说明**:
 - 日期格式使用季度末日期，如 `2024-03-31` 表示 2024Q1，`2024-06-30` 表示 2024Q2
@@ -914,6 +915,33 @@ print(f"建议: {freshness['recommendation']}")
   print(combined[['time', 'symbol', 'pe_ttm', 'pb', 'f_score', 'roe_5y_avg']].tail())
   ```
 
+**行业差异化估值数据**:
+- 数据来源: `processed_industry_valuation` 表
+- 根据行业配置自动选择核心估值指标（银行用PB、成长股用PEG等）
+- 返回字段: `time`, `symbol`, `l2_name`, `core_indicator_type`, `core_indicator_value`, `core_indicator_pct_1250d`, `core_indicator_industry_pct`, `is_exempted`
+- 核心指标类型: PE/PB/PS/PEG，根据 `industry_config.json` 配置自动选择
+- `core_indicator_pct_1250d`: 核心指标自身历史5年分位（0-100）
+- `core_indicator_industry_pct`: 核心指标行业内相对分位（0-100）
+- `is_exempted`: 是否豁免（无行业分类或核心指标无效）
+- SDK 示例:
+  ```python
+  # 获取行业差异化估值数据
+  valuation = await fdh.get_industry_valuation_async(
+      start_date='2024-01-01',
+      end_date='2024-12-31'
+  )
+
+  # 筛选低估股票（核心指标历史分位<20%）
+  undervalued = valuation[
+      (valuation['core_indicator_pct_1250d'] < 20) &
+      (~valuation['is_exempted'])
+  ]
+
+  # 按行业分组查看
+  for l2_name, group in undervalued.groupby('l2_name'):
+      print(f"{l2_name}: 核心指标={group.iloc[0]['core_indicator_type']}, 低估股票数={len(group)}")
+  ```
+
 ## CLI 使用示例
 
 ### 数据更新命令
@@ -1117,6 +1145,7 @@ fdh-cli preprocess status
 - `technical`: 技术指标（MA, MACD, RSI, ATR）
 - `fundamental`: 基本面指标（估值分位）
 - `quarterly_fundamental`: 季度基本面指标（F-Score、财务质量指标）
+- `industry_valuation`: 行业差异化估值（根据行业配置自动选择核心估值指标）
 - `all`: 全部类别
 
 #### 支持的技术指标

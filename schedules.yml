@@ -251,3 +251,22 @@ jobs:
     retry:
       max_retries: 2
       delay: 600
+
+  # 行业差异化估值预处理 - 每日运行（18:00）
+  # 根据行业配置自动选择核心估值指标（银行用PB、成长股用PEG等）
+  # 计算：1. 自身历史分位数  2. 行业内相对分位
+  industry_valuation_preprocess:
+    enabled: true
+    type: preprocess
+    category: industry_valuation
+    schedule:
+      type: cron
+      hour: 18
+      minute: 0
+      day_of_week: "mon-fri"
+    params:
+      all: true
+    depends_on: [fundamental_preprocess, sw_member_update]
+    retry:
+      max_retries: 2
+      delay: 600
