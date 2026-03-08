@@ -4,6 +4,8 @@ services:
     image: timescale/timescaledb:latest-pg17
     container_name: trading_nexus_postgres
     restart: always
+    # Increase shared memory for parallel queries (default 64MB is too small)
+    shm_size: '8gb'
     environment:
       - POSTGRES_PASSWORD=trading.nexus.data
       - POSTGRES_USER=trading_nexus
