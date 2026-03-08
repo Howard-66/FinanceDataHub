@@ -972,7 +972,26 @@ async def _run_quarterly_fundamental_preprocess(
     # 初始化计算器和存储
     calculator = FScoreCalculator(industry_config_path=config_path)
     storage = QuarterlyFundamentalDataStorage(db_manager)
-    
+
+    # 获取股票-行业映射（用于获取豁免规则）
+    # 从 sw_industry_member 表获取最新的行业分类
+    industry_sql = """
+        SELECT ts_code, l3_name
+        FROM sw_industry_member
+        WHERE is_new = 'Y'
+    """
+    try:
+        industry_result = await db_manager.execute_raw_sql(industry_sql)
+        industry_rows = industry_result.fetchall()
+        # 构建 ts_code -> l3_name 映射
+        stock_industry_map = {row[0]: row[1] for row in industry_rows if row[1]}
+        if verbose:
+            console.print(f"  已获取 {len(stock_industry_map)} 只股票的行业分类")
+    except Exception as e:
+        if verbose:
+            console.print(f"[yellow]获取行业分类失败: {e}，将不使用行业豁免规则[/yellow]")
+        stock_industry_map = {}
+
     total_symbols = 0
     total_records = 0
     
@@ -1066,14 +1085,22 @@ async def _run_quarterly_fundamental_preprocess(
                 inc_df = pd.DataFrame(inc_rows, columns=[
                     "ts_code", "end_date", "f_ann_date", "n_income"
                 ]) if inc_rows else pd.DataFrame()
-                
+
+                # 构建豁免规则映射（根据股票所属行业）
+                exemptions_map = {}
+                for sym in batch_symbols:
+                    l3_name = stock_industry_map.get(sym)
+                    if l3_name:
+                        exemptions_map[sym] = calculator.get_exemptions_for_industry(l3_name)
+
                 # 计算 F-Score（始终全量计算，确保 TTM 转换准确）
                 fscore_df = calculator.calculate(
                     fina_indicator=fina_df,
                     balancesheet=bs_df,
                     cashflow=cf_df,
                     income=inc_df,
-                    exemptions=None  # 暂不使用豁免规则
+                    exemptions=None,  # 不使用全局豁免
+                    exemptions_map=exemptions_map  # 使用按股票的豁免规则
                 )
                 
                 if fscore_df.empty:

@@ -110,44 +110,52 @@ class FScoreCalculator:
         balancesheet: pd.DataFrame,
         cashflow: pd.DataFrame,
         income: pd.DataFrame,
-        exemptions: Optional[List[str]] = None
+        exemptions: Optional[List[str]] = None,
+        exemptions_map: Optional[Dict[str, List[str]]] = None
     ) -> pd.DataFrame:
         """
         计算 F-Score 及补充指标
-        
+
         Phase 3 优化：使用 groupby.apply 替代 for ts_code 循环。
-        
+
         Args:
-            fina_indicator: 财务指标数据，需包含 ts_code, end_date, roa, 
+            fina_indicator: 财务指标数据，需包含 ts_code, end_date, roa,
                            q_gsprofit_margin, assets_turn, current_ratio, q_roe
-            balancesheet: 资产负债表数据，需包含 ts_code, end_date, 
-                         total_assets, total_liab, total_cur_assets, 
+            balancesheet: 资产负债表数据，需包含 ts_code, end_date,
+                         total_assets, total_liab, total_cur_assets,
                          total_cur_liab, total_share
             cashflow: 现金流量表数据，需包含 ts_code, end_date, n_cashflow_act
             income: 利润表数据，需包含 ts_code, end_date, n_income
-            exemptions: 豁免规则列表
-            
+            exemptions: 豁免规则列表（全局，应用于所有股票）
+            exemptions_map: 按股票代码指定的豁免规则映射 {ts_code: [exemptions]}
+                           优先级高于 exemptions 参数
+
         Returns:
             包含 F-Score 各项得分及补充指标的 DataFrame
         """
         exemptions = exemptions or []
-        
+        exemptions_map = exemptions_map or {}
+
         # 合并财务数据
         df = self._merge_financial_data(
             fina_indicator, balancesheet, cashflow, income
         )
-        
+
         if df.empty:
             logger.warning("No valid financial data to calculate F-Score")
             return pd.DataFrame(columns=self.columns)
-        
+
+        # 存储 exemptions_map 供 _calc_single_stock 使用
+        self._exemptions_map = exemptions_map
+        self._global_exemptions = exemptions
+
         # 按股票分组计算（向量化：groupby.apply）
         # 注意：_calc_single_stock 内部需要访问 ts_code 列，因此不使用 include_groups=False
         import warnings
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="DataFrameGroupBy.apply operated on the grouping columns")
             result = df.groupby("ts_code", group_keys=False).apply(
-                lambda g: self._calc_single_stock(g, exemptions)
+                lambda g: self._calc_single_stock(g, exemptions, exemptions_map)
             )
         
         if result.empty:
@@ -247,13 +255,32 @@ class FScoreCalculator:
         return df.sort_values(["ts_code", "end_date_time"])
     
     def _calc_single_stock(
-        self, 
-        group: pd.DataFrame, 
-        exemptions: List[str]
+        self,
+        group: pd.DataFrame,
+        exemptions: List[str],
+        exemptions_map: Optional[Dict[str, List[str]]] = None
     ) -> pd.DataFrame:
-        """计算单只股票的 F-Score 及补充指标"""
+        """计算单只股票的 F-Score 及补充指标
+
+        Args:
+            group: 单只股票的财务数据
+            exemptions: 全局豁免规则（默认）
+            exemptions_map: 按股票代码指定的豁免规则映射，优先级高于全局规则
+        """
         result = group.copy()
-        
+
+        # 获取当前股票代码
+        ts_code = group["ts_code"].iloc[0] if "ts_code" in group.columns else None
+
+        # 确定使用的豁免规则（优先使用 exemptions_map）
+        if exemptions_map and ts_code and ts_code in exemptions_map:
+            active_exemptions = exemptions_map[ts_code]
+        else:
+            active_exemptions = exemptions
+
+        # 将豁免规则写入结果（供存储使用）
+        result["exemptions"] = [active_exemptions] * len(result)
+
         # 确保按时间排序
         result = result.sort_values("end_date_time")
         
@@ -273,18 +300,18 @@ class FScoreCalculator:
         result["f_roa"] = (result["roa_ttm"] > 0).fillna(False).astype(int)
         
         # F_CFO: 经营现金流 TTM > 0
-        if "f_score_cfo_positive" in exemptions:
+        if "f_score_cfo_positive" in active_exemptions:
             result["f_cfo"] = 1  # 豁免,给满分
         elif "n_cashflow_act" in result.columns:
             result["f_cfo"] = (result["cfo_ttm"] > 0).fillna(False).astype(int)
         else:
             result["f_cfo"] = 0
-        
+
         # F_ΔROA: ROA TTM 同比增长
         result["f_delta_roa"] = self._calc_yoy_improvement(result, "roa_ttm")
-        
+
         # F_ACCRUAL: 经营现金流 TTM > 净利润 TTM
-        if "f_score_cfo" in exemptions:
+        if "f_score_cfo" in active_exemptions:
             result["f_accrual"] = 1  # 豁免,给满分
         elif "n_cashflow_act" in result.columns and "n_income" in result.columns:
             result["f_accrual"] = (
@@ -296,7 +323,7 @@ class FScoreCalculator:
         # === 2. 财务杠杆/流动性 (3分) ===
         
         # F_ΔLEVER: 非流动负债占比下降 (使用 total_ncl / total_assets, 时点值)
-        if "f_score_leverage" in exemptions:
+        if "f_score_leverage" in active_exemptions:
             result["f_delta_lever"] = 1  # 豁免,给满分
         elif "total_ncl" in result.columns and "total_assets" in result.columns:
             lever = result["total_ncl"] / result["total_assets"].replace(0, np.nan)
@@ -307,7 +334,7 @@ class FScoreCalculator:
             result["f_delta_lever"] = 0
         
         # F_ΔLIQUID: 流动比率上升 (时点值比率,无需TTM)
-        if "f_score_current_ratio" in exemptions:
+        if "f_score_current_ratio" in active_exemptions:
             result["f_delta_liquid"] = 1  # 豁免,给满分
         elif "current_ratio" in result.columns:
             result["f_delta_liquid"] = self._calc_yoy_improvement(result, "current_ratio")
@@ -330,7 +357,7 @@ class FScoreCalculator:
         # === 3. 运营效率 (2分) ===
         
         # F_ΔMARGIN: 毛利率 TTM 上升（基于 q_gsprofit_margin 单季度 rolling mean）
-        if "f_score_gross_margin" in exemptions:
+        if "f_score_gross_margin" in active_exemptions:
             result["f_delta_margin"] = 1  # 豁免,给满分
         elif "gpm_ttm" in result.columns and result["gpm_ttm"].notna().any():
             result["f_delta_margin"] = self._calc_yoy_improvement(result, "gpm_ttm")

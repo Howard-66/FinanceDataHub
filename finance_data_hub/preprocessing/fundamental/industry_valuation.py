@@ -61,7 +61,7 @@ class IndustryValuationCalculator:
         "ref_indicator_type", "ref_indicator_value",
         "ref_indicator_pct_1250d", "ref_indicator_industry_pct",
         "pe_ttm", "pb", "ps_ttm", "peg", "dv_ttm",
-        "is_exempted", "exemption_reason",
+        "is_exempted", "exemption_reason", "fscore_exemptions",
     ]
 
     def __init__(self, config_path: Optional[str] = None):
@@ -112,7 +112,10 @@ class IndustryValuationCalculator:
         # 6. 处理豁免情况
         df = self._handle_exemptions(df)
 
-        # 7. 选择输出列
+        # 7. 添加 F-Score 豁免规则
+        df = self._add_fscore_exemptions(df)
+
+        # 8. 选择输出列
         result = self._select_output_columns(df)
 
         logger.info(
@@ -365,6 +368,28 @@ class IndustryValuationCalculator:
         if exempted_count > 0:
             reasons = df[df["is_exempted"]]["exemption_reason"].value_counts()
             logger.info(f"豁免统计: {exempted_count} 条, 原因分布: {reasons.to_dict()}")
+
+        return df
+
+    def _add_fscore_exemptions(self, df: pd.DataFrame) -> pd.DataFrame:
+        """添加 F-Score 豁免规则列
+
+        根据行业配置获取每只股票的 F-Score 豁免规则。
+        """
+        df = df.copy()
+
+        # 构建 l3_name -> exemptions 映射
+        exemptions_map = {}
+        for l3_name in df["l3_name"].dropna().unique():
+            exemptions_map[l3_name] = self.config_loader.get_exemptions(l3_name)
+
+        # 使用 map 进行向量化查找
+        df["fscore_exemptions"] = df["l3_name"].map(exemptions_map)
+
+        # 对于无行业分类的，设置为空列表（fillna 不支持列表，使用 apply）
+        df["fscore_exemptions"] = df["fscore_exemptions"].apply(
+            lambda x: x if isinstance(x, list) else []
+        )
 
         return df
 
