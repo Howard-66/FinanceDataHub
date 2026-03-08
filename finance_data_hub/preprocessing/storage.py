@@ -629,23 +629,31 @@ class FundamentalDataStorage:
             conditions.append(f"symbol IN ({placeholders})")
             for i, sym in enumerate(symbols):
                 params[f"sym_{i}"] = sym
-        
+
         if start_date:
             if isinstance(start_date, str):
-                start_date = pd.to_datetime(start_date).to_pydatetime()
+                # 转换为 UTC 时间的 datetime，避免时区问题
+                start_dt = pd.to_datetime(start_date).tz_localize('UTC').to_pydatetime()
+            else:
+                start_dt = start_date
             conditions.append("time >= :start_date")
-            params["start_date"] = start_date
-        
+            params["start_date"] = start_dt
+
         if end_date:
             if isinstance(end_date, str):
-                end_date = pd.to_datetime(end_date).to_pydatetime()
+                # 转换为 UTC 时间的 datetime，避免时区问题
+                # 使用当天的 23:59:59 确保包含当天所有数据
+                end_dt = pd.to_datetime(end_date).tz_localize('UTC') + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                end_dt = end_dt.to_pydatetime()
+            else:
+                end_dt = end_date
             conditions.append("time <= :end_date")
-            params["end_date"] = end_date
-        
+            params["end_date"] = end_dt
+
         where_clause = ""
         if conditions:
             where_clause = "WHERE " + " AND ".join(conditions)
-        
+
         sql = f"""
             SELECT {cols_str}
             FROM {self.TABLE_NAME}

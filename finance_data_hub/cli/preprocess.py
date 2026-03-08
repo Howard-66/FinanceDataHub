@@ -1164,10 +1164,14 @@ async def _run_industry_valuation_preprocess(
     force: bool = False,
     max_concurrent: int = DEFAULT_MAX_CONCURRENT_BATCHES,
 ) -> dict:
-    """执行行业差异化估值预处理（支持并发优化）
+    """执行行业差异化估值预处理（支持智能增量 + 并发优化）
 
     根据行业配置自动选择核心估值指标（PE/PB/PS/PEG），
     计算自身历史分位和行业内相对分位。
+
+    智能增量：
+    - 检查 processed_industry_valuation 的最新时间
+    - 只处理 processed_valuation_pct 中新增的数据
 
     并发优化：
     1. I/O 并发：使用 asyncio.Semaphore 控制批次并发度
@@ -1179,6 +1183,7 @@ async def _run_industry_valuation_preprocess(
     - industry_config.json: 行业配置
     """
     import pandas as pd
+    from datetime import timedelta
     from ..preprocessing.fundamental.industry_valuation import IndustryValuationCalculator
     from ..preprocessing.storage import IndustryValuationStorage, FundamentalDataStorage
 
@@ -1188,28 +1193,64 @@ async def _run_industry_valuation_preprocess(
         symbols = await _get_all_stock_symbols_from_daily_basic(db_manager)
         console.print(f"共 {len(symbols)} 只股票")
 
-    # 2. 确定日期范围
-    if not start_date:
-        result = await db_manager.execute_raw_sql(
-            "SELECT MIN(time) FROM processed_valuation_pct"
-        )
-        row = result.fetchone()
-        if row and row[0]:
-            start_date = row[0].strftime("%Y-%m-%d")
-        else:
-            start_date = (pd.Timestamp.now() - pd.DateOffset(years=5)).strftime("%Y-%m-%d")
+    # 2. 智能增量：确定时间范围
+    incremental_mode = False
+    data_start_date = start_date
+    upsert_cutoff = None
 
-    if not end_date:
+    # 获取源数据（processed_valuation_pct）的最新时间
+    result = await db_manager.execute_raw_sql(
+        "SELECT MAX(time) FROM processed_valuation_pct"
+    )
+    row = result.fetchone()
+    source_latest_time = pd.to_datetime(row[0]) if row and row[0] else None
+
+    if not force and not start_date and source_latest_time:
+        # 检查已处理数据的最新时间
         result = await db_manager.execute_raw_sql(
-            "SELECT MAX(time) FROM processed_valuation_pct"
+            "SELECT MAX(time) FROM processed_industry_valuation"
         )
         row = result.fetchone()
-        if row and row[0]:
-            end_date = row[0].strftime("%Y-%m-%d")
+        processed_latest_time = pd.to_datetime(row[0]) if row and row[0] else None
+
+        if processed_latest_time:
+            # 有已处理数据，检查是否需要增量更新
+            if processed_latest_time >= source_latest_time:
+                console.print(f"[green]已处理至 {processed_latest_time.strftime('%Y-%m-%d')}，无需更新[/green]")
+                return {
+                    "symbols_processed": 0,
+                    "records_processed": 0,
+                    "message": "已处理至最新，无需更新"
+                }
+
+            # 需要增量更新
+            incremental_mode = True
+            # 从已处理时间的下一天开始
+            data_start_date = (processed_latest_time + timedelta(days=1)).strftime("%Y-%m-%d")
+            upsert_cutoff = processed_latest_time.to_pydatetime()
+            console.print(f"[green]智能增量模式[/green]: 已处理至 {processed_latest_time.strftime('%Y-%m-%d')}")
+            console.print(f"  新数据范围: {data_start_date} → {source_latest_time.strftime('%Y-%m-%d')}")
+        else:
+            # 无已处理数据，使用源数据的时间范围
+            if not start_date:
+                result = await db_manager.execute_raw_sql(
+                    "SELECT MIN(time) FROM processed_valuation_pct"
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    data_start_date = row[0].strftime("%Y-%m-%d")
+                else:
+                    data_start_date = (pd.Timestamp.now() - pd.DateOffset(years=5)).strftime("%Y-%m-%d")
+            console.print("[yellow]全量处理模式[/yellow]")
+
+    # 确定结束日期
+    if not end_date:
+        if source_latest_time:
+            end_date = source_latest_time.strftime("%Y-%m-%d")
         else:
             end_date = pd.Timestamp.now().strftime("%Y-%m-%d")
 
-    console.print(f"日期范围: {start_date} ~ {end_date}")
+    console.print(f"日期范围: {data_start_date or start_date} ~ {end_date}")
 
     # 3. 预查询行业分类数据（一次性查询所有股票的行业分类，减少数据库往返）
     console.print("[cyan]预查询行业分类数据...[/cyan]")
@@ -1240,10 +1281,10 @@ async def _run_industry_valuation_preprocess(
         """处理单个批次"""
         async with semaphore:
             try:
-                # 查询估值数据
+                # 查询估值数据（使用增量时间范围）
                 valuation_df = await valuation_storage.query(
                     symbols=batch_symbols,
-                    start_date=start_date,
+                    start_date=data_start_date or start_date,
                     end_date=end_date
                 )
 
