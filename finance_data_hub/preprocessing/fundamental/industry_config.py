@@ -15,7 +15,7 @@
     }
 }
 
-行业名称对应 sw_industry_members 表的 l2_name 字段。
+行业名称对应 sw_industry_members 表的 l3_name 字段（三级行业）。
 """
 
 from typing import Dict, List, Optional, Any
@@ -90,18 +90,18 @@ class IndustryConfigLoader:
         """获取完整配置字典"""
         return self._config
 
-    def get_industry_config(self, l2_name: Optional[str]) -> Dict[str, Any]:
+    def get_industry_config(self, l3_name: Optional[str]) -> Dict[str, Any]:
         """获取行业配置
 
         Args:
-            l2_name: 二级行业名称
+            l3_name: 三级行业名称
 
         Returns:
             行业配置字典，未配置时返回默认值
         """
-        if l2_name is None or l2_name not in self._config:
+        if l3_name is None or l3_name not in self._config:
             return self._get_default_config()
-        return self._config[l2_name]
+        return self._config[l3_name]
 
     def _get_default_config(self) -> Dict[str, Any]:
         """获取默认配置"""
@@ -111,71 +111,71 @@ class IndustryConfigLoader:
             "exemptions": [],
         }
 
-    def get_core_indicator(self, l2_name: Optional[str]) -> str:
+    def get_core_indicator(self, l3_name: Optional[str]) -> str:
         """获取核心估值指标类型
 
         Args:
-            l2_name: 二级行业名称
+            l3_name: 三级行业名称
 
         Returns:
             核心指标类型 (PE/PB/PS/PEG)，默认 PE
         """
-        return self.get_industry_config(l2_name).get("core_indicator", "PE")
+        return self.get_industry_config(l3_name).get("core_indicator", "PE")
 
-    def get_ref_indicator(self, l2_name: Optional[str]) -> str:
+    def get_ref_indicator(self, l3_name: Optional[str]) -> str:
         """获取参考估值指标类型
 
         Args:
-            l2_name: 二级行业名称
+            l3_name: 三级行业名称
 
         Returns:
             参考指标类型 (PE/PB/PS/PEG)，默认 PB
         """
-        return self.get_industry_config(l2_name).get("ref_indicator", "PB")
+        return self.get_industry_config(l3_name).get("ref_indicator", "PB")
 
-    def get_exemptions(self, l2_name: Optional[str]) -> List[str]:
+    def get_exemptions(self, l3_name: Optional[str]) -> List[str]:
         """获取行业豁免规则列表
 
         Args:
-            l2_name: 二级行业名称
+            l3_name: 三级行业名称
 
         Returns:
             豁免规则列表，如 ["f_score_cfo", "f_score_leverage"]
         """
-        return self.get_industry_config(l2_name).get("exemptions", [])
+        return self.get_industry_config(l3_name).get("exemptions", [])
 
-    def get_macro_cycle(self, l2_name: Optional[str]) -> Optional[str]:
+    def get_macro_cycle(self, l3_name: Optional[str]) -> Optional[str]:
         """获取行业宏观周期定位
 
         Args:
-            l2_name: 二级行业名称
+            l3_name: 三级行业名称
 
         Returns:
             宏观周期 (RECOVERY/STAGFLATION/OVERHEAT/RECESSION)，未配置返回 None
         """
-        return self.get_industry_config(l2_name).get("macro_cycle")
+        return self.get_industry_config(l3_name).get("macro_cycle")
 
-    def get_logic(self, l2_name: Optional[str]) -> Optional[str]:
+    def get_logic(self, l3_name: Optional[str]) -> Optional[str]:
         """获取行业投资逻辑说明
 
         Args:
-            l2_name: 二级行业名称
+            l3_name: 三级行业名称
 
         Returns:
             投资逻辑说明文字
         """
-        return self.get_industry_config(l2_name).get("logic")
+        return self.get_industry_config(l3_name).get("logic")
 
-    def has_industry(self, l2_name: str) -> bool:
+    def has_industry(self, l3_name: str) -> bool:
         """检查行业是否已配置
 
         Args:
-            l2_name: 二级行业名称
+            l3_name: 三级行业名称
 
         Returns:
             是否已配置
         """
-        return l2_name in self._config
+        return l3_name in self._config
 
     def get_all_industries(self) -> List[str]:
         """获取所有已配置的行业名称列表

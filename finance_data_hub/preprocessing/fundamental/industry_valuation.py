@@ -169,16 +169,16 @@ class IndustryValuationCalculator:
         """为每行确定核心/参考指标类型（向量化版本）"""
         df = df.copy()
 
-        # 构建行业 -> 指标类型的映射字典
+        # 构建行业 -> 指标类型的映射字典（使用 l3_name 查找配置）
         core_map = {}
         ref_map = {}
-        for l2_name in df["l2_name"].dropna().unique():
-            core_map[l2_name] = self.config_loader.get_core_indicator(l2_name)
-            ref_map[l2_name] = self.config_loader.get_ref_indicator(l2_name)
+        for l3_name in df["l3_name"].dropna().unique():
+            core_map[l3_name] = self.config_loader.get_core_indicator(l3_name)
+            ref_map[l3_name] = self.config_loader.get_ref_indicator(l3_name)
 
         # 使用 map 进行向量化查找（比 apply 快 10x+）
-        df["core_indicator_type"] = df["l2_name"].map(core_map).fillna("PE")
-        df["ref_indicator_type"] = df["l2_name"].map(ref_map).fillna("PB")
+        df["core_indicator_type"] = df["l3_name"].map(core_map).fillna("PE")
+        df["ref_indicator_type"] = df["l3_name"].map(ref_map).fillna("PB")
 
         return df
 
@@ -347,8 +347,8 @@ class IndustryValuationCalculator:
         df["is_exempted"] = False
         df["exemption_reason"] = None
 
-        # 1. 无行业分类
-        no_industry_mask = df["l2_name"].isna()
+        # 1. 无行业分类（使用 l3_name 判断，因为配置查找基于 l3_name）
+        no_industry_mask = df["l3_name"].isna()
         df.loc[no_industry_mask, "is_exempted"] = True
         df.loc[no_industry_mask, "exemption_reason"] = "NO_INDUSTRY_CLASSIFICATION"
 
@@ -385,20 +385,20 @@ class IndustryValuationCalculator:
     def get_indicator_for_symbol(
         self,
         symbol: str,
-        l2_name: Optional[str] = None,
+        l3_name: Optional[str] = None,
     ) -> Tuple[str, str]:
         """
         获取指定股票的核心/参考指标类型
 
         Args:
             symbol: 股票代码
-            l2_name: 二级行业名称（可选）
+            l3_name: 三级行业名称（可选）
 
         Returns:
             (核心指标类型, 参考指标类型)
         """
-        core = self.config_loader.get_core_indicator(l2_name)
-        ref = self.config_loader.get_ref_indicator(l2_name)
+        core = self.config_loader.get_core_indicator(l3_name)
+        ref = self.config_loader.get_ref_indicator(l3_name)
         return core, ref
 
     def get_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
