@@ -1003,32 +1003,32 @@ async def _run_quarterly_fundamental_preprocess(
             try:
                 # 并行查询4张表（性能优化）
                 fina_sql = f"""
-                    SELECT ts_code, end_date, ann_date,
+                    SELECT ts_code, end_date_time as end_date, ann_date_time as ann_date,
                            roe, roe_yearly, roe_dt, roa, grossprofit_margin, assets_turn,
                            current_ratio, debt_to_assets, netprofit_yoy,
                            q_gsprofit_margin, q_roe
                     FROM fina_indicator
                     WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date
+                    ORDER BY ts_code, end_date_time
                 """
                 bs_sql = f"""
-                    SELECT ts_code, end_date, f_ann_date,
+                    SELECT ts_code, end_date_time as end_date, f_ann_date_time as f_ann_date,
                            total_assets, total_liab, total_ncl, total_cur_assets, total_cur_liab, total_share
                     FROM balancesheet
                     WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date
+                    ORDER BY ts_code, end_date_time
                 """
                 cf_sql = f"""
-                    SELECT ts_code, end_date, n_cashflow_act
+                    SELECT ts_code, end_date_time as end_date, f_ann_date_time as f_ann_date, n_cashflow_act
                     FROM cashflow
                     WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date
+                    ORDER BY ts_code, end_date_time
                 """
                 inc_sql = f"""
-                    SELECT ts_code, end_date, n_income
+                    SELECT ts_code, end_date_time as end_date, f_ann_date_time as f_ann_date, n_income
                     FROM income
                     WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date
+                    ORDER BY ts_code, end_date_time
                 """
 
                 # 使用 asyncio.gather 并行执行4个查询
@@ -1059,12 +1059,12 @@ async def _run_quarterly_fundamental_preprocess(
 
                 cf_rows = cf_result.fetchall()
                 cf_df = pd.DataFrame(cf_rows, columns=[
-                    "ts_code", "end_date", "n_cashflow_act"
+                    "ts_code", "end_date", "f_ann_date", "n_cashflow_act"
                 ]) if cf_rows else pd.DataFrame()
 
                 inc_rows = inc_result.fetchall()
                 inc_df = pd.DataFrame(inc_rows, columns=[
-                    "ts_code", "end_date", "n_income"
+                    "ts_code", "end_date", "f_ann_date", "n_income"
                 ]) if inc_rows else pd.DataFrame()
                 
                 # 计算 F-Score（始终全量计算，确保 TTM 转换准确）
@@ -1081,10 +1081,11 @@ async def _run_quarterly_fundamental_preprocess(
                     continue
                 
                 # 转换列名以匹配数据库表
+                # quality.py 返回的是 f_ann_date_final，需要映射为 f_ann_date_time
                 fscore_df = fscore_df.rename(columns={
                     "end_date": "end_date_time",
                     "ann_date": "ann_date_time",
-                    "f_ann_date": "f_ann_date_time"
+                    "f_ann_date_final": "f_ann_date_time"
                 })
                 
                 # 转换日期列
@@ -1334,19 +1335,18 @@ async def _run_industry_valuation_preprocess(
             batch_symbols = symbols[i:i+batch_size]
             batch_tasks.append(process_batch(batch_symbols))
 
-        # 并发执行所有批次
-        results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-
-        # 汇总结果
-        for result in results:
-            if isinstance(result, Exception):
+        # 使用 as_completed 实现实时进度更新
+        for coro in asyncio.as_completed(batch_tasks):
+            try:
+                result = await coro
+                symbols_count, records_count = result
+                total_symbols += symbols_count
+                total_records += records_count
+                progress.advance(task, batch_size)
+            except Exception as e:
                 if verbose:
-                    console.print(f"[red]批次异常: {result}[/red]")
-                continue
-            symbols_count, records_count = result
-            total_symbols += symbols_count
-            total_records += records_count
-            progress.advance(task, batch_size)
+                    console.print(f"[red]批次异常: {e}[/red]")
+                progress.advance(task, batch_size)
 
     return {
         "symbols_processed": total_symbols,

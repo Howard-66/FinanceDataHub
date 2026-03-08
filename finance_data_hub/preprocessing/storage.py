@@ -174,13 +174,14 @@ class ProcessedDataStorage:
         result = result.dropna(subset=["open", "high", "low", "close"])
 
         # 转换 time 列为带时区的 datetime（数据库是 TIMESTAMPTZ）
+        # 统一使用 Asia/Shanghai 时区，与其他数据表保持一致
         # 不再逐行 .apply()，使用向量化操作
         if "time" in result.columns:
             if pd.api.types.is_datetime64_any_dtype(result["time"]):
                 if pd.api.types.is_datetime64tz_dtype(result["time"]):
-                    result["time"] = pd.to_datetime(result["time"]).dt.tz_convert('UTC')
+                    result["time"] = pd.to_datetime(result["time"]).dt.tz_convert('Asia/Shanghai')
                 else:
-                    result["time"] = pd.to_datetime(result["time"]).dt.tz_localize('UTC')
+                    result["time"] = pd.to_datetime(result["time"]).dt.tz_localize('Asia/Shanghai')
                 # 向量化转换为 Python datetime 数组（无逐行 .apply()）
                 result["time"] = _series_to_pydatetime(result["time"])
 
@@ -216,10 +217,11 @@ class ProcessedDataStorage:
 
             if pd.api.types.is_datetime64_any_dtype(dtype):
                 # datetime 列：向量化转换为 Python datetime 对象
+                # 统一使用 Asia/Shanghai 时区
                 if pd.api.types.is_datetime64tz_dtype(dtype):
-                    prepared[col] = pd.to_datetime(prepared[col]).dt.tz_convert('UTC')
+                    prepared[col] = pd.to_datetime(prepared[col]).dt.tz_convert('Asia/Shanghai')
                 else:
-                    prepared[col] = pd.to_datetime(prepared[col]).dt.tz_localize('UTC')
+                    prepared[col] = pd.to_datetime(prepared[col]).dt.tz_localize('Asia/Shanghai')
                 prepared[col] = _series_to_pydatetime(prepared[col])
             elif dtype == object:
                 # object 列可能包含 datetime/Timestamp — 检查并转换
@@ -233,15 +235,16 @@ class ProcessedDataStorage:
                                 return None
                             if isinstance(x, pd.Timestamp):
                                 if x.tzinfo is None:
-                                    x = x.tz_localize('UTC')
+                                    x = x.tz_localize('Asia/Shanghai')
                                 else:
-                                    x = x.tz_convert('UTC')
+                                    x = x.tz_convert('Asia/Shanghai')
                                 return x.to_pydatetime()
                             elif isinstance(x, datetime):
+                                from zoneinfo import ZoneInfo
                                 if x.tzinfo is None:
-                                    import pytz
-                                    return x.replace(tzinfo=pytz.UTC)
-                                return x
+                                    return x.replace(tzinfo=ZoneInfo('Asia/Shanghai'))
+                                else:
+                                    return x.astimezone(ZoneInfo('Asia/Shanghai'))
                             return x
                         prepared[col] = prepared[col].apply(convert_datetime)
             elif pd.api.types.is_float_dtype(dtype):
@@ -270,7 +273,9 @@ class ProcessedDataStorage:
                 if v is pd.NaT or pd.isna(v):
                     return None
                 if v.tzinfo is None:
-                    v = v.tz_localize('UTC')
+                    v = v.tz_localize('Asia/Shanghai')
+                else:
+                    v = v.tz_convert('Asia/Shanghai')
                 return v.to_pydatetime()
             if v is pd.NaT:
                 return None

@@ -169,6 +169,12 @@ class FScoreCalculator:
             df = df.copy()
             if "end_date" in df.columns and "end_date_time" not in df.columns:
                 df["end_date_time"] = pd.to_datetime(df["end_date"])
+            # 标准化 f_ann_date 列（如果存在）
+            if "f_ann_date" in df.columns:
+                df["f_ann_date"] = pd.to_datetime(df["f_ann_date"])
+            # 标准化 ann_date 列（如果存在）
+            if "ann_date" in df.columns:
+                df["ann_date"] = pd.to_datetime(df["ann_date"])
             return df
         
         fina_indicator = standardize_date(fina_indicator)
@@ -217,15 +223,26 @@ class FScoreCalculator:
             suffixes=('', '_inc')
         )
         
-        # 选择最准确的 f_ann_date (优先使用 cashflow/balancesheet)
+        # 选择最准确的 f_ann_date (COALESCE 风格)
+        # 优先级（从高到低）：f_ann_date_cf > f_ann_date_inc > f_ann_date_bs > f_ann_date > ann_date
+        # cashflow/income 的 f_ann_date 通常比 balancesheet 更准确（发布更晚）
+        # combine_first: 左边非空用左边，左边空用右边
+
+        # 从最低优先级开始，逐步用更高优先级的值覆盖
+        f_ann_date_final = None
+        if "ann_date" in df.columns:
+            f_ann_date_final = df["ann_date"]
         if "f_ann_date" in df.columns:
-            df["f_ann_date_final"] = df["f_ann_date"]
-        elif "f_ann_date_bs" in df.columns:
-            df["f_ann_date_final"] = df["f_ann_date_bs"]
-        elif "f_ann_date_cf" in df.columns:
-            df["f_ann_date_final"] = df["f_ann_date_cf"]
-        elif "ann_date" in df.columns:
-            df["f_ann_date_final"] = df["ann_date"]
+            f_ann_date_final = df["f_ann_date"].combine_first(f_ann_date_final) if f_ann_date_final is not None else df["f_ann_date"]
+        if "f_ann_date_bs" in df.columns:
+            f_ann_date_final = df["f_ann_date_bs"].combine_first(f_ann_date_final) if f_ann_date_final is not None else df["f_ann_date_bs"]
+        if "f_ann_date_inc" in df.columns:
+            f_ann_date_final = df["f_ann_date_inc"].combine_first(f_ann_date_final) if f_ann_date_final is not None else df["f_ann_date_inc"]
+        if "f_ann_date_cf" in df.columns:
+            f_ann_date_final = df["f_ann_date_cf"].combine_first(f_ann_date_final) if f_ann_date_final is not None else df["f_ann_date_cf"]
+
+        if f_ann_date_final is not None:
+            df["f_ann_date_final"] = f_ann_date_final
         
         return df.sort_values(["ts_code", "end_date_time"])
     

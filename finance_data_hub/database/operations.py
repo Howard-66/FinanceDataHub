@@ -2133,12 +2133,14 @@ class DataOperations:
                 val = row.get(col)
                 if col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
                     # 时间字段需要时区感知的datetime
+                    # 统一使用 Asia/Shanghai 时区，与其他数据保持一致
                     if pd.notna(val):
                         try:
                             if hasattr(val, "tzinfo") and val.tzinfo is None:
-                                row_data[col] = val.tz_localize("UTC")
+                                row_data[col] = val.tz_localize("Asia/Shanghai")
                             else:
-                                row_data[col] = val
+                                # 如果已有其他时区，转换为 Asia/Shanghai
+                                row_data[col] = val.tz_convert("Asia/Shanghai")
                         except (ValueError, TypeError):
                             row_data[col] = None
                     else:
@@ -2786,12 +2788,14 @@ class DataOperations:
                 val = row.get(col)
                 if col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
                     # 时间字段需要时区感知的datetime
+                    # 统一使用 Asia/Shanghai 时区，与其他数据保持一致
                     if pd.notna(val):
                         try:
                             if hasattr(val, "tzinfo") and val.tzinfo is None:
-                                row_data[col] = val.tz_localize("UTC")
+                                row_data[col] = val.tz_localize("Asia/Shanghai")
                             else:
-                                row_data[col] = val
+                                # 如果已有其他时区，转换为 Asia/Shanghai
+                                row_data[col] = val.tz_convert("Asia/Shanghai")
                         except (ValueError, TypeError):
                             row_data[col] = None
                     else:
@@ -3366,12 +3370,14 @@ class DataOperations:
                 val = row.get(col)
                 if col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
                     # 时间字段需要时区感知的datetime
+                    # 统一使用 Asia/Shanghai 时区，与其他数据保持一致
                     if pd.notna(val):
                         try:
                             if hasattr(val, "tzinfo") and val.tzinfo is None:
-                                row_data[col] = val.tz_localize("UTC")
+                                row_data[col] = val.tz_localize("Asia/Shanghai")
                             else:
-                                row_data[col] = val
+                                # 如果已有其他时区，转换为 Asia/Shanghai
+                                row_data[col] = val.tz_convert("Asia/Shanghai")
                         except (ValueError, TypeError):
                             row_data[col] = None
                     else:
@@ -4029,12 +4035,14 @@ class DataOperations:
                 val = row.get(col)
                 if col in ("end_date_time", "ann_date_time", "f_ann_date_time"):
                     # 时间字段需要时区感知的datetime
+                    # 统一使用 Asia/Shanghai 时区，与其他数据保持一致
                     if pd.notna(val):
                         try:
                             if hasattr(val, "tzinfo") and val.tzinfo is None:
-                                row_data[col] = val.tz_localize("UTC")
+                                row_data[col] = val.tz_localize("Asia/Shanghai")
                             else:
-                                row_data[col] = val
+                                # 如果已有其他时区，转换为 Asia/Shanghai
+                                row_data[col] = val.tz_convert("Asia/Shanghai")
                         except (ValueError, TypeError):
                             row_data[col] = None
                     else:
