@@ -266,7 +266,7 @@ jobs:
       day_of_week: "mon-fri"
     params:
       all: true
-    depends_on: [fundamental_preprocess, sw_member_update]
+    depends_on: [fundamental_preprocess]
     retry:
       max_retries: 2
       delay: 600

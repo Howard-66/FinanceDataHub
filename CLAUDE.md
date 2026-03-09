@@ -1208,6 +1208,7 @@ fdh-cli preprocess status
 | `processed_monthly_qfq` | 月频 | 月线前复权数据 + 技术指标 |
 | `processed_valuation_pct` | 日频 | 估值分位等日频基本面指标 |
 | `processed_fundamental_quality` | 季频 | F-Score及财务质量指标（独立存储） |
+| `processed_industry_valuation`  | 日频 | 行业差异化估值指标 |
 
 #### 使用示例
 
@@ -1229,6 +1230,9 @@ fdh-cli preprocess run --all --category quarterly_fundamental
 
 # 处理指定股票的季度基本面指标
 fdh-cli preprocess run --symbols 601111.SH,600036.SH,600900.SH,600519.SH --category quarterly_fundamental
+
+# 处理行业差异化估值指标
+fdh-cli preprocess run --all --category industry_valuation
 
 # 处理指定股票
 fdh-cli preprocess run --symbols 600519.SH,000858.SZ --category technical
