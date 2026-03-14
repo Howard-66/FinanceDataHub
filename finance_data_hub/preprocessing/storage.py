@@ -148,6 +148,7 @@ class ProcessedDataStorage:
         准备要存储的数据
 
         只保留需要存储的列，处理缺失值。
+        对于周线/月线数据，将时间调整为收盘时间 15:00:00。
         """
         result = df.copy()
 
@@ -182,6 +183,16 @@ class ProcessedDataStorage:
                     result["time"] = pd.to_datetime(result["time"]).dt.tz_convert('Asia/Shanghai')
                 else:
                     result["time"] = pd.to_datetime(result["time"]).dt.tz_localize('Asia/Shanghai')
+
+                # 对于周线/月线数据，将时间调整为收盘时间 15:00:00
+                # pandas 重采样默认生成 00:00:00，需要修正为 15:00:00
+                if freq.lower() in ("weekly", "monthly"):
+                    # 向量化操作：将时间调整为当天的 15:00:00
+                    result["time"] = result["time"].apply(
+                        lambda t: t.replace(hour=15, minute=0, second=0, microsecond=0)
+                        if pd.notna(t) else t
+                    )
+
                 # 向量化转换为 Python datetime 数组（无逐行 .apply()）
                 result["time"] = _series_to_pydatetime(result["time"])
 
