@@ -221,7 +221,6 @@ COMMENT ON COLUMN processed_valuation_pct.pe_ttm IS '市盈率(TTM)';
 COMMENT ON COLUMN processed_valuation_pct.dv_ttm IS '股息率(TTM)，税前股息率';
 COMMENT ON COLUMN processed_valuation_pct.peg IS 'PEG = PE_TTM / 净利润增速(%), 仅当增速>0时有效';
 COMMENT ON COLUMN processed_valuation_pct.pe_ttm_pct_1250d IS 'PE_TTM在过去5年（1250交易日）的分位数，0-100';
-COMMENT ON COLUMN processed_valuation_pct.dv_ttm_pct_1250d IS '股息率 TTM 在过去5年（1250交易日）的分位数，0-100';
 
 
 -- =====================================================
@@ -311,7 +310,7 @@ SELECT
     fi.pe_ttm_pct_1250d,
     fi.pb_pct_1250d,
     fi.ps_ttm_pct_1250d,
-    fi.dv_ttm_pct_1250d,
+    -- fi.dv_ttm_pct_1250d,
     -- fi.pe_ttm_pct_2500d,
     -- fi.pb_pct_2500d,
     -- fi.ps_ttm_pct_2500d,
