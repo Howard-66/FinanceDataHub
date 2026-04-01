@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import asyncio
 import concurrent.futures
 import os
+import pandas as pd
 import pickle
 import typer
 from rich.console import Console
@@ -29,13 +30,19 @@ from loguru import logger
 
 from ..config import get_settings
 from ..database.manager import DatabaseManager
+from ..database.operations import DataOperations
 from ..preprocessing import (
     AdjustType,
     AdjustProcessor,
+    MacroCycleCalculator,
     PreprocessPipeline,
     ProcessedDataStorage,
 )
-from ..preprocessing.storage import FundamentalDataStorage
+from ..preprocessing.storage import (
+    FundamentalDataStorage,
+    MacroCycleIndustryStorage,
+    MacroCyclePhaseStorage,
+)
 from ..preprocessing.technical.base import create_indicator
 
 console = Console(legacy_windows=False)
@@ -1150,10 +1157,16 @@ async def _run_quarterly_fundamental_preprocess(
 async def _get_table_stats(db_manager: DatabaseManager, table_name: str) -> dict:
     """获取表统计信息"""
     try:
+        distinct_expr = "COUNT(DISTINCT symbol)"
+        if table_name == MacroCyclePhaseStorage.TABLE_NAME:
+            distinct_expr = "0"
+        elif table_name == MacroCycleIndustryStorage.TABLE_NAME:
+            distinct_expr = "COUNT(DISTINCT l3_name)"
+
         sql = f"""
             SELECT 
                 COUNT(*) as record_count,
-                COUNT(DISTINCT symbol) as symbol_count,
+                {distinct_expr} as symbol_count,
                 MIN(time) as min_time,
                 MAX(time) as max_time,
                 MAX(processed_at) as last_update
@@ -1179,6 +1192,78 @@ async def _get_table_stats(db_manager: DatabaseManager, table_name: str) -> dict
         "min_time": None,
         "max_time": None,
         "last_update": None,
+    }
+
+
+async def _run_macro_cycle_preprocess(
+    db_manager: DatabaseManager,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    verbose: bool = False,
+) -> dict:
+    """执行中国宏观周期预处理（全量重建）。"""
+    from ..preprocessing.fundamental.industry_config import get_industry_config_loader
+
+    if start_date or end_date:
+        console.print("[yellow]macro_cycle 预处理固定执行全量重建，忽略 --start-date/--end-date[/yellow]")
+
+    console.print("[cyan]读取宏观原始数据...[/cyan]")
+    ops = DataOperations(db_manager)
+
+    m_df = await ops.get_cn_m()
+    ppi_df = await ops.get_cn_ppi()
+    pmi_df = await ops.get_cn_pmi()
+    gdp_df = await ops.get_cn_gdp()
+
+    console.print("[cyan]读取行业映射数据...[/cyan]")
+    result = await db_manager.execute_raw_sql(
+        """
+        SELECT l1_code, l1_name, l2_code, l2_name, l3_code, l3_name, is_new
+        FROM sw_industry_member
+        """
+    )
+    industry_rows = result.fetchall()
+    industry_df = pd.DataFrame(
+        industry_rows,
+        columns=["l1_code", "l1_name", "l2_code", "l2_name", "l3_code", "l3_name", "is_new"],
+    )
+
+    config_loader = get_industry_config_loader()
+    current_l3 = set()
+    if not industry_df.empty:
+        current_l3 = set(
+            industry_df.loc[industry_df["is_new"] == "Y", "l3_name"].dropna().unique()
+        )
+    config_l3 = set(config_loader.get_all_industries())
+    missing_in_config = sorted(current_l3 - config_l3)
+    if missing_in_config:
+        preview = ", ".join(missing_in_config[:20])
+        raise ValueError(f"industry_config.json 缺少 {len(missing_in_config)} 个三级行业配置: {preview}")
+
+    calculator = MacroCycleCalculator()
+    phase_df = calculator.calculate(m_df, ppi_df, pmi_df, gdp_df)
+    industry_snapshot_df = calculator.build_industry_snapshot(phase_df, industry_df)
+
+    phase_storage = MacroCyclePhaseStorage(db_manager)
+    industry_storage = MacroCycleIndustryStorage(db_manager)
+
+    console.print("[cyan]写入宏观周期主表...[/cyan]")
+    phase_count = await phase_storage.replace_all(phase_df)
+
+    console.print("[cyan]写入宏观周期行业快照表...[/cyan]")
+    industry_count = await industry_storage.replace_all(industry_snapshot_df)
+
+    if verbose and not phase_df.empty:
+        console.print(
+            f"[dim]宏观周期范围: {phase_df['observation_time'].min().strftime('%Y-%m')} "
+            f"~ {phase_df['observation_time'].max().strftime('%Y-%m')}[/dim]"
+        )
+
+    return {
+        "symbols_processed": 0,
+        "records_processed": phase_count + industry_count,
+        "phase_records": phase_count,
+        "industry_records": industry_count,
     }
 
 
@@ -1393,7 +1478,7 @@ def run_preprocess(
         None,
         "--category",
         "-c",
-        help="预处理类别 (technical, fundamental, quarterly_fundamental, industry_valuation, all)"
+        help="预处理类别 (technical, fundamental, quarterly_fundamental, industry_valuation, macro_cycle, all)"
     ),
     symbols: Optional[str] = typer.Option(
         None,
@@ -1468,13 +1553,7 @@ def run_preprocess(
         fdh-cli preprocess run --symbols 600519.SH,000858.SZ --category technical
     """
     console.print("[bold blue]数据预处理[/bold blue]\n")
-    
-    # 参数校验
-    if not all_data and not symbols:
-        console.print("[yellow]提示: 使用 --all 处理全部股票，或使用 --symbols 指定股票代码[/yellow]")
-        console.print("示例: fdh-cli preprocess run --all --category technical")
-        raise typer.Exit(1)
-    
+
     # 解析参数
     symbol_list = None
     if symbols:
@@ -1485,9 +1564,21 @@ def run_preprocess(
         freq_list = [f.strip().lower() for f in freq.split(",")]
     else:
         freq_list = ["daily"]  # 默认只处理日线
-    
+
     category = category or "technical"
-    
+
+    requires_symbol_scope = category not in ["macro_cycle"]
+
+    # 参数校验
+    if requires_symbol_scope and not all_data and not symbols:
+        console.print("[yellow]提示: 使用 --all 处理全部股票，或使用 --symbols 指定股票代码[/yellow]")
+        console.print("示例: fdh-cli preprocess run --all --category technical")
+        raise typer.Exit(1)
+
+    if category == "macro_cycle" and symbol_list:
+        console.print("[yellow]macro_cycle 预处理不使用 --symbols 参数，将忽略该参数[/yellow]")
+        symbol_list = None
+
     # 如果使用 --force，清除日期限制进行全量处理
     if force:
         console.print("[yellow]强制模式: 将进行全量重新计算[/yellow]")
@@ -1586,6 +1677,20 @@ def run_preprocess(
                 console.print(f"\n[green]行业差异化估值处理完成[/green]")
                 console.print(f"  处理股票: {result['symbols_processed']}")
                 console.print(f"  处理记录: {result['records_processed']}\n")
+
+            if category in ["macro_cycle", "all"]:
+                console.print("[bold cyan]== 中国宏观周期预处理 ==[/bold cyan]\n")
+                result = await _run_macro_cycle_preprocess(
+                    db_manager,
+                    start_date=start_date,
+                    end_date=end_date,
+                    verbose=verbose,
+                )
+                results["macro_cycle"] = result
+                console.print(f"\n[green]中国宏观周期处理完成[/green]")
+                console.print(f"  主表记录: {result['phase_records']}")
+                console.print(f"  行业快照记录: {result['industry_records']}")
+                console.print(f"  总处理记录: {result['records_processed']}\n")
 
             # 汇总
             total_records = sum(r.get("records_processed", 0) for r in results.values())
@@ -1692,6 +1797,38 @@ def show_status(
             )
             
             console.print(table2)
+            console.print()
+
+            # 宏观周期预处理表
+            console.print("[bold]宏观周期预处理表:[/bold]")
+
+            table3 = Table()
+            table3.add_column("表名", style="cyan")
+            table3.add_column("记录数", justify="right")
+            table3.add_column("实体数", justify="right")
+            table3.add_column("数据范围")
+            table3.add_column("最后更新")
+
+            for table_name in [MacroCyclePhaseStorage.TABLE_NAME, MacroCycleIndustryStorage.TABLE_NAME]:
+                stats = await _get_table_stats(db_manager, table_name)
+
+                date_range = "-"
+                if stats["min_time"] and stats["max_time"]:
+                    date_range = f"{stats['min_time'].strftime('%Y-%m-%d')} ~ {stats['max_time'].strftime('%Y-%m-%d')}"
+
+                last_update = "-"
+                if stats["last_update"]:
+                    last_update = stats["last_update"].strftime("%Y-%m-%d %H:%M")
+
+                table3.add_row(
+                    table_name,
+                    f"{stats['record_count']:,}",
+                    str(stats["symbol_count"]),
+                    date_range,
+                    last_update,
+                )
+
+            console.print(table3)
             
         except Exception as e:
             console.print(f"[red]获取状态失败: {e}[/red]")
@@ -1734,6 +1871,7 @@ def show_info():
     console.print("[bold]支持的基本面指标:[/bold]")
     console.print("  • 估值分位: PE/PB/PS 的 5年/10年 历史分位")
     console.print("  • F-Score: Piotroski 财务质量评分 (0-9)")
+    console.print("  • 中国宏观周期: raw_phase/stable_phase + 月度行业快照")
     console.print()
     
     # 频率
@@ -1755,6 +1893,8 @@ def show_info():
     for (freq, adj), table_name in ProcessedDataStorage.TABLE_MAP.items():
         console.print(f"  • {table_name}: {freq} + {adj}")
     console.print(f"  • {FundamentalDataStorage.TABLE_NAME}: 基本面指标")
+    console.print(f"  • {MacroCyclePhaseStorage.TABLE_NAME}: 中国宏观周期主表")
+    console.print(f"  • {MacroCycleIndustryStorage.TABLE_NAME}: 中国宏观周期行业快照")
     console.print()
     
     # 使用示例
@@ -1767,6 +1907,9 @@ def show_info():
     console.print()
     console.print("  # 处理指定股票")
     console.print("  fdh-cli preprocess run --symbols 600519.SH,000858.SZ")
+    console.print()
+    console.print("  # 重建中国宏观周期预处理")
+    console.print("  fdh-cli preprocess run --category macro_cycle")
     console.print()
     console.print("  # 查看预处理状态")
     console.print("  fdh-cli preprocess status")

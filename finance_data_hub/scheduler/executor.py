@@ -225,6 +225,8 @@ class TaskExecutor:
             return self._preprocess_quarterly_fundamental(params)
         elif category == "industry_valuation":
             return self._preprocess_industry_valuation(params)
+        elif category == "macro_cycle":
+            return self._preprocess_macro_cycle(params)
         else:
             raise ValueError(f"Unknown preprocess category: {category}")
 
@@ -329,6 +331,33 @@ class TaskExecutor:
         output = result.stdout.strip() if result.stdout else ""
         if output:
             logger.info(f"Industry valuation preprocess output:\n{output}")
+
+        records_processed = self._parse_preprocess_output(output)
+
+        return {
+            "records_processed": records_processed,
+            "symbols_count": 0
+        }
+
+    def _preprocess_macro_cycle(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """执行中国宏观周期预处理。"""
+        cmd = self._build_preprocess_command("macro_cycle", params)
+        logger.info(f"Executing macro cycle preprocess command: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(self.project_root),
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr or result.stdout
+            raise RuntimeError(f"Macro cycle preprocess failed: {error_msg}")
+
+        output = result.stdout.strip() if result.stdout else ""
+        if output:
+            logger.info(f"Macro cycle preprocess output:\n{output}")
 
         records_processed = self._parse_preprocess_output(output)
 

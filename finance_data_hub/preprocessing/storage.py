@@ -13,6 +13,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from loguru import logger
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from finance_data_hub.database.manager import DatabaseManager
@@ -1107,3 +1108,232 @@ class IndustryValuationStorage:
         except Exception as e:
             logger.error(f"Get latest date failed: {e}")
             return None
+
+
+class MacroCyclePhaseStorage:
+    """中国宏观周期主表存储管理器。"""
+
+    TABLE_NAME = "processed_cn_macro_cycle_phase"
+    COLUMNS = [
+        "time",
+        "observation_time",
+        "m2_yoy",
+        "gdp_yoy",
+        "ppi_yoy",
+        "pmi",
+        "credit_impulse",
+        "raw_phase",
+        "stable_phase",
+        "raw_phase_changed",
+        "stable_phase_changed",
+        "processed_at",
+    ]
+
+    def __init__(self, db_manager: Optional["DatabaseManager"] = None):
+        self.db_manager = db_manager
+
+    async def replace_all(self, df: pd.DataFrame, batch_size: int = 1000) -> int:
+        """事务内全量替换宏观周期主表。"""
+        if self.db_manager is None:
+            logger.warning("No db_manager configured")
+            return 0
+
+        result = df.copy()
+        if result.empty:
+            result = pd.DataFrame(columns=[c for c in self.COLUMNS if c != "processed_at"])
+
+        available_columns = [c for c in self.COLUMNS if c in result.columns]
+        result = result[available_columns].copy() if available_columns else pd.DataFrame()
+        result["processed_at"] = datetime.now()
+
+        for col in ["time", "observation_time"]:
+            if col in result.columns:
+                result[col] = _series_to_pydatetime(pd.to_datetime(result[col]))
+
+        for col in ["raw_phase_changed", "stable_phase_changed"]:
+            if col in result.columns:
+                result[col] = result[col].fillna(False).astype(bool)
+
+        columns = [c for c in self.COLUMNS if c in result.columns]
+        values_list = ProcessedDataStorage._prepare_values_list(result, columns)
+
+        cols_str = ", ".join(columns)
+        placeholders = ", ".join([f"${i+1}" for i in range(len(columns))])
+        sql = f"INSERT INTO {self.TABLE_NAME} ({cols_str}) VALUES ({placeholders})"
+
+        engine = self.db_manager.get_engine()
+        async with engine.begin() as conn:
+            await conn.execute(text(f"TRUNCATE TABLE {self.TABLE_NAME}"))
+            if values_list:
+                raw_conn = await conn.get_raw_connection()
+                asyncpg_conn = raw_conn.driver_connection
+                for i in range(0, len(values_list), batch_size):
+                    await asyncpg_conn.executemany(sql, values_list[i:i + batch_size])
+
+        logger.info("Replaced {} with {} rows", self.TABLE_NAME, len(values_list))
+        return len(values_list)
+
+    async def query(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """查询中国宏观周期主表。"""
+        if self.db_manager is None:
+            return pd.DataFrame()
+
+        conditions = []
+        params: Dict[str, Any] = {}
+
+        if start_date:
+            params["start_date"] = pd.to_datetime(start_date).tz_localize("UTC").to_pydatetime()
+            conditions.append("time >= :start_date")
+
+        if end_date:
+            end_dt = pd.to_datetime(end_date).tz_localize("UTC") + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            params["end_date"] = end_dt.to_pydatetime()
+            conditions.append("time <= :end_date")
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        sql = f"""
+            SELECT * FROM {self.TABLE_NAME}
+            {where_clause}
+            ORDER BY time
+        """
+
+        try:
+            result = await self.db_manager.execute_raw_sql(sql, params)
+            rows = result.fetchall()
+            if not rows:
+                return pd.DataFrame(columns=self.COLUMNS)
+            return pd.DataFrame(rows, columns=result.keys())
+        except Exception as e:
+            logger.error(f"Macro cycle phase query failed: {e}")
+            return pd.DataFrame(columns=self.COLUMNS)
+
+
+class MacroCycleIndustryStorage:
+    """中国宏观周期行业快照存储管理器。"""
+
+    TABLE_NAME = "processed_cn_macro_cycle_industry"
+    COLUMNS = [
+        "time",
+        "observation_time",
+        "l1_code",
+        "l1_name",
+        "l2_code",
+        "l2_name",
+        "l3_code",
+        "l3_name",
+        "config_macro_cycle",
+        "core_indicator",
+        "ref_indicator",
+        "logic",
+        "fscore_exemptions",
+        "is_present_in_sw_member",
+        "matches_raw_phase",
+        "matches_stable_phase",
+        "processed_at",
+    ]
+
+    def __init__(self, db_manager: Optional["DatabaseManager"] = None):
+        self.db_manager = db_manager
+
+    async def replace_all(self, df: pd.DataFrame, batch_size: int = 5000) -> int:
+        """事务内全量替换宏观周期行业快照表。"""
+        if self.db_manager is None:
+            logger.warning("No db_manager configured")
+            return 0
+
+        result = df.copy()
+        if result.empty:
+            result = pd.DataFrame(columns=[c for c in self.COLUMNS if c != "processed_at"])
+
+        available_columns = [c for c in self.COLUMNS if c in result.columns]
+        result = result[available_columns].copy() if available_columns else pd.DataFrame()
+        result["processed_at"] = datetime.now()
+
+        for col in ["time", "observation_time"]:
+            if col in result.columns:
+                result[col] = _series_to_pydatetime(pd.to_datetime(result[col]))
+
+        for col in ["is_present_in_sw_member", "matches_raw_phase", "matches_stable_phase"]:
+            if col in result.columns:
+                result[col] = result[col].fillna(False).astype(bool)
+
+        if "fscore_exemptions" in result.columns:
+            import json
+
+            result["fscore_exemptions"] = result["fscore_exemptions"].apply(
+                lambda x: json.dumps(x) if isinstance(x, list) else (x if pd.notna(x) else None)
+            )
+
+        columns = [c for c in self.COLUMNS if c in result.columns]
+        values_list = ProcessedDataStorage._prepare_values_list(result, columns)
+
+        cols_str = ", ".join(columns)
+        placeholders = ", ".join([f"${i+1}" for i in range(len(columns))])
+        sql = f"INSERT INTO {self.TABLE_NAME} ({cols_str}) VALUES ({placeholders})"
+
+        engine = self.db_manager.get_engine()
+        async with engine.begin() as conn:
+            await conn.execute(text(f"TRUNCATE TABLE {self.TABLE_NAME}"))
+            if values_list:
+                raw_conn = await conn.get_raw_connection()
+                asyncpg_conn = raw_conn.driver_connection
+                for i in range(0, len(values_list), batch_size):
+                    await asyncpg_conn.executemany(sql, values_list[i:i + batch_size])
+
+        logger.info("Replaced {} with {} rows", self.TABLE_NAME, len(values_list))
+        return len(values_list)
+
+    async def query(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        l3_names: Optional[List[str]] = None,
+        preferred_only: bool = True,
+        phase_mode: str = "stable",
+    ) -> pd.DataFrame:
+        """查询中国宏观周期行业快照。"""
+        if self.db_manager is None:
+            return pd.DataFrame()
+
+        conditions = []
+        params: Dict[str, Any] = {}
+
+        if start_date:
+            params["start_date"] = pd.to_datetime(start_date).tz_localize("UTC").to_pydatetime()
+            conditions.append("time >= :start_date")
+
+        if end_date:
+            end_dt = pd.to_datetime(end_date).tz_localize("UTC") + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            params["end_date"] = end_dt.to_pydatetime()
+            conditions.append("time <= :end_date")
+
+        if l3_names:
+            placeholders = ", ".join([f":l3_{i}" for i in range(len(l3_names))])
+            conditions.append(f"l3_name IN ({placeholders})")
+            for i, l3_name in enumerate(l3_names):
+                params[f"l3_{i}"] = l3_name
+
+        if preferred_only:
+            preferred_col = "matches_stable_phase" if phase_mode == "stable" else "matches_raw_phase"
+            conditions.append(f"{preferred_col} = TRUE")
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        sql = f"""
+            SELECT * FROM {self.TABLE_NAME}
+            {where_clause}
+            ORDER BY time, l3_name
+        """
+
+        try:
+            result = await self.db_manager.execute_raw_sql(sql, params)
+            rows = result.fetchall()
+            if not rows:
+                return pd.DataFrame(columns=self.COLUMNS)
+            return pd.DataFrame(rows, columns=result.keys())
+        except Exception as e:
+            logger.error(f"Macro cycle industry query failed: {e}")
+            return pd.DataFrame(columns=self.COLUMNS)

@@ -95,7 +95,7 @@ class JobConfig(BaseModel):
     )
     category: Optional[str] = Field(
         default=None,
-        description="预处理类别（preprocess 类型）: technical, fundamental, quarterly_fundamental, industry_valuation"
+        description="预处理类别（preprocess 类型）: technical, fundamental, quarterly_fundamental, industry_valuation, macro_cycle"
     )
     schedule: Dict[str, Any] = Field(..., description="调度配置")
     params: Dict[str, Any] = Field(default_factory=dict, description="任务参数")

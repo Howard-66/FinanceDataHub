@@ -24,8 +24,11 @@ from finance_data_hub.router.smart_router import SmartRouter
 from finance_data_hub.preprocessing.storage import (
     ProcessedDataStorage,
     FundamentalDataStorage,
-    QuarterlyFundamentalDataStorage
+    QuarterlyFundamentalDataStorage,
+    MacroCycleIndustryStorage,
+    MacroCyclePhaseStorage,
 )
+from finance_data_hub.preprocessing.macro import CN_PHASE_METADATA
 
 
 
@@ -96,6 +99,8 @@ class FinanceDataHub:
         self.processed_storage = ProcessedDataStorage(self.db_manager)
         self.fundamental_storage = FundamentalDataStorage(self.db_manager)
         self.quarterly_storage = QuarterlyFundamentalDataStorage(self.db_manager)
+        self.macro_cycle_phase_storage = MacroCyclePhaseStorage(self.db_manager)
+        self.macro_cycle_industry_storage = MacroCycleIndustryStorage(self.db_manager)
 
         # 初始化 SmartRouter（如果配置文件存在）
         try:
@@ -1874,6 +1879,96 @@ class FinanceDataHub:
             end_date=end_date,
             include_exempted=include_exempted
         )
+
+    # ============================================================================
+    # 中国宏观周期查询
+    # ============================================================================
+
+    def get_cn_macro_cycle(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        phase_mode: str = "stable",
+    ) -> Optional[pd.DataFrame]:
+        """获取中国宏观周期预处理数据（同步方法）。"""
+        return asyncio.run(
+            self.get_cn_macro_cycle_async(start_date=start_date, end_date=end_date, phase_mode=phase_mode)
+        )
+
+    async def get_cn_macro_cycle_async(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        phase_mode: str = "stable",
+    ) -> Optional[pd.DataFrame]:
+        """获取中国宏观周期预处理数据（异步方法）。"""
+        phase_mode = phase_mode.lower()
+        if phase_mode not in {"raw", "stable"}:
+            raise ValueError("phase_mode must be 'raw' or 'stable'")
+
+        df = await self.macro_cycle_phase_storage.query(
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if df.empty:
+            return df
+
+        phase_col = "stable_phase" if phase_mode == "stable" else "raw_phase"
+        changed_col = "stable_phase_changed" if phase_mode == "stable" else "raw_phase_changed"
+        df = df.copy()
+        df["phase"] = df[phase_col]
+        df["phase_changed"] = df[changed_col]
+        df["phase_label"] = df["phase"].map(lambda x: CN_PHASE_METADATA.get(x, {}).get("label"))
+        df["phase_color"] = df["phase"].map(lambda x: CN_PHASE_METADATA.get(x, {}).get("color"))
+        df["phase_y"] = df["phase"].map(lambda x: CN_PHASE_METADATA.get(x, {}).get("y"))
+        return df
+
+    def get_cn_macro_cycle_industries(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        l3_names: Optional[List[str]] = None,
+        preferred_only: bool = True,
+        phase_mode: str = "stable",
+    ) -> Optional[pd.DataFrame]:
+        """获取中国宏观周期行业快照（同步方法）。"""
+        return asyncio.run(
+            self.get_cn_macro_cycle_industries_async(
+                start_date=start_date,
+                end_date=end_date,
+                l3_names=l3_names,
+                preferred_only=preferred_only,
+                phase_mode=phase_mode,
+            )
+        )
+
+    async def get_cn_macro_cycle_industries_async(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        l3_names: Optional[List[str]] = None,
+        preferred_only: bool = True,
+        phase_mode: str = "stable",
+    ) -> Optional[pd.DataFrame]:
+        """获取中国宏观周期行业快照（异步方法）。"""
+        phase_mode = phase_mode.lower()
+        if phase_mode not in {"raw", "stable"}:
+            raise ValueError("phase_mode must be 'raw' or 'stable'")
+
+        df = await self.macro_cycle_industry_storage.query(
+            start_date=start_date,
+            end_date=end_date,
+            l3_names=l3_names,
+            preferred_only=preferred_only,
+            phase_mode=phase_mode,
+        )
+        if df.empty:
+            return df
+
+        match_col = "matches_stable_phase" if phase_mode == "stable" else "matches_raw_phase"
+        df = df.copy()
+        df["is_preferred"] = df[match_col]
+        return df
 
     def get_fundamental_combined(
         self,

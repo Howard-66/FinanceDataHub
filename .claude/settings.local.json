@@ -57,7 +57,8 @@
       "Bash(findstr:*)",
       "Bash(uv run ruff format:*)",
       "Bash(uv run python3 -c \":*)",
-      "Bash(docker stats --no-stream financedatahub-postgres-1)"
+      "Bash(docker stats --no-stream financedatahub-postgres-1)",
+      "Bash(psql -U trading_nexus -d trading_nexus_db -c \":*)"
     ],
     "deny": [],
     "ask": []

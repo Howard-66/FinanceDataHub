@@ -270,3 +270,22 @@ jobs:
     retry:
       max_retries: 2
       delay: 600
+
+  # 中国宏观周期预处理 - 每月运行
+  # 使用 1 个月生效延迟和 2 个月确认平滑规则，输出月度主表与行业快照
+  # 依赖宏观原始数据和最新申万行业成分映射
+  macro_cycle_preprocess:
+    enabled: true
+    type: preprocess
+    category: macro_cycle
+    schedule:
+      type: cron
+      day: 15
+      hour: 8
+      minute: 20
+    params:
+      all: true
+    depends_on: [macro_update, sw_member_update]
+    retry:
+      max_retries: 2
+      delay: 600

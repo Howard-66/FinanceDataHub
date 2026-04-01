@@ -7,7 +7,7 @@
 配置文件格式：
 {
     "行业名称": {
-        "macro_cycle": "RECOVERY" | "STAGFLATION" | "OVERHEAT" | "RECESSION",
+        "macro_cycle": "REFLATION" | "RECOVERY" | "STAGFLATION" | "OVERHEAT",
         "core_indicator": "PE" | "PB" | "PS" | "PEG",
         "ref_indicator": "PE" | "PB" | "PS" | "PEG",
         "logic": "行业逻辑说明",
@@ -151,7 +151,7 @@ class IndustryConfigLoader:
             l3_name: 三级行业名称
 
         Returns:
-            宏观周期 (RECOVERY/STAGFLATION/OVERHEAT/RECESSION)，未配置返回 None
+            宏观周期 (REFLATION/RECOVERY/STAGFLATION/OVERHEAT)，未配置返回 None
         """
         return self.get_industry_config(l3_name).get("macro_cycle")
 

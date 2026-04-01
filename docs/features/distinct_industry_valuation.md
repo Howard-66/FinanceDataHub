@@ -302,7 +302,24 @@ finance_data_hub/preprocessing/pipeline.py - 集成行业估值预处理
 finance_data_hub/cli/preprocess.py - 新增industry_valuation类别支持
 finance_data_hub/sdk.py - 新增get_industry_valuation接口
 CLAUDE.md - 更新文档
+
+与中国宏观周期预处理协同
+
+同一份 `industry_config.json` 现在同时驱动两类预处理：
+
+1. `processed_industry_valuation`
+   决定每个行业使用哪类核心估值指标与参考指标。
+2. `processed_cn_macro_cycle_industry`
+   决定每个申万三级行业在不同宏观阶段下是否属于优先配置行业。
+
+这意味着行业配置已经从“估值口径配置”升级为“估值 + 宏观适配”双用途配置。后续维护时建议遵循三条规则：
+
+1. 新增或重命名三级行业时，同时校验估值指标和 `macro_cycle` 字段。
+2. `ValueInvesting` 的智能选股优先消费两张预处理表，不再在上层重复维护行业-宏观映射。
+3. 若 `industry_config.json` 发生调整，应手动重跑 `industry_valuation` 和 `macro_cycle` 两类预处理。
+
 验证方案
+
 单元测试
 def test_industry_valuation_calculator():
     calc = IndustryValuationCalculator()

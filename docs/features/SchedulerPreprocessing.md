@@ -230,42 +230,62 @@ jobs:
   # ========== 预处理任务 ==========
   
   # 技术指标预处理 - 每日运行
-  daily_tech_preprocess:
+  technical_preprocess:
     enabled: true
     type: preprocess
     category: technical
     schedule:
       type: cron
       hour: 18
-      minute: 0
+      minute: 40
       day_of_week: "mon-fri"
     params:
-      freq: [daily, weekly, monthly]
+      all: true
+      freq: "daily,weekly,monthly"
       adjust: qfq
-      indicators:
-        - ma: [5, 10, 20, 60, 120, 250]
-        - macd: {fast: 12, slow: 26, signal: 9}
-        - rsi: [6, 14]
-        - atr: [14]
     depends_on: [daily_update, adj_factor_update]
 
   # 基本面指标预处理 - 每日运行
-  daily_fundamental_preprocess:
+  fundamental_preprocess:
     enabled: true
     type: preprocess
     category: fundamental
     schedule:
       type: cron
-      hour: 18
-      minute: 30
+      hour: 17
+      minute: 50
       day_of_week: "mon-fri"
     params:
-      indicators:
-        - valuation_percentile:
-            metrics: [pe_ttm, pb, ps_ttm]
-            windows: [250, 500, 750, 1250]  # 1年/2年/3年/5年
-        - f_score: {}
+      all: true
     depends_on: [daily_basic_update, financial_update]
+
+  # 行业差异化估值预处理 - 每日运行
+  industry_valuation_preprocess:
+    enabled: true
+    type: preprocess
+    category: industry_valuation
+    schedule:
+      type: cron
+      hour: 18
+      minute: 0
+      day_of_week: "mon-fri"
+    params:
+      all: true
+    depends_on: [fundamental_preprocess]
+
+  # 中国宏观周期预处理 - 每月 15 号运行
+  macro_cycle_preprocess:
+    enabled: true
+    type: preprocess
+    category: macro_cycle
+    schedule:
+      type: cron
+      day: 15
+      hour: 8
+      minute: 20
+    params:
+      all: true
+    depends_on: [macro_update, sw_member_update]
 ```
 
 #### 1.3 CLI 命令扩展
@@ -318,12 +338,32 @@ finance_data_hub/
 │   ├── fundamental/           # 基本面指标
 │   │   ├── __init__.py
 │   │   ├── valuation.py       # PE/PB/PS 分位
-│   │   └── quality.py         # F-Score
+│   │   ├── quality.py         # F-Score
+│   │   └── industry_valuation.py
+│   ├── macro/                 # 宏观周期预处理
+│   │   ├── __init__.py
+│   │   └── cycle.py           # 中国宏观周期 + 行业快照
 │   ├── pipeline.py            # 处理流水线
 │   └── storage.py             # 预处理数据存储
 ```
 
-#### 2.2 复权处理 (`adjust.py`)
+#### 2.2 宏观周期预处理
+
+中国宏观周期预处理将现有原始宏观表 `cn_m`、`cn_ppi`、`cn_pmi`、`cn_gdp` 统一整理为月度可消费信号：
+
+- `processed_cn_macro_cycle_phase`
+  保存 `observation_time`、`time`、`credit_impulse`、`raw_phase`、`stable_phase`
+- `processed_cn_macro_cycle_industry`
+  保存每个申万三级行业在当月是否匹配 `raw/stable` 宏观阶段
+
+关键口径：
+
+- `observation_time` 为观测月，统一到月末 `15:00 Asia/Shanghai`
+- `time` 为可交易生效月，整体滞后 1 个月
+- `stable_phase` 采用“新阶段连续 2 个月确认才切换”的平滑规则
+- `industry_config.json` 同时驱动行业估值和宏观行业快照，保证下游口径一致
+
+#### 2.3 复权处理 (`adjust.py`)
 
 ```python
 """
@@ -1304,7 +1344,11 @@ fdh-cli update --dataset fina_indicator --force
 # ... 其他 dataset
 
 # 首次预处理
-fdh-cli preprocess --all --force
+fdh-cli preprocess run --category technical --all
+fdh-cli preprocess run --category fundamental --all
+fdh-cli preprocess run --category quarterly_fundamental --all
+fdh-cli preprocess run --category industry_valuation --all
+fdh-cli preprocess run --category macro_cycle
 
 # 启动调度器（后台运行）
 fdh-cli schedule start --daemon
@@ -1348,7 +1392,19 @@ fundamental = fdh.get_processed_valuation_pct(
     indicators=['pe_ttm_pct_250d', 'f_score']
 )
 
-# 5. 实时计算指标（不存储）
+# 5. 获取中国宏观周期（月度）
+macro_cycle = fdh.get_cn_macro_cycle(
+    start_date='2024-01-01',
+    phase_mode='stable'
+)
+
+# 6. 获取当前宏观阶段下的优先行业
+preferred_industries = fdh.get_cn_macro_cycle_industries(
+    preferred_only=True,
+    phase_mode='stable'
+)
+
+# 7. 实时计算指标（不存储）
 raw_data = fdh.get_daily_adjusted(symbols=['600519.SH'], adjust='hfq')
 with_indicators = fdh.calculate_indicators(
     raw_data, 

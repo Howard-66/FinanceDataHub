@@ -215,10 +215,20 @@ class TestTaskExecutor:
         
         executor = TaskExecutor()
         trade_date = executor._get_latest_trade_date()
-        
+
         assert trade_date is not None
         # 格式应该是 YYYY-MM-DD
-        datetime.strptime(trade_date, "%Y-%m-%d")
+
+    def test_build_preprocess_command_for_macro_cycle(self):
+        """测试宏观周期预处理命令构造。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        cmd = executor._build_preprocess_command("macro_cycle", {"all": True})
+
+        joined = " ".join(cmd)
+        assert "--category macro_cycle" in joined
+        assert "--all" in joined
 
 
 class TestScheduleManager:

@@ -17,18 +17,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 当前开发状态
 
-**阶段**: Phase 4 进行中 🔄
+**阶段**: Phase 4 持续完善中 🔄
 - ✅ Phase 1 - 环境搭建与配置管理（已完成）
 - ✅ Phase 2 - 核心批处理流程（已完成）
 - ✅ Phase 2.5 - 高周期数据聚合（已完成）
 - ✅ Phase 3 - 数据访问与查询层（已完成）
-- 🔄 Phase 4 - 调度与预处理模块（进行中）
+- 🔄 Phase 4 - 调度与预处理模块（核心能力已完成，继续补充文档与下游接入）
 
 ### Phase 3 完成情况
 
 **已实现功能**:
 - ✅ DataOperations 查询方法（5个）
-- ✅ SDK 查询接口（10个方法对 = 5对同步/异步）
+- ✅ SDK 查询接口（覆盖原始数据、预处理、宏观周期与行业快照）
 - ✅ SmartRouter 智能路由集成
 - ✅ 路由决策日志记录
 - ✅ 数据新鲜度检查
@@ -49,7 +49,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 上市公司现金流量表数据（经营活动、投资活动、筹资活动现金流量，季度）
 - 上市公司资产负债表数据（资产、负债、股东权益，季度）
 - 上市公司利润表数据（收入、成本和利润，季度）
+- 估值分位预处理数据（日频）
+- 行业差异化估值预处理数据（日频）
 - 季度基本面指标预处理数据（F-Score 9项评分、roe_5y_avg、ni_cfo_corr_3y等，季度）
+- 中国宏观周期月度主表（raw/stable 阶段、信用脉冲、生效月份）
+- 中国宏观周期行业快照（月度，申万三级行业与宏观阶段匹配关系）
 - 交易日历数据（SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE 7个交易所）
 
 ## 高层架构设计
@@ -204,12 +208,17 @@ routing_strategy:
 - [x] 实现周期重采样（weekly/monthly）
 - [x] 实现技术指标（MA/EMA/MACD/RSI/ATR）
 - [x] 实现基本面指标（估值分位/F-Score）
+- [x] 实现行业差异化估值预处理（`processed_industry_valuation`）
+- [x] 实现中国宏观周期预处理（`processed_cn_macro_cycle_phase` / `processed_cn_macro_cycle_industry`）
 - [x] 创建预处理数据表 SQL
 
 **4.3 SDK 扩展** ✅ 已完成
 - [x] `get_daily_adjusted()` - 复权数据获取
 - [x] `get_processed_daily/weekly/monthly()` - 预处理数据获取
 - [x] `get_processed_valuation_pct()` - 基本面指标获取
+- [x] `get_industry_valuation()` - 行业差异化估值查询
+- [x] `get_cn_macro_cycle()` - 中国宏观周期月度主表查询
+- [x] `get_cn_macro_cycle_industries()` - 宏观周期行业快照查询
 - [x] `calculate_indicators()` - 实时指标计算
 
 **4.4 CLI 扩展** ✅ 已完成
@@ -225,8 +234,8 @@ routing_strategy:
 - [x] 实现数据迁移脚本 `008_create_quarterly_fundamental.sql`、`009_add_roe_yearly.sql`
 
 **4.6 待完成**
-- [ ] 编写单元测试和集成测试
-- [ ] 完善文档和使用示例
+- [ ] 继续补充端到端集成测试
+- [ ] 持续完善下游接入文档与使用示例
 
 ### Phase 5: 流式处理与高级特性 📋 规划中
 - [ ] 在 `xtquant_helper` 服务中增加 WebSocket 接口
@@ -700,6 +709,8 @@ print(f"建议: {freshness['recommendation']}")
 | 季度基本面 | `get_quarterly_fundamental()` / `get_quarterly_fundamental_async()` | symbols (可选), start_date (可选), end_date (可选) |
 | 合并基本面 | `get_fundamental_combined()` / `get_fundamental_combined_async()` | symbols (可选), start_date, end_date, include_fscore |
 | 行业差异化估值 | `get_industry_valuation()` / `get_industry_valuation_async()` | symbols (可选), l2_names (可选), start_date (可选), end_date (可选), include_exempted |
+| 中国宏观周期 | `get_cn_macro_cycle()` / `get_cn_macro_cycle_async()` | start_date (可选), end_date (可选), phase_mode (`stable/raw`) |
+| 宏观行业快照 | `get_cn_macro_cycle_industries()` / `get_cn_macro_cycle_industries_async()` | start_date (可选), end_date (可选), preferred_only, phase_mode (`stable/raw`) |
 
 **GDP数据说明**:
 - 日期格式使用季度末日期，如 `2024-03-31` 表示 2024Q1，`2024-06-30` 表示 2024Q2
@@ -721,6 +732,14 @@ print(f"建议: {freshness['recommendation']}")
   - `pmi020100`: 非制造业PMI:商务活动
   - `pmi030000`: 中国综合PMI:产出指数
   - 以及企业规模、生产指数、新订单、从业人员等细分指标
+
+**中国宏观周期预处理说明**:
+- 预处理来源: `cn_m`、`cn_ppi`、`cn_pmi`、`cn_gdp`
+- `credit_impulse = m2_yoy - gdp_yoy`
+- `time` 表示可交易生效月份，统一采用 `observation_time + 1个月`
+- 同时保留 `raw_phase` 与 `stable_phase`
+- `stable_phase` 使用“新阶段连续 2 个生效月确认才切换”的平滑规则
+- 申万三级行业快照由 `industry_config.json` 驱动，和行业差异化估值共用同一份行业配置
 
 **指数每日指标数据说明**:
 - 日期格式使用交易日日期，如 `2024-01-02` 表示 2024年1月2日
@@ -1080,7 +1099,8 @@ fdh-cli schedule list
 
 # 手动执行任务
 fdh-cli schedule run --job daily_update
-fdh-cli schedule run --job basic_update
+fdh-cli schedule run --job daily_basic_update
+fdh-cli schedule run --job macro_cycle_preprocess
 
 # 启动/停止调度器
 fdh-cli schedule start
@@ -1127,7 +1147,7 @@ fdh-cli status --aggregates
 
 ### 数据预处理命令
 
-`fdh-cli preprocess` 命令用于执行数据预处理，包括复权处理、技术指标计算和基本面指标计算。
+`fdh-cli preprocess` 命令用于执行数据预处理，包括复权处理、技术指标计算、基本面指标计算、行业差异化估值以及中国宏观周期月度预处理。
 
 #### 预处理子命令
 
@@ -1165,6 +1185,7 @@ fdh-cli preprocess status
 - `fundamental`: 基本面指标（估值分位）
 - `quarterly_fundamental`: 季度基本面指标（F-Score、财务质量指标）
 - `industry_valuation`: 行业差异化估值（根据行业配置自动选择核心估值指标）
+- `macro_cycle`: 中国宏观周期（月度主表 + 申万三级行业快照）
 - `all`: 全部类别
 
 #### 支持的技术指标
@@ -1209,6 +1230,8 @@ fdh-cli preprocess status
 | `processed_valuation_pct` | 日频 | 估值分位等日频基本面指标 |
 | `processed_fundamental_quality` | 季频 | F-Score及财务质量指标（独立存储） |
 | `processed_industry_valuation`  | 日频 | 行业差异化估值指标 |
+| `processed_cn_macro_cycle_phase` | 月频 | 中国宏观周期主表（观测月 + 生效月 + raw/stable 阶段） |
+| `processed_cn_macro_cycle_industry` | 月频 | 中国宏观周期行业快照（申万三级行业匹配结果） |
 
 #### 使用示例
 
@@ -1233,6 +1256,9 @@ fdh-cli preprocess run --symbols 601111.SH,600036.SH,600900.SH,600519.SH --categ
 
 # 处理行业差异化估值指标
 fdh-cli preprocess run --all --category industry_valuation
+
+# 处理中国宏观周期（月度）
+fdh-cli preprocess run --category macro_cycle
 
 # 处理指定股票
 fdh-cli preprocess run --symbols 600519.SH,000858.SZ --category technical
@@ -1278,6 +1304,8 @@ fdh-cli preprocess run --all --category technical --verbose
 - 预处理命令会自动从 `symbol_daily` 表获取原始数据
 - 技术指标计算需要足够的历史数据（如 MA250 需要至少 250 天数据）
 - 基本面指标需要 `daily_basic` 表中的 PE/PB/PS 数据
+- `macro_cycle` 会读取 `cn_m`、`cn_ppi`、`cn_pmi`、`cn_gdp` 和 `sw_industry_member`
+- `macro_cycle` 不按股票粒度运行，`--symbols` 会被忽略，`--start-date/--end-date` 当前也不会参与计算
 - 使用 `--force` 会重新计算所有数据，耗时较长
 - 批处理大小（`--batch-size`）可根据内存情况调整
 
@@ -1313,7 +1341,30 @@ quarterly = fdh.get_quarterly_fundamental(
     start_date='2020-01-01',
     end_date='2024-12-31'
 )
+
+# 查询中国宏观周期（月度）
+macro_cycle = fdh.get_cn_macro_cycle(
+    start_date='2020-01-01',
+    phase_mode='stable'
+)
+
+# 查询当前宏观阶段下的优先行业
+preferred_industries = fdh.get_cn_macro_cycle_industries(
+    preferred_only=True,
+    phase_mode='stable'
+)
 ```
+
+#### 相关文档
+
+- `docs/features/SchedulerPreprocessing.md`
+  调度器、预处理类别与运行方式总览
+- `docs/features/distinct_industry_valuation.md`
+  行业差异化估值预处理设计说明
+- `docs/features/cn_macro_cycle_preprocessing.md`
+  中国宏观周期月度预处理与行业快照说明
+- `docs/guides/valueinvesting_macro_cycle_integration_guide.md`
+  `ValueInvesting` 智能选股、宏观页面与 qlib 特征接入指南
 
 
 ### 系统状态查看
