@@ -996,6 +996,44 @@ class FinanceDataHub:
         """
         return await self.ops.get_cn_pmi(start_date, end_date)
 
+    def get_index_daily(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取指数日线行情数据（同步方法）
+
+        Args:
+            ts_code: 指数代码（如 '000300.SH'），None 表示全部
+            start_date: 开始日期，格式 'YYYY-MM-DD'，None 表示从最早日期开始
+            end_date: 结束日期，格式 'YYYY-MM-DD'，None 表示到最新日期
+
+        Returns:
+            Optional[pd.DataFrame]: 指数日线行情数据，包含 ts_code, trade_date, close, open, high, low, pre_close, change, pct_chg, vol, amount 列
+        """
+        return asyncio.run(self.get_index_daily_async(ts_code, start_date, end_date))
+
+    async def get_index_daily_async(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取指数日线行情数据（异步方法）
+
+        Args:
+            ts_code: 指数代码，None 表示全部
+            start_date: 开始日期（YYYY-MM-DD 格式）
+            end_date: 结束日期（YYYY-MM-DD 格式）
+
+        Returns:
+            Optional[pd.DataFrame]: 指数日线行情数据
+        """
+        return await self.ops.get_index_daily(ts_code, start_date, end_date)
+
     def get_index_dailybasic(
         self,
         ts_code: Optional[str] = None,

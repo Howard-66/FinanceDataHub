@@ -1761,6 +1761,153 @@ class DataOperations:
         logger.info(f"Total inserted {total_inserted} index_dailybasic records")
         return total_inserted
 
+    async def insert_index_daily_batch(
+        self, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """
+        批量插入指数日线行情数据
+
+        Args:
+            data: 包含指数日线行情数据的 DataFrame
+            batch_size: 每批插入的记录数
+
+        Returns:
+            int: 成功插入的记录数
+        """
+        if data.empty:
+            return 0
+
+        data = data.sort_values(["trade_date", "ts_code"]).reset_index(drop=True)
+
+        columns = [
+            "ts_code",
+            "trade_date",
+            "close",
+            "open",
+            "high",
+            "low",
+            "pre_close",
+            "change",
+            "pct_chg",
+            "vol",
+            "amount",
+        ]
+
+        total_inserted = 0
+        n_batches = (len(data) + batch_size - 1) // batch_size
+
+        for i in range(n_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, len(data))
+            batch_df = data.iloc[start_idx:end_idx]
+
+            placeholders = ", ".join([f":{col}" for col in columns])
+            insert_sql = f"""
+                INSERT INTO index_daily (
+                    {", ".join(columns)},
+                    updated_at,
+                    created_at
+                ) VALUES (
+                    {placeholders},
+                    NOW(),
+                    NOW()
+                )
+                ON CONFLICT (ts_code, trade_date) DO UPDATE SET
+                    close = EXCLUDED.close,
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    pre_close = EXCLUDED.pre_close,
+                    change = EXCLUDED.change,
+                    pct_chg = EXCLUDED.pct_chg,
+                    vol = EXCLUDED.vol,
+                    amount = EXCLUDED.amount,
+                    updated_at = NOW()
+            """
+
+            records = batch_df[columns].to_dict(orient="records")
+            for record in records:
+                record["trade_date"] = _normalize_datetime_for_db(
+                    record["trade_date"], "daily"
+                )
+
+            async with self.db_manager._engine.begin() as conn:
+                await conn.execute(text(insert_sql), records)
+
+            total_inserted += len(batch_df)
+
+        logger.info(f"Total inserted {total_inserted} index_daily records")
+        return total_inserted
+
+    async def get_index_daily(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取指数日线行情数据
+
+        Args:
+            ts_code: 指数代码（如 000300.SH），None 表示全部
+            start_date: 开始日期（YYYY-MM-DD 格式）
+            end_date: 结束日期（YYYY-MM-DD 格式）
+
+        Returns:
+            Optional[pd.DataFrame]: 指数日线行情数据
+        """
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        start_dt = (
+            _normalize_datetime_for_db(start_date, "daily") if start_date else None
+        )
+        end_dt = (
+            _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
+            if end_date
+            else None
+        )
+
+        query = """
+            SELECT ts_code, trade_date, close, open, high, low, pre_close,
+                   change, pct_chg, vol, amount
+            FROM index_daily
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        if start_dt:
+            query += " AND trade_date >= :start_date"
+            params["start_date"] = start_dt
+
+        if end_dt:
+            query += " AND trade_date <= :end_date"
+            params["end_date"] = end_dt
+
+        query += " ORDER BY trade_date, ts_code"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+
+        data = pd.DataFrame([row._asdict() for row in rows])
+
+        if "trade_date" in data.columns and not data.empty:
+            trade_dates = pd.to_datetime(data["trade_date"])
+            if trade_dates.dt.tz is not None:
+                data["trade_date"] = trade_dates.dt.tz_convert("Asia/Shanghai")
+            else:
+                data["trade_date"] = trade_dates.dt.tz_localize("Asia/Shanghai")
+
+        return data
+
     async def get_index_dailybasic(
         self,
         ts_code: Optional[str] = None,
@@ -2299,6 +2446,38 @@ class DataOperations:
         query = """
             SELECT MAX(trade_date) as latest_date
             FROM index_dailybasic
+            WHERE 1=1
+        """
+        params = {}
+
+        if ts_code:
+            query += " AND ts_code = :ts_code"
+            params["ts_code"] = ts_code
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            return row.latest_date.strftime("%Y-%m-%d")
+
+        return None
+
+    async def get_latest_index_daily_date(
+        self, ts_code: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        获取最新的指数日线行情日期
+
+        Args:
+            ts_code: 指数代码（如000300.SH），None表示任意指数
+
+        Returns:
+            Optional[str]: 最新日期（YYYY-MM-DD格式），如果无数据则返回None
+        """
+        query = """
+            SELECT MAX(trade_date) as latest_date
+            FROM index_daily
             WHERE 1=1
         """
         params = {}

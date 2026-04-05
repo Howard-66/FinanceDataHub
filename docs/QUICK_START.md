@@ -173,6 +173,20 @@ fdh-cli update --dataset minute_1 --symbols 600519.SH --verbose
 fdh-cli update --dataset daily_basic --symbols 600519.SH
 ```
 
+#### 4.1 更新指数日线行情
+```bash
+# 更新项目支持的指数日线行情（智能增量）
+fdh-cli update --dataset index_daily
+
+# 更新指定指数
+fdh-cli update --dataset index_daily --symbols 000300.SH
+
+# 指定日期范围
+fdh-cli update --dataset index_daily --start-date 2024-01-01 --end-date 2024-12-31
+
+# 注意：index_daily 不支持 --trade-date 全指数单日批量更新
+```
+
 ### 查看状态
 
 #### 系统状态

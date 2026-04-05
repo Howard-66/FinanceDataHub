@@ -267,6 +267,26 @@ CNPMISchema = DataFrameSchema(
 
 
 # 大盘指数每日指标数据 Schema
+IndexDailySchema = DataFrameSchema(
+    name="index_daily",
+    description="大盘指数日线行情数据",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "指数代码，如000001.SH（上证综指）"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("close", "float64", True, "收盘点位"),
+        ColumnSchema("open", "float64", True, "开盘点位"),
+        ColumnSchema("high", "float64", True, "最高点位"),
+        ColumnSchema("low", "float64", True, "最低点位"),
+        ColumnSchema("pre_close", "float64", True, "昨收点位"),
+        ColumnSchema("change", "float64", True, "涨跌点位"),
+        ColumnSchema("pct_chg", "float64", True, "涨跌幅（%）"),
+        ColumnSchema("vol", "float64", True, "成交量（手）"),
+        ColumnSchema("amount", "float64", True, "成交额（千元）"),
+    ],
+)
+
+
+# 大盘指数每日指标数据 Schema
 IndexDailybasicSchema = DataFrameSchema(
     name="index_dailybasic",
     description="大盘指数每日指标数据",

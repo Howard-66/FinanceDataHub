@@ -409,6 +409,7 @@ fdh-cli update --dataset daily --force --start-date 2024-01-01 # 指定日期范
 # 交易日批量更新 - 批量获取指定交易日所有股票
 fdh-cli update --dataset daily --trade-date 2024-11-18
 fdh-cli update --dataset daily_basic --trade-date 2024-11-18
+# 注意: index_daily 不支持 --trade-date 全指数单日批量模式
 
 # 向后兼容 - 仍支持 --frequency 参数
 fdh-cli update --frequency basic            # 股票基本信息
@@ -480,6 +481,7 @@ EOF
 | `minute_1` | 1分钟数据 | `fdh-cli update --dataset minute_1 --symbols 600519.SH` |
 | `minute_5` | 5分钟数据 | `fdh-cli update --dataset minute_5 --symbols 600519.SH` |
 | `adj_factor` | 复权因子 | `fdh-cli update --dataset adj_factor` |
+| `index_daily` | 指数日线行情 | `fdh-cli update --dataset index_daily --symbols 000300.SH` |
 
 ### 输出控制参数
 

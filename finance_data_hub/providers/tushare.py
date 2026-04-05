@@ -29,6 +29,7 @@ from finance_data_hub.providers.schema import (
     CNPPISchema,
     CNMSchema,
     CNPMISchema,
+    IndexDailySchema,
     IndexDailybasicSchema,
     IndexWeightSchema,
     FinaIndicatorSchema,
@@ -1808,6 +1809,144 @@ class TushareProvider(BaseDataProvider):
 
         logger.info(f"Fetched {len(df)} PMI records")
         return df
+
+    def get_index_daily(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        获取指数日线行情（自动处理 Tushare 8000 条记录限制）
+
+        当单次返回记录数等于 8000 时，自动继续请求更早日期，确保拿到完整历史。
+
+        Args:
+            ts_code: 指数代码（如000300.SH），支持多值（逗号分隔），None 表示使用项目支持的指数列表
+            trade_date: 交易日期（YYYY-MM-DD 或 YYYYMMDD），注意：不支持仅 trade_date 全指数批量模式
+            start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD）
+            end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD）
+
+        Returns:
+            pd.DataFrame: 标准格式的指数日线行情数据
+        """
+        from datetime import timedelta
+
+        logger.info(
+            f"Fetching index daily data (ts_code={ts_code}, trade_date={trade_date}, "
+            f"start_date={start_date}, end_date={end_date})"
+        )
+
+        # 参数约束：index_daily 接口不支持仅 trade_date 拉取全部指数
+        if trade_date and not ts_code:
+            raise ValueError("index_daily does not support trade_date-only full-index query; please specify ts_code")
+
+        # 参数约束：trade_date 与日期范围互斥
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date cannot be used with start_date or end_date")
+
+        # 统一日期格式
+        if start_date:
+            start_date = start_date.replace("-", "")
+        if end_date:
+            end_date = end_date.replace("-", "")
+        if trade_date:
+            trade_date = trade_date.replace("-", "")
+
+        TUSHARE_MAX_RECORDS = 8000
+
+        column_mapping = {
+            "ts_code": "ts_code",
+            "trade_date": "trade_date",
+            "close": "close",
+            "open": "open",
+            "high": "high",
+            "low": "low",
+            "pre_close": "pre_close",
+            "change": "change",
+            "pct_chg": "pct_chg",
+            "vol": "vol",
+            "amount": "amount",
+        }
+
+        if ts_code:
+            index_codes = [c.strip() for c in ts_code.split(",") if c.strip()]
+        else:
+            index_codes = SUPPORTED_INDEX_CODES
+            logger.info(f"No ts_code specified, using supported indexes: {index_codes}")
+
+        all_dataframes = []
+
+        for code in index_codes:
+            logger.info(f"Fetching index_daily for {code}")
+            code_dataframes = []
+            current_end_date = end_date
+            batch_count = 0
+
+            while True:
+                batch_count += 1
+
+                api_params = {
+                    "ts_code": code,
+                    "fields": "ts_code,trade_date,close,open,high,low,pre_close,change,pct_chg,vol,amount",
+                }
+
+                if trade_date:
+                    api_params["trade_date"] = trade_date
+                else:
+                    if start_date:
+                        api_params["start_date"] = start_date
+                    if current_end_date:
+                        api_params["end_date"] = current_end_date
+
+                df = self._call_api("index_daily", **api_params)
+
+                if df is None or df.empty:
+                    logger.info(f"  Batch {batch_count}: No data returned, stopping")
+                    break
+
+                df = convert_to_standard_columns(df, column_mapping)
+                df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
+                df = df.sort_values("trade_date").reset_index(drop=True)
+
+                batch_records = len(df)
+                code_dataframes.append(df)
+                logger.info(f"  Batch {batch_count}: Fetched {batch_records} records")
+
+                # trade_date 模式最多一批
+                if trade_date:
+                    break
+
+                # 命中接口上限时，继续向更早日期翻页
+                if batch_records == TUSHARE_MAX_RECORDS:
+                    earliest_date = df["trade_date"].min().date()
+                    current_end_date = (earliest_date - timedelta(days=1)).strftime("%Y%m%d")
+                    logger.info(
+                        f"  Batch {batch_count}: Max limit reached, fetching earlier data up to {current_end_date}"
+                    )
+                    continue
+
+                break
+
+            if code_dataframes:
+                code_df = pd.concat(code_dataframes, ignore_index=True)
+                all_dataframes.append(code_df)
+                logger.info(f"  {code}: Total {len(code_df)} records")
+
+        if not all_dataframes:
+            logger.warning("No index daily data returned from Tushare")
+            return pd.DataFrame(columns=IndexDailySchema.get_required_columns())
+
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        final_df = final_df.drop_duplicates(subset=["trade_date", "ts_code"]).sort_values(
+            ["trade_date", "ts_code"]
+        ).reset_index(drop=True)
+
+        final_df = validate_dataframe(final_df, IndexDailySchema, provider_name=self.name)
+
+        logger.info(f"Total fetched {len(final_df)} index daily records")
+        return final_df
 
     def get_index_dailybasic(
         self,

@@ -125,6 +125,17 @@ SELECT create_hypertable(
 
 COMMENT ON TABLE adj_factor IS '复权因子表 - 存储股票复权因子数据（TimescaleDB超表）';
 
+-- 指数日线行情数据表超表
+-- 将index_daily转换为TimescaleDB超表，设置分区间隔为5年
+SELECT create_hypertable(
+    'index_daily',
+    'trade_date',
+    if_not_exists => TRUE,
+    chunk_time_interval => INTERVAL '5 years'
+);
+
+COMMENT ON TABLE index_daily IS '指数日线行情数据表 - 存储项目支持指数的日线行情数据（TimescaleDB超表）';
+
 -- 申万行业日线行情数据表超表
 -- 将sw_daily转换为TimescaleDB超表，设置分区间隔为5年
 SELECT create_hypertable(

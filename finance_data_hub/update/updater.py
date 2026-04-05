@@ -1046,6 +1046,102 @@ class DataUpdater:
             logger.exception("Failed to update index_dailybasic data")
             raise
 
+    async def update_index_daily(
+        self,
+        ts_code_list: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """
+        更新指数日线行情数据
+
+        index_daily 接口不支持仅通过 trade_date 获取全部指数当日数据，
+        因此该方法采用“逐指数”模式进行智能增量或全量更新。
+
+        Args:
+            ts_code_list: 指数代码列表，None 表示项目支持的全部指数
+            start_date: 开始日期（YYYY-MM-DD 格式）
+            end_date: 结束日期（YYYY-MM-DD 格式），None 表示到最新
+            force_update: 是否强制更新（忽略数据库状态）
+            progress_callback: 进度回调函数，接收 (current, total) 参数
+
+        Returns:
+            int: 更新的记录数
+        """
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+        if ts_code_list is None:
+            ts_code_list = SUPPORTED_INDEX_CODES
+
+        logger.info(
+            f"Updating index_daily for {len(ts_code_list)} indexes "
+            f"(start={start_date or 'smart/full'}, end={end_date}, force={force_update})"
+        )
+
+        try:
+            total_records = 0
+            total_indexes = len(ts_code_list)
+
+            for idx, ts_code in enumerate(ts_code_list):
+                try:
+                    symbol_start_date = start_date
+
+                    if not force_update and not start_date:
+                        latest_date = await self.data_ops.get_latest_index_daily_date(ts_code)
+
+                        if latest_date:
+                            next_day = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
+                            symbol_start_date = next_day.strftime("%Y-%m-%d")
+                            if symbol_start_date > end_date:
+                                logger.debug(f"Skipping {ts_code} - already up to date")
+                                if progress_callback:
+                                    progress_callback(idx + 1, total_indexes)
+                                continue
+                            logger.debug(f"Smart incremental: {ts_code} from {symbol_start_date}")
+                        else:
+                            symbol_start_date = None
+                            logger.debug(f"Smart download: {ts_code} - fetching full history")
+                    elif force_update:
+                        logger.debug(f"Force update: {ts_code} from {symbol_start_date or 'beginning'}")
+
+                    api_start = symbol_start_date.replace("-", "") if symbol_start_date else None
+                    api_end = end_date.replace("-", "") if end_date else None
+
+                    logger.info(f"Fetching {ts_code} ({idx + 1}/{total_indexes})")
+
+                    data = self.router.route(
+                        asset_class="index",
+                        data_type="daily",
+                        method_name="get_index_daily",
+                        ts_code=ts_code,
+                        start_date=api_start,
+                        end_date=api_end,
+                    )
+
+                    if data is not None and not data.empty:
+                        inserted = await self.data_ops.insert_index_daily_batch(data)
+                        total_records += inserted
+                        logger.info(f"Inserted {inserted} records for {ts_code}")
+                    else:
+                        logger.debug(f"No data for {ts_code}")
+
+                    if progress_callback:
+                        progress_callback(idx + 1, total_indexes)
+
+                except Exception as e:
+                    logger.error(f"Failed to fetch data for {ts_code}: {str(e)}")
+                    continue
+
+            logger.info(f"Updated total {total_records} index_daily records")
+            return total_records
+
+        except Exception:
+            logger.exception("Failed to update index_daily data")
+            raise
+
     async def update_sw_daily(
         self,
         ts_code: Optional[str] = None,

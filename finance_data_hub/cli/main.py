@@ -203,6 +203,7 @@ def update(
       - ppi: 中国PPI工业生产者出厂价格指数数据
       - m: 中国货币供应量数据（M0、M1、M2）
       - pmi: 中国PMI采购经理人指数数据
+      - index_daily: 指数日线行情数据（沪深300、中证500、上证50、上证综指等）
       - index_dailybasic: 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）
       - index_weight: 指数成分和权重数据（月度数据，沪深300、中证500等）
       - sw_daily: 申万行业日线行情数据（申万2021版行业指数）
@@ -225,6 +226,12 @@ def update(
         - 不指定--symbols时：获取当日所有指数数据（增量更新）
         - 指定--symbols时：获取该指数的历史数据（如 --symbols 000001.SH --start-date 2024-01-01 --end-date 2024-12-31）
         - 使用--trade-date参数：获取指定交易日所有指数数据（如 --trade-date 2024-11-27）
+
+        index_daily使用说明:
+        - 不指定--symbols时：更新项目支持的指数列表（SUPPORTED_INDEX_CODES）
+        - 指定--symbols时：获取指定指数的历史数据（如 --symbols 000300.SH）
+        - 支持 --start-date 和 --end-date 指定日期范围
+        - 不支持 --trade-date 单日批量更新模式
 
         index_weight使用说明:
         - 不指定--symbols时：获取所有支持的指数数据（智能更新）
@@ -368,6 +375,8 @@ async def _run_update(
 
     # 更新策略矩阵：根据参数组合自动选择最优策略
     if trade_date:
+        if data_type == "index_daily":
+            raise ValueError("index_daily 接口不支持仅通过 --trade-date 进行全量指数单日更新，请改用 --symbols 或 --start-date/--end-date")
         # 策略 1: trade_date 批量更新（Tushare专用）
         console.print("\n[bold yellow]使用交易日批量更新模式[/bold yellow]")
         await _run_trade_date_update(
@@ -546,6 +555,54 @@ async def _run_smart_download(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新PMI数据失败: {str(e)}")
+                    raise
+
+    # 指数日线行情数据处理
+    if data_type == "index_daily":
+        ts_code_list = symbol_list
+
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - 指数日线行情数据（沪深300、中证500、上证50、上证综指等）")
+            if ts_code_list:
+                console.print(f"  - 将更新 {len(ts_code_list)} 个指数")
+            else:
+                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_CODES)} 个指数")
+            console.print("")
+
+        index_count = len(ts_code_list) if ts_code_list else len(SUPPORTED_INDEX_CODES)
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("指数"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取指数日线行情数据...", total=index_count)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
+                try:
+                    count = await updater.update_index_daily(
+                        ts_code_list=ts_code_list if ts_code_list else SUPPORTED_INDEX_CODES,
+                        start_date=None,  # 智能下载
+                        end_date=end_date,
+                        force_update=False,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=index_count)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数日线行情数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数日线行情数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新指数日线行情数据失败: {str(e)}")
                     raise
 
     # 大盘指数每日指标数据处理
@@ -1330,6 +1387,55 @@ async def _run_force_update(
                     console.print(f"[bold red]ERROR:[/bold red] 更新PMI数据失败: {str(e)}")
                     raise
 
+    # 指数日线行情数据处理
+    if data_type == "index_daily":
+        ts_code_list = symbol_list
+
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 指数日线行情数据（沪深300、中证500、上证50、上证综指等）")
+            console.print("  - 使用指定的日期范围")
+            if ts_code_list:
+                console.print(f"  - 将更新 {len(ts_code_list)} 个指数")
+            else:
+                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_CODES)} 个指数")
+            console.print("")
+
+        index_count = len(ts_code_list) if ts_code_list else len(SUPPORTED_INDEX_CODES)
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            SymbolCountColumn("指数"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在获取指数日线行情数据...", total=index_count)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                def progress_callback(current, total):
+                    progress.update(task, completed=current, total=total)
+
+                try:
+                    count = await updater.update_index_daily(
+                        ts_code_list=ts_code_list if ts_code_list else SUPPORTED_INDEX_CODES,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=index_count)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数日线行情数据")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条指数日线行情数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新指数日线行情数据失败: {str(e)}")
+                    raise
+
     # 大盘指数每日指标数据处理
     if data_type == "index_dailybasic":
         # 获取指数代码列表
@@ -2020,6 +2126,9 @@ async def _run_trade_date_update(
             elif data_type == "daily_basic":
                 # 每日指标数据
                 method_name = "get_daily_basic"
+            elif data_type == "index_daily":
+                console.print("[bold red]index_daily 不支持 --trade-date 批量模式，请使用 --symbols 或 --start-date/--end-date[/bold red]")
+                raise typer.Exit(1)
             elif data_type == "index_dailybasic":
                 # 大盘指数每日指标数据
                 method_name = "get_index_dailybasic"
