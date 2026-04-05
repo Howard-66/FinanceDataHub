@@ -105,6 +105,23 @@ jobs:
 
   # 大盘指数每日指标 - 每日更新（19:30）
   # 注意：Tushare 的指数级别数据通常在收盘后 2-3 小时才完全可用
+  index_daily_update:
+    enabled: true
+    type: download
+    dataset: index_daily
+    schedule:
+      type: cron
+      hour: 20
+      minute: 20
+      day_of_week: "mon-fri"
+    # 注意：index_daily 接口不支持仅通过 trade_date 批量获取全部指数当日数据
+    # 因此这里不配置 trade_date，交由智能增量逻辑逐指数更新
+    retry:
+      max_retries: 3
+      delay: 600  # 10分钟后重试
+
+  # 大盘指数每日指标 - 每日更新（20:30）
+  # 注意：Tushare 的指数级别数据通常在收盘后 2-3 小时才完全可用
   index_dailybasic_update:
     enabled: true
     type: download
