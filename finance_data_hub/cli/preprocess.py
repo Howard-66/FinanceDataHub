@@ -57,7 +57,7 @@ preprocess_app = typer.Typer(
 # 默认技术指标
 DEFAULT_INDICATORS = [
     "ma_20", "ma_50",
-    "macd", "rsi_14", "atr_14"
+    "macd", "rsi_14", "atr_14", "nda"
 ]
 
 # 默认频率
@@ -1031,8 +1031,8 @@ async def _run_quarterly_fundamental_preprocess(
                 fina_sql = f"""
                     SELECT ts_code, end_date_time as end_date, ann_date_time as ann_date,
                            roe, roe_yearly, roe_dt, roa, grossprofit_margin, assets_turn,
-                           current_ratio, debt_to_assets, netprofit_yoy,
-                           q_gsprofit_margin, q_roe
+                           netprofit_margin, current_ratio, debt_to_assets, netprofit_yoy,
+                           q_gsprofit_margin, q_netprofit_margin, q_roe
                     FROM fina_indicator
                     WHERE ts_code IN ({placeholders})
                     ORDER BY ts_code, end_date_time
@@ -1073,8 +1073,8 @@ async def _run_quarterly_fundamental_preprocess(
                 fina_df = pd.DataFrame(fina_rows, columns=[
                     "ts_code", "end_date", "ann_date",
                     "roe", "roe_yearly", "roe_dt", "roa", "grossprofit_margin", "assets_turn",
-                    "current_ratio", "debt_to_assets", "netprofit_yoy",
-                    "q_gsprofit_margin", "q_roe"
+                    "netprofit_margin", "current_ratio", "debt_to_assets", "netprofit_yoy",
+                    "q_gsprofit_margin", "q_netprofit_margin", "q_roe"
                 ])
 
                 bs_rows = bs_result.fetchall()

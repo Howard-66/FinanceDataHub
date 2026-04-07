@@ -236,6 +236,28 @@ class TestTechnicalIndicators:
         valid_atr = result['atr_14'].dropna()
         assert (valid_atr > 0).all()
 
+    def test_nda_indicator(self, price_data):
+        """测试 NDA 指标"""
+        from finance_data_hub.preprocessing.technical import NDAIndicator
+
+        result = NDAIndicator().calculate(price_data)
+
+        assert 'nda_value' in result.columns
+        assert 'volume_confirmed' in result.columns
+        assert result['nda_value'].iloc[:19].isna().all()
+        assert result['nda_value'].iloc[19:].notna().any()
+
+    def test_nda_indicator_without_valid_volume_returns_empty_values(self, price_data):
+        """无有效成交量时 NDA 应返回空值"""
+        from finance_data_hub.preprocessing.technical import NDAIndicator
+
+        price_data = price_data.copy()
+        price_data["volume"] = np.nan
+        result = NDAIndicator().calculate(price_data)
+
+        assert result["nda_value"].isna().all()
+        assert result["volume_confirmed"].isna().all()
+
 
 class TestIndicatorRegistry:
     """指标注册表测试"""
@@ -249,6 +271,9 @@ class TestIndicatorRegistry:
         
         macd = create_indicator('macd')
         assert macd.name == 'macd'
+
+        nda = create_indicator('nda')
+        assert nda.name == 'nda'
     
     def test_unknown_indicator_raises(self):
         """测试创建未知指标抛出异常"""
@@ -268,6 +293,7 @@ class TestIndicatorRegistry:
         assert 'macd' in indicators
         assert 'rsi_14' in indicators
         assert 'atr_14' in indicators
+        assert 'nda' in indicators
 
 
 class TestPreprocessPipeline:
@@ -550,3 +576,32 @@ class TestFScoreTTMVectorized:
         assert 'roe_5y_avg' in result.columns
         assert result['roe_5y_avg'].notna().any()
 
+    def test_nda_multi_symbol(self):
+        """NDA 在多股票 DataFrame 中正确按股票分组计算"""
+        from finance_data_hub.preprocessing.technical import NDAIndicator
+        np.random.seed(42)
+        n = 60
+        dates = pd.date_range('2024-01-01', periods=n, freq='D')
+        symbols = ['600519.SH', '000858.SZ', '601398.SH']
+        frames = []
+        for idx, sym in enumerate(symbols):
+            closes = 100 + idx + np.arange(n) * 0.5
+            frames.append(pd.DataFrame({
+                'time': dates,
+                'symbol': sym,
+                'open': closes - 1.0,
+                'high': closes + 2.0,
+                'low': closes - 2.0,
+                'close': closes,
+                'volume': np.arange(1, n + 1) * (idx + 1),
+            }))
+        multi_symbol_data = pd.concat(frames, ignore_index=True)
+
+        result = NDAIndicator().calculate(multi_symbol_data)
+
+        assert 'nda_value' in result.columns
+        assert 'volume_confirmed' in result.columns
+        for sym in ['600519.SH', '000858.SZ', '601398.SH']:
+            sym_data = result[result['symbol'] == sym]
+            assert sym_data['nda_value'].iloc[:19].isna().all()
+            assert sym_data['nda_value'].iloc[19:].notna().any()

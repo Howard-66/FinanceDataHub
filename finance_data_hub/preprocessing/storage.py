@@ -62,7 +62,8 @@ class ProcessedDataStorage:
         "ma_20", "ma_50",
         "macd_dif", "macd_dea", "macd_hist",
         "rsi_14",
-        "atr_14"
+        "atr_14",
+        "nda_value", "volume_confirmed",
     ]
     
     # 基础 OHLCV 列
@@ -711,7 +712,10 @@ class QuarterlyFundamentalDataStorage:
     # 补充指标列
     EXTRA_COLUMNS = [
         "roa_ttm", "roe_5y_avg", "ni_cfo_corr_3y", "debt_ratio", "current_ratio",
-        "cfo_ttm", "ni_ttm", "gpm_ttm", "at_ttm"
+        "cfo_ttm", "ni_ttm", "gpm_ttm", "at_ttm",
+        "npm_ttm", "gpm_ttm_12q_std", "gpm_ttm_12q_delta", "npm_ttm_12q_std",
+        "cfo_to_ni_ttm",
+        "buffett_gpm_flag", "buffett_npm_stable_flag", "buffett_roa_flag", "buffett_cashflow_flag",
     ]
     
     # 日期列

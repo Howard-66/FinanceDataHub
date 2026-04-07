@@ -83,7 +83,10 @@ class FScoreCalculator:
     # 补充指标列名
     EXTRA_COLUMNS = [
         "roa_ttm", "roe_5y_avg", "ni_cfo_corr_3y", "debt_ratio", "current_ratio",
-        "cfo_ttm", "ni_ttm", "gpm_ttm", "at_ttm"
+        "cfo_ttm", "ni_ttm", "gpm_ttm", "at_ttm",
+        "npm_ttm", "gpm_ttm_12q_std", "gpm_ttm_12q_delta", "npm_ttm_12q_std",
+        "cfo_to_ni_ttm",
+        "buffett_gpm_flag", "buffett_npm_stable_flag", "buffett_roa_flag", "buffett_cashflow_flag",
     ]
     
     def __init__(self, industry_config_path: Optional[str] = None):
@@ -194,7 +197,8 @@ class FScoreCalculator:
         # q_gsprofit_margin: 单季度毛利率，用于 F_ΔMARGIN TTM
         # q_roe: 单季度ROE，用于 roe_5y_avg（20期滚动）
         fina_cols = ["ts_code", "end_date_time", "ann_date", "roa", "roe", "roe_yearly",
-                     "grossprofit_margin", "q_gsprofit_margin", "q_roe",
+                     "grossprofit_margin", "netprofit_margin",
+                     "q_gsprofit_margin", "q_netprofit_margin", "q_roe",
                      "assets_turn", "current_ratio"]
         
         # 选择必要的列(来自balancesheet)
@@ -293,6 +297,9 @@ class FScoreCalculator:
         
         # 单季度值 → TTM（q_gsprofit_margin 用 rolling mean）
         result["gpm_ttm"] = self._calc_quarterly_ttm(result, "q_gsprofit_margin", agg="mean")
+        result["npm_ttm"] = self._calc_quarterly_ttm(result, "q_netprofit_margin", agg="mean")
+        if result["npm_ttm"].isna().all() and "netprofit_margin" in result.columns:
+            result["npm_ttm"] = self._calc_cumulative_to_ttm(result, "netprofit_margin")
         
         # === 1. 盈利能力指标 (4分) ===
         
@@ -415,7 +422,86 @@ class FScoreCalculator:
             result["current_ratio"] = (
                 result["total_cur_assets"] / result["total_cur_liab"].replace(0, np.nan)
             )
+
+        gpm_exempt = "f_score_gross_margin" in active_exemptions
+        result["gpm_ttm_12q_std"] = self._calc_rolling_std(result, "gpm_ttm", window=12)
+        result["gpm_ttm_12q_delta"] = pd.to_numeric(result.get("gpm_ttm"), errors="coerce").diff(12)
+        if gpm_exempt:
+            result["gpm_ttm_12q_std"] = np.nan
+            result["gpm_ttm_12q_delta"] = np.nan
+
+        result["npm_ttm_12q_std"] = self._calc_rolling_std(result, "npm_ttm", window=12)
+
+        ni_ttm = pd.to_numeric(result.get("ni_ttm"), errors="coerce")
+        cfo_ttm = pd.to_numeric(result.get("cfo_ttm"), errors="coerce")
+        result["cfo_to_ni_ttm"] = np.where(
+            ni_ttm > 0,
+            cfo_ttm / ni_ttm.replace(0, np.nan),
+            np.nan,
+        )
+
+        result["buffett_gpm_flag"] = self._calc_nullable_flag(
+            valid_mask=(
+                pd.to_numeric(result.get("gpm_ttm"), errors="coerce").notna()
+                & pd.to_numeric(result.get("gpm_ttm_12q_delta"), errors="coerce").notna()
+                & pd.to_numeric(result.get("gpm_ttm_12q_std"), errors="coerce").notna()
+            ) & (~gpm_exempt),
+            condition=(
+                (pd.to_numeric(result.get("gpm_ttm"), errors="coerce") >= 40)
+                & (pd.to_numeric(result.get("gpm_ttm_12q_delta"), errors="coerce") >= 0)
+                & (pd.to_numeric(result.get("gpm_ttm_12q_std"), errors="coerce") <= 5)
+            ),
+        )
+        result["buffett_npm_stable_flag"] = self._calc_nullable_flag(
+            valid_mask=(
+                pd.to_numeric(result.get("npm_ttm"), errors="coerce").notna()
+                & pd.to_numeric(result.get("npm_ttm_12q_std"), errors="coerce").notna()
+            ),
+            condition=(
+                (pd.to_numeric(result.get("npm_ttm"), errors="coerce") > 0)
+                & (pd.to_numeric(result.get("npm_ttm_12q_std"), errors="coerce") <= 3)
+            ),
+        )
+        result["buffett_roa_flag"] = self._calc_nullable_flag(
+            valid_mask=pd.to_numeric(result.get("roa_ttm"), errors="coerce").notna(),
+            condition=pd.to_numeric(result.get("roa_ttm"), errors="coerce") >= 15,
+        )
+        result["buffett_cashflow_flag"] = self._calc_nullable_flag(
+            valid_mask=(
+                cfo_ttm.notna()
+                & ni_ttm.notna()
+                & pd.to_numeric(result.get("cfo_to_ni_ttm"), errors="coerce").notna()
+            ),
+            condition=(
+                (cfo_ttm > 0)
+                & (ni_ttm > 0)
+                & (pd.to_numeric(result.get("cfo_to_ni_ttm"), errors="coerce") >= 1.0)
+            ),
+        )
         
+        return result
+
+    def _calc_rolling_std(
+        self,
+        df: pd.DataFrame,
+        col: str,
+        window: int,
+        min_periods: int | None = None,
+    ) -> pd.Series:
+        if col not in df.columns:
+            return pd.Series([np.nan] * len(df), index=df.index, dtype=float)
+
+        values = pd.to_numeric(df[col], errors="coerce")
+        return values.rolling(window=window, min_periods=min_periods or min(4, window)).std()
+
+    def _calc_nullable_flag(
+        self,
+        valid_mask: pd.Series,
+        condition: pd.Series,
+    ) -> pd.Series:
+        result = pd.Series(pd.NA, index=valid_mask.index, dtype="Int8")
+        valid = valid_mask.fillna(False)
+        result.loc[valid] = condition.loc[valid].fillna(False).astype("int8")
         return result
     
     def _calc_yoy_improvement(

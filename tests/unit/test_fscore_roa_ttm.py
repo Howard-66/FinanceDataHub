@@ -16,7 +16,13 @@ def calculator():
     return FScoreCalculator()
 
 
-def _make_fina_df(records, q_gsprofit_margin=None, q_roe=None):
+def _make_fina_df(
+    records,
+    q_gsprofit_margin=None,
+    q_netprofit_margin=None,
+    q_roe=None,
+    netprofit_margin=None,
+):
     """
     构造 fina_indicator 格式的 DataFrame
     
@@ -32,11 +38,14 @@ def _make_fina_df(records, q_gsprofit_margin=None, q_roe=None):
     df["roe"] = 10.0
     df["roe_yearly"] = 10.0
     df["grossprofit_margin"] = 50.0
+    df["netprofit_margin"] = 15.0 if netprofit_margin is None else netprofit_margin
     df["assets_turn"] = 0.5
     df["current_ratio"] = 1.5
     
     if q_gsprofit_margin is not None:
         df["q_gsprofit_margin"] = q_gsprofit_margin
+    if q_netprofit_margin is not None:
+        df["q_netprofit_margin"] = q_netprofit_margin
     if q_roe is not None:
         df["q_roe"] = q_roe
     
@@ -822,3 +831,73 @@ def test_ttm_fields_in_output(calculator):
         q4_val = result.iloc[3][col]
         assert pd.notna(q4_val), f"Column {col} is NaN for Q4"
 
+
+def test_buffett_moat_fields_are_calculated(calculator):
+    records = [
+        ("20210331", 3.0), ("20210630", 6.0), ("20210930", 9.0), ("20211231", 12.0),
+        ("20220331", 3.5), ("20220630", 7.0), ("20220930", 10.5), ("20221231", 14.0),
+        ("20230331", 4.0), ("20230630", 8.0), ("20230930", 12.0), ("20231231", 16.0),
+        ("20240331", 4.5), ("20240630", 9.0), ("20240930", 13.5), ("20241231", 18.0),
+    ]
+    q_gpm = [40.0, 41.0, 42.0, 43.0, 41.0, 42.0, 43.0, 44.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0, 48.0, 49.0]
+    q_npm = [18.0, 18.5, 19.0, 19.5, 18.2, 18.7, 19.2, 19.7, 18.4, 18.9, 19.4, 19.9, 20.2, 20.5, 20.8, 21.0]
+    fina_df = _make_fina_df(
+        records,
+        q_gsprofit_margin=q_gpm,
+        q_netprofit_margin=q_npm,
+    )
+    bs_df = _make_balancesheet_df([r[0] for r in records])
+    cf_df = _make_cashflow_df([r[0] for r in records], n_cashflow_act=[60, 130, 210, 320, 70, 145, 230, 350, 80, 160, 250, 380, 95, 175, 270, 410])
+    inc_df = _make_income_df([r[0] for r in records], n_income=[50, 110, 180, 260, 55, 120, 195, 285, 60, 130, 210, 310, 78, 145, 225, 340])
+
+    result = calculator.calculate(fina_df, bs_df, cf_df, inc_df)
+    latest = result.iloc[-1]
+
+    for column in (
+        "npm_ttm",
+        "gpm_ttm_12q_std",
+        "gpm_ttm_12q_delta",
+        "npm_ttm_12q_std",
+        "cfo_to_ni_ttm",
+        "buffett_gpm_flag",
+        "buffett_npm_stable_flag",
+        "buffett_roa_flag",
+        "buffett_cashflow_flag",
+    ):
+        assert column in result.columns
+    assert latest["npm_ttm"] == pytest.approx(np.mean(q_npm[-4:]))
+    assert latest["gpm_ttm_12q_delta"] > 0
+    assert latest["cfo_to_ni_ttm"] > 1.0
+    assert int(latest["buffett_gpm_flag"]) == 1
+    assert int(latest["buffett_npm_stable_flag"]) == 1
+    assert int(latest["buffett_roa_flag"]) == 1
+    assert int(latest["buffett_cashflow_flag"]) == 1
+
+
+def test_buffett_gpm_fields_are_null_when_margin_is_exempt(calculator):
+    records = [
+        ("20210331", 3.0), ("20210630", 6.0), ("20210930", 9.0), ("20211231", 12.0),
+        ("20220331", 3.5), ("20220630", 7.0), ("20220930", 10.5), ("20221231", 14.0),
+        ("20230331", 4.0), ("20230630", 8.0), ("20230930", 12.0), ("20231231", 16.0),
+    ]
+    fina_df = _make_fina_df(
+        records,
+        q_gsprofit_margin=[38.0] * 12,
+        q_netprofit_margin=[10.0] * 12,
+    )
+    bs_df = _make_balancesheet_df([r[0] for r in records])
+    cf_df = _make_cashflow_df([r[0] for r in records], n_cashflow_act=[60] * 12)
+    inc_df = _make_income_df([r[0] for r in records], n_income=[50] * 12)
+
+    result = calculator.calculate(
+        fina_df,
+        bs_df,
+        cf_df,
+        inc_df,
+        exemptions=["f_score_gross_margin"],
+    )
+    latest = result.iloc[-1]
+
+    assert pd.isna(latest["gpm_ttm_12q_std"])
+    assert pd.isna(latest["gpm_ttm_12q_delta"])
+    assert pd.isna(latest["buffett_gpm_flag"])
