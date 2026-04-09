@@ -7,8 +7,8 @@
 - info: 显示预处理表信息
 """
 
-from typing import Optional, List
-from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any
+from datetime import datetime, timedelta, date
 import asyncio
 import concurrent.futures
 import os
@@ -72,9 +72,268 @@ RESAMPLE_MIN_RECORDS = {
     "monthly": 30,    # MA20需要20条，加buffer（约需600天日线数据）
 }
 
+# 技术指标最小预热窗口（按目标频率的K线根数）
+# 这里按 TA-Lib / 行业常见习惯保守估计，避免分段重算时出现长串空值。
+INDICATOR_WARMUP_BARS = {
+    "ma_20": 20,
+    "ma_50": 50,
+    "macd": 35,
+    "rsi_14": 14,
+    "atr_14": 14,
+    "nda": 20,
+}
+
+# 每种目标频率对应的大致交易日/自然日换算，用于估算回看窗口。
+TRADING_DAYS_PER_FREQ = {
+    "daily": 1,
+    "weekly": 5,
+    "monthly": 22,
+}
+
+CALENDAR_DAYS_PER_FREQ = {
+    "daily": 2,
+    "weekly": 7,
+    "monthly": 31,
+}
+
 # Phase 2: 并发控制配置
 DEFAULT_MAX_CONCURRENT_BATCHES = 4  # 默认并发批次数（I/O并发）
 DEFAULT_NUM_WORKERS = None  # 默认工作进程数（None表示自动：min(CPU核心数-1, 4)）
+
+
+def _get_required_bars_for_freq(freq: str, indicators: Optional[List[str]] = None) -> int:
+    """
+    估算目标频率下技术指标所需的最小K线数量。
+
+    优先使用按指标推导出的窗口，再与经验安全值取最大，避免分段回填时
+    因 warm-up 不足导致 MA / MACD / RSI / ATR 在起始阶段被重算为空。
+    """
+    indicator_names = indicators or DEFAULT_INDICATORS
+    indicator_bars = max(
+        (INDICATOR_WARMUP_BARS.get(name, 1) for name in indicator_names),
+        default=1,
+    )
+    return max(indicator_bars, RESAMPLE_MIN_RECORDS.get(freq.lower(), indicator_bars))
+
+
+def _estimate_records_per_symbol(freqs: Optional[List[str]] = None, indicators: Optional[List[str]] = None) -> int:
+    """
+    估算增量模式下每只股票应抓取的日线记录数。
+
+    不同目标频率需要的 warm-up 长度不同：
+    - 日线：直接使用指标窗口
+    - 周线：按约 5 个交易日折算
+    - 月线：按约 22 个交易日折算
+    """
+    target_freqs = freqs or ["daily"]
+    return max(
+        _get_required_bars_for_freq(freq, indicators) * TRADING_DAYS_PER_FREQ.get(freq.lower(), 22)
+        for freq in target_freqs
+    )
+
+
+def _estimate_fetch_start_date(
+    start_date: Optional[str],
+    freqs: Optional[List[str]] = None,
+    indicators: Optional[List[str]] = None,
+) -> Optional[str]:
+    """
+    为带 start_date 的技术预处理估算一个更早的抓取起点。
+
+    计算指标时会用到 start_date 之前的历史样本，但最终 upsert 仍只写回用户
+    请求的日期范围，从而兼顾正确性与边界控制。
+    """
+    if not start_date:
+        return None
+
+    target_freqs = freqs or ["daily"]
+    requested_start = pd.to_datetime(start_date)
+    warmup_days = max(
+        _get_required_bars_for_freq(freq, indicators) * CALENDAR_DAYS_PER_FREQ.get(freq.lower(), 31)
+        for freq in target_freqs
+    )
+    return (requested_start - timedelta(days=warmup_days)).strftime("%Y-%m-%d")
+
+
+def _to_local_timestamp(value: Any) -> pd.Timestamp:
+    """将时间统一转换为 Asia/Shanghai 时区的 pandas Timestamp。"""
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        return ts.tz_localize("Asia/Shanghai")
+    return ts.tz_convert("Asia/Shanghai")
+
+
+def _to_local_date(value: Any) -> date:
+    """将时间统一转换为 Asia/Shanghai 交易日日期。"""
+    return _to_local_timestamp(value).date()
+
+
+def _get_period_end_date(value: Any, freq: str) -> date:
+    """
+    获取指定时间所属周期的结束日期（按交易日所在本地日期计算）。
+    """
+    local_ts = _to_local_timestamp(value)
+    freq_key = freq.lower()
+
+    if freq_key == "daily":
+        return local_ts.date()
+
+    if freq_key == "weekly":
+        days_to_friday = (4 - local_ts.weekday()) % 7
+        return (local_ts + pd.Timedelta(days=days_to_friday)).date()
+
+    if freq_key == "monthly":
+        return (local_ts + pd.offsets.MonthEnd(0)).date()
+
+    raise ValueError(f"Unsupported frequency: {freq}")
+
+
+def _build_incremental_upsert_rule(
+    freq: str,
+    source_latest_time: Any,
+    latest_processed_time: Any,
+    requested_start_date: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    为单个频率生成增量回写规则。
+
+    返回：
+    - None: 当前频率无新受影响数据，可跳过
+    - {"start_date": date, "inclusive": bool}
+    """
+    if requested_start_date:
+        return {
+            "start_date": pd.to_datetime(requested_start_date).date(),
+            "inclusive": True,
+        }
+
+    if source_latest_time is None:
+        return None
+
+    if latest_processed_time is None:
+        return {"start_date": None, "inclusive": True}
+
+    freq_key = freq.lower()
+    source_latest_date = _to_local_date(source_latest_time)
+    latest_processed_date = _to_local_date(latest_processed_time)
+
+    if freq_key == "daily":
+        if source_latest_date <= latest_processed_date:
+            return None
+        return {"start_date": latest_processed_date, "inclusive": False}
+
+    source_period_end = _get_period_end_date(source_latest_time, freq_key)
+
+    if latest_processed_date < source_period_end:
+        return {"start_date": latest_processed_date, "inclusive": False}
+
+    if latest_processed_date == source_period_end:
+        return {"start_date": latest_processed_date, "inclusive": True}
+
+    return None
+
+
+async def _get_latest_source_times(
+    db_manager: DatabaseManager,
+    symbols: List[str],
+    end_date: Optional[str] = None,
+) -> Dict[str, Any]:
+    """查询 symbol_daily 中每只股票的最新时间。"""
+    if not symbols:
+        return {}
+
+    params: Dict[str, Any] = {"symbols": symbols}
+    date_condition = ""
+    if end_date:
+        date_condition = "AND time <= :end_date"
+        params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
+
+    sql = f"""
+        SELECT symbol, MAX(time) AS latest_time
+        FROM symbol_daily
+        WHERE symbol = ANY(:symbols)
+        {date_condition}
+        GROUP BY symbol
+    """
+
+    result = await db_manager.execute_raw_sql(sql, params)
+    return {row[0]: row[1] for row in result.fetchall()}
+
+
+async def _get_latest_processed_times(
+    db_manager: DatabaseManager,
+    symbols: List[str],
+    freqs: List[str],
+    adjust_type: str,
+) -> Dict[str, Dict[str, Any]]:
+    """查询各预处理表中每只股票的最新时间。"""
+    if not symbols:
+        return {}
+
+    storage = ProcessedDataStorage()
+    latest_map: Dict[str, Dict[str, Any]] = {}
+
+    for freq in freqs:
+        table_name = storage.TABLE_MAP.get((freq.lower(), adjust_type.lower()))
+        if not table_name:
+            continue
+
+        sql = f"""
+            SELECT symbol, MAX(time) AS latest_time
+            FROM {table_name}
+            WHERE symbol = ANY(:symbols)
+            GROUP BY symbol
+        """
+
+        result = await db_manager.execute_raw_sql(sql, {"symbols": symbols})
+        latest_map[freq] = {row[0]: row[1] for row in result.fetchall()}
+
+    return latest_map
+
+
+def _filter_by_upsert_rules(
+    df: pd.DataFrame,
+    freq: str,
+    upsert_rules: Dict[str, Dict[str, Any]],
+) -> pd.DataFrame:
+    """
+    按 symbol 对结果集应用增量回写规则，只保留受影响区间。
+    """
+    if df.empty:
+        return df
+
+    if not upsert_rules:
+        return pd.DataFrame(columns=df.columns)
+
+    filtered_parts = []
+    for symbol, group in df.groupby("symbol", sort=False):
+        symbol_rules = upsert_rules.get(symbol, {})
+        rule = symbol_rules.get(freq)
+        if rule is None:
+            continue
+
+        if rule.get("start_date") is None:
+            filtered_parts.append(group)
+            continue
+
+        local_time = pd.to_datetime(group["time"])
+        if pd.api.types.is_datetime64tz_dtype(local_time):
+            local_dates = local_time.dt.tz_convert("Asia/Shanghai").dt.date
+        else:
+            local_dates = local_time.dt.tz_localize("Asia/Shanghai").dt.date
+
+        if rule.get("inclusive", True):
+            filtered_group = group[local_dates >= rule["start_date"]]
+        else:
+            filtered_group = group[local_dates > rule["start_date"]]
+
+        if not filtered_group.empty:
+            filtered_parts.append(filtered_group)
+
+    if not filtered_parts:
+        return pd.DataFrame(columns=df.columns)
+
+    return pd.concat(filtered_parts, ignore_index=True)
 
 
 def _compute_indicators_in_process(df_bytes: bytes, indicators: List[str], adjust_type: str) -> bytes:
@@ -528,6 +787,8 @@ async def _run_technical_preprocess(
 
     indicators = indicators or DEFAULT_INDICATORS
     freqs = freqs or ["daily"]
+    requested_start_date = start_date
+    fetch_start_date = _estimate_fetch_start_date(start_date, freqs=freqs, indicators=indicators)
 
     # 自动确定工作进程数
     if num_workers is None:
@@ -553,8 +814,89 @@ async def _run_technical_preprocess(
         full_symbols, incr_symbols, adj_factor_map = await _classify_stocks_by_adj_factor(
             db_manager, symbols, verbose=verbose
         )
-        console.print(f"  全量重算: {len(full_symbols)} 只 (adj_factor变化或首次处理)")
-        console.print(f"  增量处理: {len(incr_symbols)} 只 (adj_factor未变)")
+        console.print(f"  初始全量重算: {len(full_symbols)} 只 (adj_factor变化或首次处理)")
+        console.print(f"  初始增量处理: {len(incr_symbols)} 只 (adj_factor未变)")
+
+    incremental_plan: Dict[str, Dict[str, Any]] = {}
+    if incr_symbols:
+        source_latest_map = await _get_latest_source_times(
+            db_manager,
+            incr_symbols,
+            end_date=end_date,
+        )
+        processed_latest_map = await _get_latest_processed_times(
+            db_manager,
+            incr_symbols,
+            freqs,
+            adjust_type,
+        )
+
+        promoted_to_full = []
+        planned_incr_symbols = []
+
+        for symbol in incr_symbols:
+            source_latest_time = source_latest_map.get(symbol)
+            if source_latest_time is None:
+                continue
+
+            symbol_rules: Dict[str, Dict[str, Any]] = {}
+            needs_full = False
+
+            for freq in freqs:
+                latest_processed_time = processed_latest_map.get(freq, {}).get(symbol)
+
+                if requested_start_date is None and latest_processed_time is None:
+                    needs_full = True
+                    break
+
+                rule = _build_incremental_upsert_rule(
+                    freq,
+                    source_latest_time,
+                    latest_processed_time,
+                    requested_start_date=requested_start_date,
+                )
+                if rule is not None:
+                    symbol_rules[freq] = rule
+
+            if needs_full:
+                promoted_to_full.append(symbol)
+                continue
+
+            if not symbol_rules:
+                continue
+
+            rule_dates = [
+                rule["start_date"]
+                for rule in symbol_rules.values()
+                if rule.get("start_date") is not None
+            ]
+            anchor_start = requested_start_date or (min(rule_dates).isoformat() if rule_dates else None)
+            fetch_start = (
+                _estimate_fetch_start_date(
+                    anchor_start,
+                    freqs=list(symbol_rules.keys()),
+                    indicators=indicators,
+                )
+                if anchor_start
+                else None
+            )
+
+            incremental_plan[symbol] = {
+                "fetch_start_date": fetch_start,
+                "upsert_rules": symbol_rules,
+            }
+            planned_incr_symbols.append(symbol)
+
+        if promoted_to_full:
+            full_symbols.extend(promoted_to_full)
+
+        incr_symbols = planned_incr_symbols
+
+        if verbose:
+            console.print(f"  [dim]增量计划生成: {len(incr_symbols)}只待增量, {len(promoted_to_full)}只补升为全量[/dim]")
+
+    console.print(f"  最终全量重算: {len(full_symbols)} 只")
+    console.print(f"  最终增量处理: {len(incr_symbols)} 只")
 
     # 初始化存储（resample 已移入子进程）
     storage = ProcessedDataStorage(db_manager)
@@ -570,9 +912,10 @@ async def _run_technical_preprocess(
     async def process_batch(
         batch_symbols: List[str],
         is_full: bool,
-        batch_start_date: Optional[str] = None,
+        batch_fetch_start_date: Optional[str] = None,
         task=None,
-        records_limit: Optional[int] = None,
+        upsert_start_date: Optional[str] = None,
+        symbol_upsert_rules: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> tuple[int, int]:
         """
         处理单个批次（支持并发控制）
@@ -580,32 +923,23 @@ async def _run_technical_preprocess(
         Args:
             batch_symbols: 股票代码列表
             is_full: 是否全量处理
-            batch_start_date: 开始日期（全量模式使用）
+            batch_fetch_start_date: 抓取开始日期（全量模式使用，可能早于用户请求的start_date）
             task: 进度任务
-            records_limit: 每个股票获取的记录数（增量模式使用，优先级高于batch_start_date）
+            upsert_start_date: 最终写回的开始日期（用于裁掉 warm-up 数据）
+            symbol_upsert_rules: 每只股票、每个频率的精确回写规则（增量模式使用）
 
         Returns:
             (processed_symbols, processed_records)
         """
         async with semaphore:
             # 获取数据
-            if records_limit is not None:
-                # 增量模式：按记录数获取，更精确
-                df = await _get_stock_data_by_records(
-                    db_manager,
-                    batch_symbols,
-                    records_per_symbol=records_limit,
-                    end_date=end_date,
-                )
-            else:
-                # 全量模式：按日期范围获取
-                df = await _get_stock_data(
-                    db_manager,
-                    batch_symbols,
-                    batch_start_date,
-                    end_date,
-                    include_adj_factor=True
-                )
+            df = await _get_stock_data(
+                db_manager,
+                batch_symbols,
+                batch_fetch_start_date,
+                end_date,
+                include_adj_factor=True
+            )
 
             if df.empty:
                 if task is not None:
@@ -632,6 +966,20 @@ async def _run_technical_preprocess(
                 data = freq_results.get(freq)
                 if data is None or data.empty:
                     continue
+
+                if symbol_upsert_rules is not None:
+                    data = _filter_by_upsert_rules(data, freq, symbol_upsert_rules)
+                    if data.empty:
+                        continue
+                elif upsert_start_date:
+                    local_time = pd.to_datetime(data["time"])
+                    if pd.api.types.is_datetime64tz_dtype(local_time):
+                        local_dates = local_time.dt.tz_convert("Asia/Shanghai").dt.date
+                    else:
+                        local_dates = local_time.dt.tz_localize("Asia/Shanghai").dt.date
+                    data = data[local_dates >= pd.to_datetime(upsert_start_date).date()].copy()
+                    if data.empty:
+                        continue
 
                 # 向量化设置 last_adj_factor
                 if adj_factor_map:
@@ -667,7 +1015,15 @@ async def _run_technical_preprocess(
                 batch_symbols = full_symbols[i:i+batch_size]
                 if verbose:
                     progress.console.print(f"  [全量]批次 {i//batch_size + 1}: {len(batch_symbols)} 只股票")
-                batch_tasks.append(process_batch(batch_symbols, True, start_date, task_full))
+                batch_tasks.append(
+                    process_batch(
+                        batch_symbols,
+                        True,
+                        fetch_start_date,
+                        task_full,
+                        upsert_start_date=requested_start_date,
+                    )
+                )
 
             # 并发执行所有批次
             results = await asyncio.gather(*batch_tasks, return_exceptions=True)
@@ -685,19 +1041,6 @@ async def _run_technical_preprocess(
 
         # 处理增量组（并发执行）
         if incr_symbols:
-            # 根据目标频率计算所需的最小记录数
-            # 使用记录数而非天数，更精确地控制历史数据需求
-            max_records_needed = max(
-                RESAMPLE_MIN_RECORDS.get(freq.lower(), 80)
-                for freq in freqs
-            )
-            # 转换为日线记录数（日线→周线约1:5，日线→月线约1:22）
-            # 为保险起见，多取一些记录
-            records_per_symbol = max_records_needed * 22  # 足够覆盖月线所需的日线数据
-
-            if verbose:
-                console.print(f"  [dim]增量数据: 每只股票取最近 {records_per_symbol} 条日线记录[/dim]")
-
             task_incr = progress.add_task(
                 f"[cyan]增量处理 (并发{max_concurrent}, 进程{num_workers})...",
                 total=len(incr_symbols)
@@ -707,9 +1050,26 @@ async def _run_technical_preprocess(
             batch_tasks = []
             for i in range(0, len(incr_symbols), batch_size):
                 batch_symbols = incr_symbols[i:i+batch_size]
+                batch_plan = {sym: incremental_plan[sym]["upsert_rules"] for sym in batch_symbols}
+                batch_fetch_starts = [
+                    incremental_plan[sym]["fetch_start_date"]
+                    for sym in batch_symbols
+                    if incremental_plan[sym].get("fetch_start_date")
+                ]
+                batch_fetch_start = min(batch_fetch_starts) if batch_fetch_starts else None
                 if verbose:
                     progress.console.print(f"  [增量]批次 {i//batch_size + 1}: {len(batch_symbols)} 只股票")
-                batch_tasks.append(process_batch(batch_symbols, False, None, task_incr, records_per_symbol))
+                    if batch_fetch_start:
+                        progress.console.print(f"    [dim]抓取窗口起点: {batch_fetch_start}[/dim]")
+                batch_tasks.append(
+                    process_batch(
+                        batch_symbols,
+                        False,
+                        batch_fetch_start,
+                        task_incr,
+                        symbol_upsert_rules=batch_plan,
+                    )
+                )
 
             # 并发执行所有批次
             results = await asyncio.gather(*batch_tasks, return_exceptions=True)

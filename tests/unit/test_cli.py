@@ -5,6 +5,7 @@ CLI 模块单元测试
 import pytest
 from unittest.mock import Mock, patch
 from typer.testing import CliRunner
+import pandas as pd
 
 from finance_data_hub.cli.main import app
 
@@ -280,3 +281,70 @@ def test_cli_update_adj_factor():
         ])
         assert result.exit_code == 0
         assert "数据类型: adj_factor" in result.output
+
+
+def test_estimate_fetch_start_date_adds_warmup_for_weekly_indicators():
+    """技术预处理在带 start_date 回填时，应补足周线指标 warm-up 窗口。"""
+    from finance_data_hub.cli.preprocess import _estimate_fetch_start_date
+
+    requested_start = "2019-01-04"
+    fetch_start = _estimate_fetch_start_date(
+        requested_start,
+        freqs=["weekly"],
+        indicators=["ma_20", "ma_50", "macd", "rsi_14", "atr_14"],
+    )
+
+    assert fetch_start is not None
+    assert pd.to_datetime(fetch_start) < pd.to_datetime(requested_start)
+    assert (pd.to_datetime(requested_start) - pd.to_datetime(fetch_start)).days >= 490
+
+
+def test_estimate_records_per_symbol_covers_monthly_ma50_history():
+    """月线 MA50 回填至少需要约 50 个月对应的日线历史。"""
+    from finance_data_hub.cli.preprocess import _estimate_records_per_symbol
+
+    records = _estimate_records_per_symbol(
+        freqs=["monthly"],
+        indicators=["ma_20", "ma_50", "macd", "rsi_14", "atr_14"],
+    )
+
+    assert records >= 1100
+
+
+def test_build_incremental_upsert_rule_for_new_daily_data():
+    """日线增量应只回写 latest_processed 之后的新交易日。"""
+    from finance_data_hub.cli.preprocess import _build_incremental_upsert_rule
+
+    rule = _build_incremental_upsert_rule(
+        "daily",
+        pd.Timestamp("2026-04-09 15:00:00", tz="Asia/Shanghai"),
+        pd.Timestamp("2026-04-08 15:00:00", tz="Asia/Shanghai"),
+    )
+
+    assert rule == {"start_date": pd.Timestamp("2026-04-08").date(), "inclusive": False}
+
+
+def test_build_incremental_upsert_rule_for_open_week():
+    """周线若当前周已经存在部分结果，应包含当前周同一周末日期。"""
+    from finance_data_hub.cli.preprocess import _build_incremental_upsert_rule
+
+    rule = _build_incremental_upsert_rule(
+        "weekly",
+        pd.Timestamp("2026-04-09 15:00:00", tz="Asia/Shanghai"),
+        pd.Timestamp("2026-04-10 15:00:00", tz="Asia/Shanghai"),
+    )
+
+    assert rule == {"start_date": pd.Timestamp("2026-04-10").date(), "inclusive": True}
+
+
+def test_build_incremental_upsert_rule_for_new_month():
+    """月线在进入新月份但尚未生成当月记录时，应从上个已处理月之后回写。"""
+    from finance_data_hub.cli.preprocess import _build_incremental_upsert_rule
+
+    rule = _build_incremental_upsert_rule(
+        "monthly",
+        pd.Timestamp("2026-04-09 15:00:00", tz="Asia/Shanghai"),
+        pd.Timestamp("2026-03-31 15:00:00", tz="Asia/Shanghai"),
+    )
+
+    assert rule == {"start_date": pd.Timestamp("2026-03-31").date(), "inclusive": False}
