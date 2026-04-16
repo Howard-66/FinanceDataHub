@@ -7,7 +7,7 @@
 from typing import Optional
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
@@ -25,6 +25,14 @@ if ENV_FILE_PATH.exists():
 
 class DatabaseConfig(BaseSettings):
     """数据库配置"""
+
+    model_config = SettingsConfigDict(
+        env_file=str(ENV_FILE_PATH) if ENV_FILE_PATH.exists() else None,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        env_prefix="DATABASE_",
+    )
 
     url: str = Field(
         default="postgresql://trading_nexus:trading.nexus.data@localhost:5432/trading_nexus_db",
@@ -51,6 +59,31 @@ class DatabaseConfig(BaseSettings):
         ge=1,
         description="连接池超时时间（秒）"
     )
+
+    query_max_concurrency: int = Field(
+        default=8,
+        ge=1,
+        le=256,
+        description="普通读查询并发上限",
+        env="DATABASE_QUERY_MAX_CONCURRENCY",
+    )
+
+    heavy_query_max_concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=256,
+        description="重读查询并发上限",
+        env="DATABASE_HEAVY_QUERY_MAX_CONCURRENCY",
+    )
+
+    @model_validator(mode="after")
+    def validate_query_limits(self) -> "DatabaseConfig":
+        """确保重查询并发上限不高于普通查询上限。"""
+        if self.heavy_query_max_concurrency > self.query_max_concurrency:
+            raise ValueError(
+                "heavy_query_max_concurrency cannot exceed query_max_concurrency"
+            )
+        return self
 
 
 class RedisConfig(BaseSettings):

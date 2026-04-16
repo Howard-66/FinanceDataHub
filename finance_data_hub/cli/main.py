@@ -2592,6 +2592,8 @@ def config_show(
         table.add_row("  URL", hidden_url)
         table.add_row("  池大小", str(settings.database.pool_size))
         table.add_row("  最大溢出", str(settings.database.max_overflow))
+        table.add_row("  读查询并发", str(settings.database.query_max_concurrency))
+        table.add_row("  重查询并发", str(settings.database.heavy_query_max_concurrency))
 
         # Redis 配置
         table.add_row("", "")

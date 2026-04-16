@@ -18,7 +18,7 @@ from datetime import datetime
 from loguru import logger
 
 from finance_data_hub.config import Settings
-from finance_data_hub.database.manager import DatabaseManager
+from finance_data_hub.database.manager import DatabaseManager, ReadQueryOptions
 from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.router.smart_router import SmartRouter
 from finance_data_hub.preprocessing.storage import (
@@ -2097,21 +2097,21 @@ class FinanceDataHub:
             ORDER BY symbol, time
         """
         
-        try:
-            # Use db_manager.execute_raw_sql instead of ops.execute_query
-            # Fetch all rows immediately to avoid connection closed issues
-            result_proxy = await self.db_manager.execute_raw_sql(query, params)
-            rows = result_proxy.fetchall()
-            
-            if not rows:
-                return pd.DataFrame()
-                
-            columns = result_proxy.keys()
-            return pd.DataFrame(rows, columns=columns)
-            
-        except Exception as e:
-            logger.warning(f"get_fundamental_combined: Query failed - {e}")
-            return None
+        result_proxy = await self.db_manager.execute_raw_sql(
+            query,
+            params,
+            options=ReadQueryOptions(
+                query_type="v_fundamental_combined.query",
+                symbols_count=len(symbols or []),
+            ),
+        )
+        rows = result_proxy.fetchall()
+
+        if not rows:
+            return pd.DataFrame()
+
+        columns = result_proxy.keys()
+        return pd.DataFrame(rows, columns=columns)
 
     def calculate_indicators(
         self,

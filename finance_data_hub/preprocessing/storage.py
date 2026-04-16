@@ -18,6 +18,8 @@ from sqlalchemy import text
 if TYPE_CHECKING:
     from finance_data_hub.database.manager import DatabaseManager
 
+from finance_data_hub.database.manager import ReadQueryOptions
+
 
 def _series_to_pydatetime(series: pd.Series) -> np.ndarray:
     """
@@ -373,15 +375,19 @@ class ProcessedDataStorage:
             FROM {table_name}
             WHERE symbol = :symbol
         """
-        
-        try:
-            result = await self.db_manager.execute_raw_sql(sql, {"symbol": symbol})
-            row = result.fetchone()
-            if row and row[0]:
-                return row[0]
-        except Exception as e:
-            logger.error(f"Query failed: {e}")
-        
+
+        result = await self.db_manager.execute_raw_sql(
+            sql,
+            {"symbol": symbol},
+            options=ReadQueryOptions(
+                query_type=f"{table_name}.latest_processed_date",
+                symbols_count=1,
+            ),
+        )
+        row = result.fetchone()
+        if row and row[0]:
+            return row[0]
+
         return None
     
     async def query(
@@ -459,17 +465,20 @@ class ProcessedDataStorage:
             ORDER BY symbol, time
         """
         
-        try:
-            result = await self.db_manager.execute_raw_sql(sql, params)
-            rows = result.fetchall()
-            
-            if not rows:
-                return pd.DataFrame(columns=columns)
-            
-            return pd.DataFrame(rows, columns=columns)
-        except Exception as e:
-            logger.error(f"Query failed: {e}")
-            return pd.DataFrame()
+        result = await self.db_manager.execute_raw_sql(
+            sql,
+            params,
+            options=ReadQueryOptions(
+                query_type=f"{table_name}.query",
+                symbols_count=len(symbols or []),
+            ),
+        )
+        rows = result.fetchall()
+
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        return pd.DataFrame(rows, columns=columns)
     
     async def delete_old_data(
         self,
@@ -679,17 +688,20 @@ class FundamentalDataStorage:
             ORDER BY symbol, time
         """
         
-        try:
-            result = await self.db_manager.execute_raw_sql(sql, params)
-            rows = result.fetchall()
-            
-            if not rows:
-                return pd.DataFrame(columns=columns)
-            
-            return pd.DataFrame(rows, columns=columns)
-        except Exception as e:
-            logger.error(f"Query failed: {e}")
-            return pd.DataFrame()
+        result = await self.db_manager.execute_raw_sql(
+            sql,
+            params,
+            options=ReadQueryOptions(
+                query_type=f"{self.TABLE_NAME}.query",
+                symbols_count=len(symbols or []),
+            ),
+        )
+        rows = result.fetchall()
+
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        return pd.DataFrame(rows, columns=columns)
 
 
 class QuarterlyFundamentalDataStorage:
@@ -870,19 +882,21 @@ class QuarterlyFundamentalDataStorage:
             ORDER BY ts_code, end_date_time
         """
         
-        try:
-            result = await self.db_manager.execute_raw_sql(sql, params)
-            rows = result.fetchall()
-            
-            if not rows:
-                return pd.DataFrame()
-            
-            # 获取列名
-            columns = result.keys()
-            return pd.DataFrame(rows, columns=columns)
-        except Exception as e:
-            logger.error(f"Quarterly query failed: {e}")
+        result = await self.db_manager.execute_raw_sql(
+            sql,
+            params,
+            options=ReadQueryOptions(
+                query_type=f"{self.TABLE_NAME}.query",
+                symbols_count=len(symbols or []),
+            ),
+        )
+        rows = result.fetchall()
+
+        if not rows:
             return pd.DataFrame()
+
+        columns = result.keys()
+        return pd.DataFrame(rows, columns=columns)
 
 
 class IndustryValuationStorage:
@@ -1086,18 +1100,22 @@ class IndustryValuationStorage:
             ORDER BY symbol, time
         """
 
-        try:
-            result = await self.db_manager.execute_raw_sql(sql, params)
-            rows = result.fetchall()
+        result = await self.db_manager.execute_raw_sql(
+            sql,
+            params,
+            options=ReadQueryOptions(
+                query_type=f"{self.TABLE_NAME}.query",
+                heavy=True,
+                symbols_count=len(symbols or []),
+            ),
+        )
+        rows = result.fetchall()
 
-            if not rows:
-                return pd.DataFrame()
-
-            columns = result.keys()
-            return pd.DataFrame(rows, columns=columns)
-        except Exception as e:
-            logger.error(f"Industry valuation query failed: {e}")
+        if not rows:
             return pd.DataFrame()
+
+        columns = result.keys()
+        return pd.DataFrame(rows, columns=columns)
 
     async def get_latest_date(self) -> Optional[datetime]:
         """获取最新数据日期"""
@@ -1105,13 +1123,12 @@ class IndustryValuationStorage:
             return None
 
         sql = f"SELECT MAX(time) FROM {self.TABLE_NAME}"
-        try:
-            result = await self.db_manager.execute_raw_sql(sql)
-            row = result.fetchone()
-            return row[0] if row and row[0] else None
-        except Exception as e:
-            logger.error(f"Get latest date failed: {e}")
-            return None
+        result = await self.db_manager.execute_raw_sql(
+            sql,
+            options=ReadQueryOptions(query_type=f"{self.TABLE_NAME}.latest_date"),
+        )
+        row = result.fetchone()
+        return row[0] if row and row[0] else None
 
 
 class MacroCyclePhaseStorage:
@@ -1205,15 +1222,15 @@ class MacroCyclePhaseStorage:
             ORDER BY time
         """
 
-        try:
-            result = await self.db_manager.execute_raw_sql(sql, params)
-            rows = result.fetchall()
-            if not rows:
-                return pd.DataFrame(columns=self.COLUMNS)
-            return pd.DataFrame(rows, columns=result.keys())
-        except Exception as e:
-            logger.error(f"Macro cycle phase query failed: {e}")
+        result = await self.db_manager.execute_raw_sql(
+            sql,
+            params,
+            options=ReadQueryOptions(query_type=f"{self.TABLE_NAME}.query"),
+        )
+        rows = result.fetchall()
+        if not rows:
             return pd.DataFrame(columns=self.COLUMNS)
+        return pd.DataFrame(rows, columns=result.keys())
 
 
 class MacroCycleIndustryStorage:
@@ -1332,12 +1349,12 @@ class MacroCycleIndustryStorage:
             ORDER BY time, l3_name
         """
 
-        try:
-            result = await self.db_manager.execute_raw_sql(sql, params)
-            rows = result.fetchall()
-            if not rows:
-                return pd.DataFrame(columns=self.COLUMNS)
-            return pd.DataFrame(rows, columns=result.keys())
-        except Exception as e:
-            logger.error(f"Macro cycle industry query failed: {e}")
+        result = await self.db_manager.execute_raw_sql(
+            sql,
+            params,
+            options=ReadQueryOptions(query_type=f"{self.TABLE_NAME}.query"),
+        )
+        rows = result.fetchall()
+        if not rows:
             return pd.DataFrame(columns=self.COLUMNS)
+        return pd.DataFrame(rows, columns=result.keys())

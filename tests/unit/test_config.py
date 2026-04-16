@@ -46,6 +46,40 @@ class TestDatabaseConfig:
         with pytest.raises(ValidationError):
             DatabaseConfig(pool_size=101)
 
+    def test_database_query_concurrency_defaults(self):
+        """测试读查询并发默认值。"""
+        config = DatabaseConfig()
+        assert config.query_max_concurrency == 8
+        assert config.heavy_query_max_concurrency == 4
+
+    def test_database_query_concurrency_from_env(self):
+        """测试读查询并发支持环境变量覆盖。"""
+        original_query = os.environ.get("DATABASE_QUERY_MAX_CONCURRENCY")
+        original_heavy = os.environ.get("DATABASE_HEAVY_QUERY_MAX_CONCURRENCY")
+
+        try:
+            os.environ["DATABASE_QUERY_MAX_CONCURRENCY"] = "16"
+            os.environ["DATABASE_HEAVY_QUERY_MAX_CONCURRENCY"] = "6"
+
+            config = DatabaseConfig()
+            assert config.query_max_concurrency == 16
+            assert config.heavy_query_max_concurrency == 6
+        finally:
+            if original_query is None:
+                os.environ.pop("DATABASE_QUERY_MAX_CONCURRENCY", None)
+            else:
+                os.environ["DATABASE_QUERY_MAX_CONCURRENCY"] = original_query
+
+            if original_heavy is None:
+                os.environ.pop("DATABASE_HEAVY_QUERY_MAX_CONCURRENCY", None)
+            else:
+                os.environ["DATABASE_HEAVY_QUERY_MAX_CONCURRENCY"] = original_heavy
+
+    def test_heavy_query_concurrency_cannot_exceed_query_limit(self):
+        """测试重查询并发不能超过普通查询并发。"""
+        with pytest.raises(ValidationError):
+            DatabaseConfig(query_max_concurrency=4, heavy_query_max_concurrency=8)
+
 
 class TestRedisConfig:
     """测试 Redis 配置"""

@@ -5,7 +5,9 @@
 """
 
 import asyncio
-from typing import Optional, Dict, Any
+from dataclasses import dataclass
+from time import perf_counter
+from typing import Optional, Dict, Any, ClassVar, Tuple, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
@@ -18,8 +20,35 @@ from loguru import logger
 from finance_data_hub.config import Settings
 
 
+@dataclass(frozen=True)
+class ReadQueryOptions:
+    """读查询执行选项。"""
+
+    query_type: str = "raw_sql"
+    heavy: bool = False
+    symbols_count: int = 0
+    fallback_used: bool = False
+
+
+class ReadQueryExecutionError(RuntimeError):
+    """读查询执行失败。"""
+
+    def __init__(self, query_type: str, original_error: Exception):
+        self.query_type = query_type
+        self.original_error = original_error
+        super().__init__(f"Read query '{query_type}' failed: {original_error}")
+
+
 class DatabaseManager:
     """数据库管理器"""
+
+    _read_query_limiters: ClassVar[
+        Dict[Tuple[int, int, int], Dict[str, asyncio.Semaphore]]
+    ] = {}
+    HEAVY_QUERY_LOG_WAIT_MS: ClassVar[float] = 10.0
+    HEAVY_QUERY_LOG_EXEC_MS: ClassVar[float] = 500.0
+    NORMAL_QUERY_LOG_WAIT_MS: ClassVar[float] = 50.0
+    NORMAL_QUERY_LOG_EXEC_MS: ClassVar[float] = 1000.0
 
     def __init__(self, settings: Settings):
         """
@@ -151,23 +180,146 @@ class DatabaseManager:
 
         return self._engine
 
-    async def execute_raw_sql(self, sql: str, params: Optional[Dict] = None) -> Any:
+    @classmethod
+    def _get_read_query_limiters(
+        cls,
+        query_limit: int,
+        heavy_limit: int,
+    ) -> Dict[str, asyncio.Semaphore]:
+        """按事件循环和配置复用读查询限流器。"""
+        loop = asyncio.get_running_loop()
+        key = (id(loop), query_limit, heavy_limit)
+
+        if key not in cls._read_query_limiters:
+            cls._read_query_limiters[key] = {
+                "query": asyncio.Semaphore(query_limit),
+                "heavy": asyncio.Semaphore(heavy_limit),
+            }
+
+        return cls._read_query_limiters[key]
+
+    async def _acquire_read_query_slots(
+        self,
+        options: ReadQueryOptions,
+    ) -> tuple[List[asyncio.Semaphore], float]:
+        """获取读查询执行槽位。"""
+        limiters = self._get_read_query_limiters(
+            self.settings.database.query_max_concurrency,
+            self.settings.database.heavy_query_max_concurrency,
+        )
+
+        semaphores = [limiters["query"]]
+        if options.heavy:
+            semaphores.append(limiters["heavy"])
+
+        acquired: List[asyncio.Semaphore] = []
+        wait_start = perf_counter()
+
+        try:
+            for semaphore in semaphores:
+                await semaphore.acquire()
+                acquired.append(semaphore)
+        except Exception:
+            for semaphore in reversed(acquired):
+                semaphore.release()
+            raise
+
+        waited_ms = (perf_counter() - wait_start) * 1000
+        return acquired, waited_ms
+
+    def _log_read_query_metrics(
+        self,
+        options: ReadQueryOptions,
+        waited_ms: float,
+        execution_ms: float,
+        exception: Optional[Exception] = None,
+    ) -> None:
+        """记录读查询执行指标。"""
+        if exception is None and not options.fallback_used:
+            if options.heavy:
+                should_log = (
+                    waited_ms >= self.HEAVY_QUERY_LOG_WAIT_MS
+                    or execution_ms >= self.HEAVY_QUERY_LOG_EXEC_MS
+                )
+            else:
+                should_log = (
+                    waited_ms >= self.NORMAL_QUERY_LOG_WAIT_MS
+                    or execution_ms >= self.NORMAL_QUERY_LOG_EXEC_MS
+                )
+
+            if not should_log:
+                return
+
+        log_message = (
+            "Read query completed | query_type={} | heavy={} | "
+            "waited_for_semaphore_ms={:.2f} | execution_ms={:.2f} | "
+            "symbols_count={} | fallback_happened={} | exception_happened={}"
+        )
+        log_args = (
+            options.query_type,
+            options.heavy,
+            waited_ms,
+            execution_ms,
+            options.symbols_count,
+            options.fallback_used,
+            exception is not None,
+        )
+
+        if exception is not None:
+            logger.opt(exception=exception).error(log_message, *log_args)
+        elif options.fallback_used:
+            logger.warning(log_message, *log_args)
+        elif options.heavy:
+            logger.info(log_message, *log_args)
+        else:
+            logger.debug(log_message, *log_args)
+
+    async def execute_raw_sql(
+        self,
+        sql: str,
+        params: Optional[Dict] = None,
+        *,
+        options: Optional[ReadQueryOptions] = None,
+    ) -> Any:
         """
         执行原生SQL
 
         Args:
             sql: SQL语句
             params: 参数
+            options: 读查询执行选项
 
         Returns:
             SQL执行结果
         """
         if not self._engine:
-            raise RuntimeError("Database engine not initialized")
+            await self.initialize()
 
-        async with self._engine.begin() as conn:
-            result = await conn.execute(text(sql), params or {})
+        query_options = options or ReadQueryOptions()
+        acquired_semaphores, waited_ms = await self._acquire_read_query_slots(
+            query_options
+        )
+        execution_start = perf_counter()
+
+        try:
+            async with self._engine.begin() as conn:
+                result = await conn.execute(text(sql), params or {})
+
+            execution_ms = (perf_counter() - execution_start) * 1000
+            self._log_read_query_metrics(query_options, waited_ms, execution_ms)
             return result
+        except Exception as exc:
+            execution_ms = (perf_counter() - execution_start) * 1000
+            self._log_read_query_metrics(
+                query_options,
+                waited_ms,
+                execution_ms,
+                exception=exc,
+            )
+            raise ReadQueryExecutionError(query_options.query_type, exc) from exc
+        finally:
+            for semaphore in reversed(acquired_semaphores):
+                semaphore.release()
 
     async def close(self) -> None:
         """关闭数据库连接"""
