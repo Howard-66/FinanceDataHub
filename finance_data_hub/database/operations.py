@@ -5,6 +5,7 @@
 """
 
 from datetime import datetime
+import math
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -12,9 +13,16 @@ from loguru import logger
 from sqlalchemy import text
 
 from finance_data_hub.database.manager import DatabaseManager
+from finance_data_hub.utils.market import (
+    daily_close_time_for_market,
+    exchanges_for_market,
+    get_exchange_from_symbol,
+    infer_market_from_symbol,
+    normalize_market,
+)
 
 
-def _normalize_datetime_for_db(value, data_type="daily"):
+def _normalize_datetime_for_db(value, data_type="daily", market: Optional[str] = None):
     """
     将pandas Timestamp或字符串转换为带时区的Python datetime
 
@@ -40,28 +48,77 @@ def _normalize_datetime_for_db(value, data_type="daily"):
     if isinstance(value, pd.Timestamp):
         # 中国股市使用Asia/Shanghai时区
         china_tz = ZoneInfo("Asia/Shanghai")
+        is_daily_level = data_type in {"daily", "daily_basic", "adj_factor"}
 
         if value.tz is None:
             # 无时区信息，根据数据类型处理
-            if (
-                data_type == "daily"
-                or data_type == "daily_basic"
-                or data_type == "adj_factor"
-            ):
-                # 日线数据：设置为收盘时间 15:00:00
-                value = value.replace(hour=15, minute=0, second=0, microsecond=0)
+            if is_daily_level:
+                # 日线数据：设置为对应市场收盘时间
+                close_time = daily_close_time_for_market(market)
+                value = value.replace(
+                    hour=close_time.hour,
+                    minute=close_time.minute,
+                    second=close_time.second,
+                    microsecond=0,
+                )
             # else: minute数据保持原时间
 
             # 本地化为中国时间
             return value.tz_localize(china_tz).to_pydatetime()
         else:
             # 已有时区，转换为中国时间
-            # xtquant数据已经转换为Asia/Shanghai时区，直接使用
             if str(value.tz) == "Asia/Shanghai":
-                return value.to_pydatetime()
+                normalized = value
             else:
-                return value.tz_convert(china_tz).to_pydatetime()
+                normalized = value.tz_convert(china_tz)
+
+            if is_daily_level:
+                close_time = daily_close_time_for_market(market)
+                normalized = normalized.replace(
+                    hour=close_time.hour,
+                    minute=close_time.minute,
+                    second=close_time.second,
+                    microsecond=0,
+                )
+            return normalized.to_pydatetime()
     return value
+
+
+def _market_filter_clause(
+    symbol_column: str,
+    market: Optional[str],
+    params: Dict[str, Any],
+    asset_alias: Optional[str] = None,
+) -> Optional[str]:
+    """Build a broad-market filter compatible with older rows lacking exchange."""
+    normalized = normalize_market(market)
+    if not normalized or normalized == "ALL":
+        return None
+
+    exchanges = sorted(exchanges_for_market(normalized))
+    if exchanges:
+        params["market_exchanges"] = exchanges
+        inferred_exchange_sql = f"UPPER(SPLIT_PART({symbol_column}, '.', 2))"
+        if asset_alias:
+            return (
+                f"COALESCE({asset_alias}.exchange, {inferred_exchange_sql}) "
+                "= ANY(:market_exchanges)"
+            )
+        return f"{inferred_exchange_sql} = ANY(:market_exchanges)"
+
+    params["market_code"] = normalized
+    if asset_alias:
+        return f"({asset_alias}.market = :market_code OR {asset_alias}.exchange = :market_code)"
+    return f"UPPER(SPLIT_PART({symbol_column}, '.', 2)) = :market_code"
+
+
+def _is_non_finite_number(value: Any) -> bool:
+    """Return True when the value is a numeric infinity/NaN unsuitable for DB writes."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return not math.isfinite(float(value))
+    return False
 
 
 class DataOperations:
@@ -128,13 +185,16 @@ class DataOperations:
 
             # 处理NaT值，转换为None；处理时间戳为带时区的datetime
             for record in records:
+                record_market = infer_market_from_symbol(record.get("symbol"))
                 for key, value in record.items():
                     if pd.isna(value):
+                        record[key] = None
+                    elif _is_non_finite_number(value):
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
                         record[key] = _normalize_datetime_for_db(
-                            value, data_type="daily"
+                            value, data_type="daily", market=record_market
                         )
 
             # 确保所有必需字段都存在，缺失的字段设置为None
@@ -285,18 +345,26 @@ class DataOperations:
         if data.empty:
             return 0
 
+        data = data.copy()
+        if "exchange" not in data.columns:
+            data["exchange"] = data["symbol"].map(get_exchange_from_symbol)
+        else:
+            inferred_exchange = data["symbol"].map(get_exchange_from_symbol)
+            data["exchange"] = data["exchange"].fillna(inferred_exchange)
+
         insert_sql = """
             INSERT INTO asset_basic (
-                symbol, name, market, industry, area,
+                symbol, name, market, exchange, industry, area,
                 list_status, list_date, delist_date, is_hs
             )
             VALUES (
-                :symbol, :name, :market, :industry, :area,
+                :symbol, :name, :market, :exchange, :industry, :area,
                 :list_status, :list_date, :delist_date, :is_hs
             )
             ON CONFLICT (symbol) DO UPDATE SET
                 name = EXCLUDED.name,
                 market = EXCLUDED.market,
+                exchange = EXCLUDED.exchange,
                 industry = EXCLUDED.industry,
                 area = EXCLUDED.area,
                 list_status = EXCLUDED.list_status,
@@ -309,10 +377,29 @@ class DataOperations:
         records = data.to_dict("records")
 
         # 处理NaT值，转换为None（SQLAlchemy会将None转换为NULL）
+        insert_fields = {
+            "symbol",
+            "name",
+            "market",
+            "exchange",
+            "industry",
+            "area",
+            "list_status",
+            "list_date",
+            "delist_date",
+            "is_hs",
+        }
         for record in records:
+            if not record.get("exchange"):
+                record["exchange"] = get_exchange_from_symbol(record.get("symbol"))
+            for field in insert_fields:
+                record.setdefault(field, None)
             for key, value in record.items():
                 if pd.isna(value):
                     record[key] = None
+            for key in list(record.keys()):
+                if key not in insert_fields:
+                    del record[key]
 
         async with self.db_manager._engine.begin() as conn:
             await conn.execute(text(insert_sql), records)
@@ -449,7 +536,7 @@ class DataOperations:
         获取股票代码列表
 
         Args:
-            market: 市场代码（SH/SZ）
+            market: 宽市场代码（CN/HK/ALL）或交易所代码（SH/SZ/BJ/HK）
             limit: 限制返回数量
 
         Returns:
@@ -458,9 +545,9 @@ class DataOperations:
         query = "SELECT symbol FROM asset_basic WHERE list_status = 'L'"
         params = {}
 
-        if market:
-            query += " AND market = :market"
-            params["market"] = market
+        market_clause = _market_filter_clause("symbol", market, params)
+        if market_clause:
+            query += f" AND {market_clause}"
 
         if limit:
             query += " LIMIT :limit"
@@ -477,6 +564,7 @@ class DataOperations:
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取日线 OHLCV 数据
@@ -496,27 +584,40 @@ class DataOperations:
         # 构建动态查询条件
         conditions = []
         params = {}
+        query_market = market
+        if query_market is None and symbols:
+            inferred_markets = {infer_market_from_symbol(symbol) for symbol in symbols}
+            if len(inferred_markets) == 1:
+                query_market = inferred_markets.pop()
 
         # symbols 条件
         if symbols:
-            conditions.append("symbol = ANY(:symbols)")
+            conditions.append("d.symbol = ANY(:symbols)")
             params["symbols"] = symbols
 
         # start_date 条件
         if start_date:
-            start_dt = _normalize_datetime_for_db(start_date, "daily")
-            conditions.append("time >= :start_date")
+            start_dt = _normalize_datetime_for_db(start_date, "daily", query_market)
+            conditions.append("d.time >= :start_date")
             params["start_date"] = start_dt
         else:
             params["start_date"] = None
 
         # end_date 条件
         if end_date:
-            end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily")
-            conditions.append("time <= :end_date")
+            end_dt = _normalize_datetime_for_db(
+                end_date + " 23:59:59", "daily", query_market
+            )
+            conditions.append("d.time <= :end_date")
             params["end_date"] = end_dt
         else:
             params["end_date"] = None
+
+        market_clause = _market_filter_clause(
+            "d.symbol", query_market, params, asset_alias="b"
+        )
+        if market_clause:
+            conditions.append(market_clause)
 
         # 如果没有任何条件，返回空结果
         if not conditions:
@@ -525,10 +626,14 @@ class DataOperations:
         where_clause = " AND ".join(conditions)
 
         query = text(f"""
-            SELECT time, symbol, open, high, low, close, volume, amount
-            FROM symbol_daily
+            SELECT
+                d.time, d.symbol, d.open, d.high, d.low, d.close, d.volume, d.amount,
+                COALESCE(a.adj_factor, 1.0) AS adj_factor
+            FROM symbol_daily d
+            LEFT JOIN adj_factor a ON d.symbol = a.symbol AND d.time = a.time
+            LEFT JOIN asset_basic b ON d.symbol = b.symbol
             WHERE {where_clause}
-            ORDER BY symbol, time
+            ORDER BY d.symbol, d.time
         """)
 
         async with self.db_manager._engine.begin() as conn:
@@ -547,6 +652,7 @@ class DataOperations:
         start_date: str,
         end_date: str,
         frequency: str = "minute_1",
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取分钟级 OHLCV 数据
@@ -564,28 +670,45 @@ class DataOperations:
         if self.db_manager._engine is None:
             await self.db_manager.initialize()
 
-        start_dt = _normalize_datetime_for_db(start_date, "minute")
-        end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "minute")
+        query_market = market
+        if query_market is None and symbols:
+            inferred_markets = {infer_market_from_symbol(symbol) for symbol in symbols}
+            if len(inferred_markets) == 1:
+                query_market = inferred_markets.pop()
 
-        query = text("""
-            SELECT time, symbol, open, high, low, close, volume, amount, frequency
-            FROM symbol_minute
-            WHERE symbol = ANY(:symbols)
-            AND time BETWEEN :start_date AND :end_date
-            AND frequency = :frequency
-            ORDER BY symbol, time
+        start_dt = _normalize_datetime_for_db(start_date, "minute", query_market)
+        end_dt = _normalize_datetime_for_db(
+            end_date + " 23:59:59", "minute", query_market
+        )
+        params = {
+            "symbols": symbols,
+            "start_date": start_dt,
+            "end_date": end_dt,
+            "frequency": frequency,
+        }
+        conditions = [
+            "m.symbol = ANY(:symbols)",
+            "m.time BETWEEN :start_date AND :end_date",
+            "m.frequency = :frequency",
+        ]
+        market_clause = _market_filter_clause(
+            "m.symbol", query_market, params, asset_alias="b"
+        )
+        if market_clause:
+            conditions.append(market_clause)
+        where_clause = " AND ".join(conditions)
+
+        query = text(f"""
+            SELECT m.time, m.symbol, m.open, m.high, m.low, m.close,
+                   m.volume, m.amount, m.frequency
+            FROM symbol_minute m
+            LEFT JOIN asset_basic b ON m.symbol = b.symbol
+            WHERE {where_clause}
+            ORDER BY m.symbol, m.time
         """)
 
         async with self.db_manager._engine.begin() as conn:
-            result = await conn.execute(
-                query,
-                {
-                    "symbols": symbols,
-                    "start_date": start_dt,
-                    "end_date": end_dt,
-                    "frequency": frequency,
-                },
-            )
+            result = await conn.execute(query, params)
             rows = result.fetchall()
 
         if not rows:
@@ -599,6 +722,7 @@ class DataOperations:
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取每日基本面指标数据
@@ -607,6 +731,7 @@ class DataOperations:
             symbols: 股票代码列表，None表示不限制股票
             start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
             end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            market: 宽市场代码（CN/HK/ALL）或交易所代码（SH/SZ/BJ/HK）
 
         Returns:
             Optional[pd.DataFrame]: 每日基本面数据，包含 time, symbol, turnover_rate, volume_ratio, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share, free_share, total_mv, circ_mv 列
@@ -618,27 +743,42 @@ class DataOperations:
         # 构建动态查询条件
         conditions = []
         params = {}
+        query_market = market
+        if query_market is None and symbols:
+            inferred_markets = {infer_market_from_symbol(symbol) for symbol in symbols}
+            if len(inferred_markets) == 1:
+                query_market = inferred_markets.pop()
 
         # symbols 条件
         if symbols:
-            conditions.append("symbol = ANY(:symbols)")
+            conditions.append("d.symbol = ANY(:symbols)")
             params["symbols"] = symbols
 
         # start_date 条件
         if start_date:
-            start_dt = _normalize_datetime_for_db(start_date, "daily_basic")
-            conditions.append("time >= :start_date")
+            start_dt = _normalize_datetime_for_db(
+                start_date, "daily_basic", query_market
+            )
+            conditions.append("d.time >= :start_date")
             params["start_date"] = start_dt
         else:
             params["start_date"] = None
 
         # end_date 条件
         if end_date:
-            end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "daily_basic")
-            conditions.append("time <= :end_date")
+            end_dt = _normalize_datetime_for_db(
+                end_date + " 23:59:59", "daily_basic", query_market
+            )
+            conditions.append("d.time <= :end_date")
             params["end_date"] = end_dt
         else:
             params["end_date"] = None
+
+        market_clause = _market_filter_clause(
+            "d.symbol", query_market, params, asset_alias="b"
+        )
+        if market_clause:
+            conditions.append(market_clause)
 
         # 如果没有任何条件，返回空结果
         if not conditions:
@@ -647,12 +787,13 @@ class DataOperations:
         where_clause = " AND ".join(conditions)
 
         query = text(f"""
-            SELECT time, symbol, turnover_rate, volume_ratio, pe, pe_ttm,
-                   pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share,
-                   float_share, free_share, total_mv, circ_mv
-            FROM daily_basic
+            SELECT d.time, d.symbol, d.turnover_rate, d.volume_ratio, d.pe, d.pe_ttm,
+                   d.pb, d.ps, d.ps_ttm, d.dv_ratio, d.dv_ttm, d.total_share,
+                   d.float_share, d.free_share, d.total_mv, d.circ_mv
+            FROM daily_basic d
+            LEFT JOIN asset_basic b ON d.symbol = b.symbol
             WHERE {where_clause}
-            ORDER BY symbol, time
+            ORDER BY d.symbol, d.time
         """)
 
         async with self.db_manager._engine.begin() as conn:
@@ -666,13 +807,16 @@ class DataOperations:
         return data
 
     async def get_asset_basic(
-        self, symbols: Optional[List[str]] = None
+        self,
+        symbols: Optional[List[str]] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取股票基本信息
 
         Args:
             symbols: 股票代码列表，如果为 None 则获取所有股票
+            market: 宽市场代码（CN/HK/ALL）或交易所代码（SH/SZ/BJ/HK）
 
         Returns:
             Optional[pd.DataFrame]: 股票基本信息，包含 symbol, name, area, industry, market, exchange, list_status, list_date, delist_date, is_hs 列
@@ -682,11 +826,15 @@ class DataOperations:
             await self.db_manager.initialize()
 
         params = {}
-        query = "SELECT symbol, name, area, industry, market, list_status, list_date, delist_date, is_hs FROM asset_basic WHERE 1=1"
+        query = "SELECT symbol, name, area, industry, market, exchange, list_status, list_date, delist_date, is_hs FROM asset_basic WHERE 1=1"
 
         if symbols:
             query += " AND symbol = ANY(:symbols)"
             params["symbols"] = symbols
+
+        market_clause = _market_filter_clause("symbol", market, params)
+        if market_clause:
+            query += f" AND {market_clause}"
 
         query += " ORDER BY symbol"
 
@@ -761,13 +909,14 @@ class DataOperations:
 
             # 处理NaT值，转换为None；处理时间戳为带时区的datetime
             for record in records:
+                record_market = infer_market_from_symbol(record.get("symbol"))
                 for key, value in record.items():
                     if pd.isna(value):
                         record[key] = None
                     elif key == "time" or isinstance(value, pd.Timestamp):
                         # 转换时间戳为带时区的Python datetime
                         record[key] = _normalize_datetime_for_db(
-                            value, data_type="adj_factor"
+                            value, data_type="adj_factor", market=record_market
                         )
 
             async with self.db_manager._engine.begin() as conn:
@@ -787,6 +936,7 @@ class DataOperations:
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取指定时间范围内的复权因子
@@ -806,27 +956,42 @@ class DataOperations:
         # 构建动态查询条件
         conditions = []
         params = {}
+        query_market = market
+        if query_market is None and symbols:
+            inferred_markets = {infer_market_from_symbol(symbol) for symbol in symbols}
+            if len(inferred_markets) == 1:
+                query_market = inferred_markets.pop()
 
         # symbols 条件
         if symbols:
-            conditions.append("symbol = ANY(:symbols)")
+            conditions.append("a.symbol = ANY(:symbols)")
             params["symbols"] = symbols
 
         # start_date 条件
         if start_date:
-            start_dt = _normalize_datetime_for_db(start_date, "adj_factor")
-            conditions.append("time >= :start_date")
+            start_dt = _normalize_datetime_for_db(
+                start_date, "adj_factor", query_market
+            )
+            conditions.append("a.time >= :start_date")
             params["start_date"] = start_dt
         else:
             params["start_date"] = None
 
         # end_date 条件
         if end_date:
-            end_dt = _normalize_datetime_for_db(end_date + " 23:59:59", "adj_factor")
-            conditions.append("time <= :end_date")
+            end_dt = _normalize_datetime_for_db(
+                end_date + " 23:59:59", "adj_factor", query_market
+            )
+            conditions.append("a.time <= :end_date")
             params["end_date"] = end_dt
         else:
             params["end_date"] = None
+
+        market_clause = _market_filter_clause(
+            "a.symbol", query_market, params, asset_alias="b"
+        )
+        if market_clause:
+            conditions.append(market_clause)
 
         # 如果没有任何条件，返回空结果
         if not conditions:
@@ -835,10 +1000,11 @@ class DataOperations:
         where_clause = " AND ".join(conditions)
 
         query = text(f"""
-            SELECT time, symbol, adj_factor
-            FROM adj_factor
+            SELECT a.time, a.symbol, a.adj_factor
+            FROM adj_factor a
+            LEFT JOIN asset_basic b ON a.symbol = b.symbol
             WHERE {where_clause}
-            ORDER BY symbol, time
+            ORDER BY a.symbol, a.time
         """)
 
         async with self.db_manager._engine.begin() as conn:

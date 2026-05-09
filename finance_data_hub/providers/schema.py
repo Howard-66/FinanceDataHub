@@ -57,6 +57,7 @@ StockBasicSchema = DataFrameSchema(
         ColumnSchema("symbol", "object", False, "股票代码（带后缀，如600519.SH）"),
         ColumnSchema("name", "object", False, "股票名称"),
         ColumnSchema("market", "object", False, "市场代码（SH/SZ等）"),
+        ColumnSchema("exchange", "object", True, "交易所代码（SH/SZ/BJ/HK等）"),
         ColumnSchema("industry", "object", True, "所属行业"),
         ColumnSchema("area", "object", True, "地域"),
         ColumnSchema("list_status", "object", True, "上市状态（L=上市 D=退市 P=暂停）"),

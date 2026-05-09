@@ -146,9 +146,30 @@ providers:
 
 routing_strategy:
   stock:
-    daily: [tushare, xtquant]
-    minute_1: [xtquant]
-    tick: [xtquant]
+    CN:
+      basic:
+        providers: [tushare]
+      daily:
+        providers: [tushare, xtquant]
+      minute:
+        1m:
+          providers: [xtquant]
+      adj_factor:
+        providers: [tushare]
+      tick:
+        providers: [xtquant]
+    HK:
+      basic:
+        providers: [xtquant]
+      daily:
+        providers: [xtquant]
+      minute:
+        1m:
+          providers: [xtquant]
+      adj_factor:
+        providers: [xtquant]
+      tick:
+        providers: [xtquant]
 
   # 宏观经济数据路由
   macro:
@@ -173,6 +194,21 @@ routing_strategy:
     dailybasic:
       providers: [tushare]
       fallback: false
+```
+
+**港股 CLI 示例**:
+```bash
+# 港股股票池
+fdh-cli update --dataset basic --market HK
+
+# 港股日线
+fdh-cli update --dataset daily --market HK
+
+# 港股分钟线
+fdh-cli update --dataset minute_1 --market HK --symbols 00700.HK
+
+# 港股复权因子
+fdh-cli update --dataset adj_factor --market HK
 ```
 
 ## 实施计划

@@ -124,6 +124,11 @@ def update(
         "-a",
         help="资产类别 (stock, fund, index, etc.)"
     ),
+    market: str = typer.Option(
+        "CN",
+        "--market",
+        help="宽市场代码 (CN, HK, ALL)。默认 CN，保持既有 A 股行为"
+    ),
     dataset: Optional[str] = typer.Option(
         None,
         "--dataset",
@@ -297,6 +302,7 @@ def update(
                 display_asset_class = "macro"
             console.print(f"[cyan]资产类别:[/cyan] {display_asset_class}")
             console.print(f"[cyan]数据类型:[/cyan] {data_type}")
+            console.print(f"[cyan]市场:[/cyan] {market}")
             if force:
                 console.print(f"[cyan]更新模式:[/cyan] 强制更新")
             else:
@@ -317,7 +323,7 @@ def update(
         # 执行更新流程
         asyncio.run(_run_update(
             settings, asset_class, data_type, symbols,
-            start_date, end_date, adj, force, trade_date, verbose, quiet
+            start_date, end_date, adj, force, trade_date, market, verbose, quiet
         ))
 
         if not quiet:
@@ -360,6 +366,7 @@ async def _run_update(
     adj: Optional[str],
     force: bool,
     trade_date: Optional[str],
+    market: str,
     verbose: bool,
     quiet: bool = False,
 ):
@@ -380,7 +387,7 @@ async def _run_update(
         # 策略 1: trade_date 批量更新（Tushare专用）
         console.print("\n[bold yellow]使用交易日批量更新模式[/bold yellow]")
         await _run_trade_date_update(
-            settings, asset_class, data_type, trade_date, verbose, quiet
+            settings, asset_class, data_type, trade_date, market, verbose, quiet
         )
     elif force or start_date or not _is_timeseries_data(data_type):
         # 策略 2: 强制更新模式
@@ -393,14 +400,14 @@ async def _run_update(
                 console.print("\n[bold yellow]使用强制更新模式[/bold yellow]")
         await _run_force_update(
             settings, asset_class, data_type, symbol_list,
-            start_date, end_date, adj, trade_date, verbose, quiet
+            start_date, end_date, adj, trade_date, market, verbose, quiet
         )
     else:
         # 策略 3: 智能下载模式（默认）
         console.print("\n[bold yellow]使用智能下载模式[/bold yellow]")
         await _run_smart_download(
             settings, asset_class, data_type, symbol_list,
-            end_date, adj, trade_date, start_date, verbose, quiet
+            end_date, adj, trade_date, start_date, market, verbose, quiet
         )
 
 
@@ -413,10 +420,41 @@ async def _run_smart_download(
     adj: Optional[str],
     trade_date: Optional[str],
     start_date: Optional[str],
+    market: str,
     verbose: bool,
     quiet: bool = False,
 ):
     """智能下载模式：自动检测数据库状态，智能选择全量或增量下载"""
+    if data_type in ("basic", "asset_basic"):
+        if not quiet:
+            console.print("[bold]智能下载策略:[/bold]")
+            console.print("  - 股票基本信息为非时间序列数据")
+            console.print("  - 直接执行全量刷新，无需预先读取数据库股票池")
+            console.print("")
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在更新股票基本信息...", total=1)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_stock_basic(market=market)
+                    progress.update(task, completed=1)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条股票基本信息")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条股票基本信息")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新股票基本信息失败: {str(e)}")
+                    raise
+
     # GDP 数据不需要 symbol，单独处理
     if data_type == "gdp":
         if not quiet:
@@ -1130,7 +1168,11 @@ async def _run_smart_download(
             try:
                 # 如果没有指定symbol，从数据库获取股票列表
                 if not symbol_list:
-                    symbols_db = await updater.data_ops.get_symbol_list()
+                    symbol_limit = 10 if data_type.startswith("minute") else None
+                    symbols_db = await updater.data_ops.get_symbol_list(
+                        market=market,
+                        limit=symbol_limit,
+                    )
                     if symbols_db:
                         symbol_list = symbols_db
                         if not quiet:
@@ -1144,6 +1186,9 @@ async def _run_smart_download(
 
                 total_updated = 0
                 total_errors = 0
+                single_symbol_adj_factor = (
+                    data_type == "adj_factor" and len(symbol_list) == 1
+                )
 
                 task = progress.add_task("正在智能下载...", total=len(symbol_list))
 
@@ -1162,6 +1207,7 @@ async def _run_smart_download(
                                 end_date=end_date,
                                 adj=adj,
                                 force_update=False,
+                                market=market,
                             )
                         elif data_type.startswith("minute"):
                             # 从 data_type 中提取频率
@@ -1184,6 +1230,7 @@ async def _run_smart_download(
                                 end_date=end_date,
                                 freq=actual_freq,
                                 force_update=False,
+                                market=market,
                             )
                         elif data_type == "daily_basic":
                             count = await updater.update_daily_basic(
@@ -1191,6 +1238,7 @@ async def _run_smart_download(
                                 start_date=None,  # 智能下载
                                 end_date=end_date,
                                 force_update=False,
+                                market=market,
                             )
                         elif data_type == "adj_factor":
                             count = await updater.update_adj_factor(
@@ -1198,11 +1246,12 @@ async def _run_smart_download(
                                 start_date=None,  # 智能下载
                                 end_date=end_date,
                                 force_update=False,
+                                market=market,
                             )
                         elif data_type in ("basic", "asset_basic"):
                             # asset_basic 是非时间序列数据，不会进入智能下载模式
                             # 这里添加是为了代码完整性，但实际上不会执行到此处
-                            count = await updater.update_stock_basic(market=None)
+                            count = await updater.update_stock_basic(market=market)
                         else:
                             console.print(f"[bold red]不支持的数据类型: {data_type}[/bold red]")
                             raise typer.Exit(1)
@@ -1216,6 +1265,8 @@ async def _run_smart_download(
                         total_errors += 1
                         if not quiet:
                             console.print(f"[red]更新 {symbol} 失败: {str(e)}[/red]")
+                        if single_symbol_adj_factor:
+                            raise
                         continue
 
                 if not quiet:
@@ -1242,10 +1293,41 @@ async def _run_force_update(
     end_date: Optional[str],
     adj: Optional[str],
     trade_date: Optional[str],
+    market: str,
     verbose: bool,
     quiet: bool = False,
 ):
     """强制更新模式：忽略数据库状态，使用指定日期范围"""
+    if data_type in ("basic", "asset_basic"):
+        if not quiet:
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 股票基本信息为非时间序列数据")
+            console.print("  - 直接执行全量刷新，无需预先读取数据库股票池")
+            console.print("")
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在强制更新股票基本信息...", total=1)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_stock_basic(market=market)
+                    progress.update(task, completed=1)
+                    if not quiet:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条股票基本信息")
+                        console.print("[yellow]股票基本信息为全量数据，无需按symbol逐一更新[/yellow]\n")
+                    else:
+                        console.print(f"[green][OK][/green] 已更新 {count} 条股票基本信息")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新股票基本信息失败: {str(e)}")
+                    raise
 
     # GDP 数据不需要 symbol，单独处理
     if data_type == "gdp":
@@ -1966,7 +2048,11 @@ async def _run_force_update(
             try:
                 # 如果没有指定symbol，从数据库获取股票列表
                 if not symbol_list:
-                    symbols_db = await updater.data_ops.get_symbol_list()
+                    symbol_limit = 10 if data_type.startswith("minute") else None
+                    symbols_db = await updater.data_ops.get_symbol_list(
+                        market=market,
+                        limit=symbol_limit,
+                    )
                     if symbols_db:
                         symbol_list = symbols_db
                         if not quiet:
@@ -1980,6 +2066,9 @@ async def _run_force_update(
 
                 total_updated = 0
                 total_errors = 0
+                single_symbol_adj_factor = (
+                    data_type == "adj_factor" and len(symbol_list) == 1
+                )
 
                 task = progress.add_task("正在强制更新...", total=len(symbol_list))
 
@@ -1998,6 +2087,7 @@ async def _run_force_update(
                                 end_date=end_date,
                                 adj=adj,
                                 force_update=True,
+                                market=market,
                             )
                         elif data_type.startswith("minute"):
                             # 从 data_type 中提取频率
@@ -2020,6 +2110,7 @@ async def _run_force_update(
                                 end_date=end_date,
                                 freq=actual_freq,
                                 force_update=True,
+                                market=market,
                             )
                         elif data_type == "daily_basic":
                             count = await updater.update_daily_basic(
@@ -2027,6 +2118,7 @@ async def _run_force_update(
                                 start_date=start_date,
                                 end_date=end_date,
                                 force_update=True,
+                                market=market,
                             )
                         elif data_type == "adj_factor":
                             count = await updater.update_adj_factor(
@@ -2034,11 +2126,12 @@ async def _run_force_update(
                                 start_date=start_date,
                                 end_date=end_date,
                                 force_update=True,
+                                market=market,
                             )
                         elif data_type in ("basic", "asset_basic"):
                             # asset_basic 是非时间序列数据，使用强制全量更新
                             # 注意：asset_basic 不需要按 symbol 更新，只需要调用一次即可
-                            count = await updater.update_stock_basic(market=None)
+                            count = await updater.update_stock_basic(market=market)
 
                             # 一次性更新所有股票基本信息后，跳出循环
                             if not quiet:
@@ -2063,6 +2156,8 @@ async def _run_force_update(
                         total_errors += 1
                         if not quiet:
                             console.print(f"[red]更新 {symbol} 失败: {str(e)}[/red]")
+                        if single_symbol_adj_factor:
+                            raise
                         continue
 
                 if not quiet:
@@ -2085,18 +2180,21 @@ async def _run_trade_date_update(
     asset_class: str,
     data_type: str,
     trade_date: str,
+    market: str,
     verbose: bool,
     quiet: bool = False,
 ):
     """交易日批量更新模式：使用Tushare的trade_date参数批量更新当日所有股票"""
     # 转换日期格式从 YYYY-MM-DD (CLI格式) 到 YYYYMMDD (Tushare API格式)
     trade_date_api = trade_date.replace("-", "")
+    market_code = market.upper()
 
     if not quiet:
         console.print("[bold]交易日批量更新策略:[/bold]")
         console.print(f"  - 使用交易日: {trade_date} (API格式: {trade_date_api})")
+        console.print(f"  - 市场: {market_code}")
         console.print("  - 批量更新当日所有股票数据")
-        console.print("  - 适用于Tushare数据源")
+        console.print("  - CN 使用 Tushare 批量接口，HK 使用 XTQuant 逐股票接口")
         console.print("")
 
     try:
@@ -2108,6 +2206,26 @@ async def _run_trade_date_update(
         # 初始化更新器
         updater = DataUpdater(settings)
         await updater.initialize()
+
+        if market_code in {"HK", "ALL"} and data_type in {"daily", "adj_factor"}:
+            if data_type == "daily":
+                count = await updater.update_daily_data(
+                    trade_date=trade_date,
+                    market=market_code,
+                    force_update=True,
+                )
+            else:
+                count = await updater.update_adj_factor(
+                    trade_date=trade_date,
+                    market=market_code,
+                    force_update=True,
+                )
+            if not quiet:
+                console.print(f"[green][OK][/green] 已更新 {count} 条{data_type}数据")
+            else:
+                console.print(f"[green][OK][/green] 已更新 {count} 条数据")
+            await updater.close()
+            return count
 
         with Progress(
             get_spinner(),
@@ -2163,6 +2281,7 @@ async def _run_trade_date_update(
                 data_type=router_data_type,
                 method_name=method_name,
                 trade_date=trade_date_api,
+                market=market_code,
             )
 
             if df.empty:

@@ -29,7 +29,7 @@ from finance_data_hub.preprocessing.storage import (
     MacroCyclePhaseStorage,
 )
 from finance_data_hub.preprocessing.macro import CN_PHASE_METADATA
-
+from finance_data_hub.utils.market import infer_market_from_symbols
 
 
 class FinanceDataHub:
@@ -160,7 +160,8 @@ class FinanceDataHub:
         self,
         symbols: List[str],
         data_type: str,
-        frequency: Optional[str] = None
+        frequency: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         检查数据新鲜度并提供更新建议
@@ -183,6 +184,7 @@ class FinanceDataHub:
                 - 'minute_15': 15分钟线
                 - 'minute_30': 30分钟线
                 - 'minute_60': 60分钟线
+            market: 宽市场代码（CN/HK/ALL），None 表示按路由默认或 symbol 推断
 
         Returns:
             Dict[str, Any]: 包含数据新鲜度信息的字典，包含以下键值:
@@ -215,7 +217,18 @@ class FinanceDataHub:
             result["recommendation"] = "SmartRouter not configured"
             return result
 
-        providers = self.router.config.get_providers_for_route("stock", data_type, frequency)
+        route_market = market
+        if route_market is None and symbols and symbols != ["ALL"]:
+            route_market = infer_market_from_symbols(symbols, default="CN")
+
+        if route_market is None:
+            providers = self.router.config.get_providers_for_route(
+                "stock", data_type, frequency
+            )
+        else:
+            providers = self.router.config.get_providers_for_route(
+                "stock", data_type, frequency, market=route_market
+            )
         result["available_providers"] = providers
 
         if not providers:
@@ -241,7 +254,8 @@ class FinanceDataHub:
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取日线 OHLCV 数据（同步方法）
@@ -252,6 +266,7 @@ class FinanceDataHub:
                      None：不限制股票，返回所有股票数据
             start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
             end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 日线数据，包含 time, symbol, open, high, low, close, volume, amount, adj_factor 列
@@ -269,13 +284,14 @@ class FinanceDataHub:
             >>> data = fdh.get_daily(start_date='2024-01-01', end_date='2024-12-31')
             >>> print(data.head())
         """
-        return asyncio.run(self.get_daily_async(symbols, start_date, end_date))
+        return asyncio.run(self.get_daily_async(symbols, start_date, end_date, market))
 
     async def get_daily_async(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取日线 OHLCV 数据（异步方法）
@@ -285,6 +301,7 @@ class FinanceDataHub:
                      格式：['600519.SH', '000858.SZ']
             start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
             end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 日线数据
@@ -298,7 +315,9 @@ class FinanceDataHub:
             return None
 
         # 检查数据源可用性
-        freshness = await self.check_data_freshness(symbols if symbols else ["ALL"], "daily")
+        freshness = await self.check_data_freshness(
+            symbols if symbols else ["ALL"], "daily", market=market
+        )
         if freshness["is_stale"]:
             self._log_routing_decision(
                 "daily",
@@ -316,14 +335,19 @@ class FinanceDataHub:
 
         # 处理空列表为None
         symbols_param = symbols if symbols else None
-        return await self.ops.get_symbol_daily(symbols_param, start_date, end_date)
+        if market is None:
+            return await self.ops.get_symbol_daily(symbols_param, start_date, end_date)
+        return await self.ops.get_symbol_daily(
+            symbols_param, start_date, end_date, market=market
+        )
 
     def get_minute(
         self,
         symbols: List[str],
         start_date: str,
         end_date: str,
-        frequency: str = "minute_1"
+        frequency: str = "minute_1",
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取分钟级 OHLCV 数据（同步方法）
@@ -339,6 +363,7 @@ class FinanceDataHub:
                        - 'minute_15': 15分钟线
                        - 'minute_30': 30分钟线
                        - 'minute_60': 60分钟线
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 分钟数据，包含 time, symbol, open, high, low, close, volume, amount, frequency 列
@@ -348,14 +373,17 @@ class FinanceDataHub:
             >>> data = fdh.get_minute(['600519.SH'], '2024-11-01', '2024-11-30', 'minute_5')
             >>> print(data.head())
         """
-        return asyncio.run(self.get_minute_async(symbols, start_date, end_date, frequency))
+        return asyncio.run(
+            self.get_minute_async(symbols, start_date, end_date, frequency, market)
+        )
 
     async def get_minute_async(
         self,
         symbols: List[str],
         start_date: str,
         end_date: str,
-        frequency: str = "minute_1"
+        frequency: str = "minute_1",
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取分钟级 OHLCV 数据（异步方法）
@@ -365,12 +393,15 @@ class FinanceDataHub:
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
             frequency: 数据频率，支持 minute_1, minute_5, minute_15, minute_30, minute_60
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 分钟数据
         """
         # 检查数据源可用性
-        freshness = await self.check_data_freshness(symbols, "minute", frequency)
+        freshness = await self.check_data_freshness(
+            symbols, "minute", frequency, market=market
+        )
         self._log_routing_decision(
             "minute",
             symbols,
@@ -378,13 +409,18 @@ class FinanceDataHub:
             f"Frequency: {frequency}, Available providers: {', '.join(freshness.get('available_providers', []))}"
         )
 
-        return await self.ops.get_symbol_minute(symbols, start_date, end_date, frequency)
+        if market is None:
+            return await self.ops.get_symbol_minute(symbols, start_date, end_date, frequency)
+        return await self.ops.get_symbol_minute(
+            symbols, start_date, end_date, frequency, market=market
+        )
 
     def get_daily_basic(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取每日基本面指标数据（同步方法）
@@ -395,6 +431,7 @@ class FinanceDataHub:
                      None：不限制股票，返回所有股票数据
             start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
             end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 每日基本面数据，包含 time, symbol, turnover_rate, volume_ratio, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share, free_share, total_mv, circ_mv 列
@@ -412,13 +449,16 @@ class FinanceDataHub:
             >>> data = fdh.get_daily_basic(start_date='2024-01-01', end_date='2024-12-31')
             >>> print(data[['symbol', 'time', 'pe', 'pb']].head())
         """
-        return asyncio.run(self.get_daily_basic_async(symbols, start_date, end_date))
+        return asyncio.run(
+            self.get_daily_basic_async(symbols, start_date, end_date, market)
+        )
 
     async def get_daily_basic_async(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取每日基本面指标数据（异步方法）
@@ -427,6 +467,7 @@ class FinanceDataHub:
             symbols: 股票代码列表，None表示不限制股票
             start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
             end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 每日基本面数据
@@ -439,7 +480,9 @@ class FinanceDataHub:
             logger.warning("get_daily_basic: symbols, start_date, and end_date cannot all be None")
             return None
 
-        freshness = await self.check_data_freshness(symbols if symbols else ["ALL"], "daily_basic")
+        freshness = await self.check_data_freshness(
+            symbols if symbols else ["ALL"], "daily_basic", market=market
+        )
         self._log_routing_decision(
             "daily_basic",
             symbols if symbols else ["ALL"],
@@ -449,13 +492,18 @@ class FinanceDataHub:
 
         # 处理空列表为None
         symbols_param = symbols if symbols else None
-        return await self.ops.get_daily_basic(symbols_param, start_date, end_date)
+        if market is None:
+            return await self.ops.get_daily_basic(symbols_param, start_date, end_date)
+        return await self.ops.get_daily_basic(
+            symbols_param, start_date, end_date, market=market
+        )
 
     def get_adj_factor(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取复权因子数据（同步方法）
@@ -466,6 +514,7 @@ class FinanceDataHub:
                      None：不限制股票，返回所有股票数据
             start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
             end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 复权因子数据，包含 time, symbol, adj_factor 列
@@ -483,13 +532,16 @@ class FinanceDataHub:
             >>> data = fdh.get_adj_factor(start_date='2020-01-01', end_date='2024-12-31')
             >>> print(data.head())
         """
-        return asyncio.run(self.get_adj_factor_async(symbols, start_date, end_date))
+        return asyncio.run(
+            self.get_adj_factor_async(symbols, start_date, end_date, market)
+        )
 
     async def get_adj_factor_async(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取复权因子数据（异步方法）
@@ -498,6 +550,7 @@ class FinanceDataHub:
             symbols: 股票代码列表，None表示不限制股票
             start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
             end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 复权因子数据
@@ -510,7 +563,9 @@ class FinanceDataHub:
             logger.warning("get_adj_factor: symbols, start_date, and end_date cannot all be None")
             return None
 
-        freshness = await self.check_data_freshness(symbols if symbols else ["ALL"], "adj_factor")
+        freshness = await self.check_data_freshness(
+            symbols if symbols else ["ALL"], "adj_factor", market=market
+        )
         self._log_routing_decision(
             "adj_factor",
             symbols if symbols else ["ALL"],
@@ -520,11 +575,16 @@ class FinanceDataHub:
 
         # 处理空列表为None
         symbols_param = symbols if symbols else None
-        return await self.ops.get_adj_factor(symbols_param, start_date, end_date)
+        if market is None:
+            return await self.ops.get_adj_factor(symbols_param, start_date, end_date)
+        return await self.ops.get_adj_factor(
+            symbols_param, start_date, end_date, market=market
+        )
 
     def get_basic(
         self,
-        symbols: Optional[List[str]] = None
+        symbols: Optional[List[str]] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取股票基本信息（同步方法，非时间序列）
@@ -533,6 +593,7 @@ class FinanceDataHub:
             symbols: 股票代码列表，用于批量查询指定股票
                      格式：['600519.SH', '000858.SZ']
                      None：返回所有股票的基本信息
+            market: 宽市场代码（CN/HK/ALL），None 表示不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 股票基本信息，包含 ts_code, symbol, name, area, industry, market, exchange, list_status, list_date, delist_date, is_hs 列
@@ -542,17 +603,19 @@ class FinanceDataHub:
             >>> data = fdh.get_basic(['600519.SH', '000858.SZ'])
             >>> print(data[['symbol', 'name', 'industry']])
         """
-        return asyncio.run(self.get_basic_async(symbols))
+        return asyncio.run(self.get_basic_async(symbols, market))
 
     async def get_basic_async(
         self,
-        symbols: Optional[List[str]] = None
+        symbols: Optional[List[str]] = None,
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取股票基本信息（异步方法，非时间序列）
 
         Args:
             symbols: 股票代码列表，如果为None则返回所有股票
+            market: 宽市场代码（CN/HK/ALL），None 表示不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 股票基本信息
@@ -560,7 +623,9 @@ class FinanceDataHub:
         if symbols is None:
             symbols = []
 
-        freshness = await self.check_data_freshness(symbols if symbols else ["ALL"], "basic")
+        freshness = await self.check_data_freshness(
+            symbols if symbols else ["ALL"], "basic", market=market
+        )
         self._log_routing_decision(
             "basic",
             symbols if symbols else ["ALL"],
@@ -568,7 +633,9 @@ class FinanceDataHub:
             f"Available providers: {', '.join(freshness.get('available_providers', []))}"
         )
 
-        return await self.ops.get_asset_basic(symbols)
+        if market is None:
+            return await self.ops.get_asset_basic(symbols)
+        return await self.ops.get_asset_basic(symbols, market=market)
 
     # ============================================================================
     # 高周期数据查询方法
@@ -1432,7 +1499,8 @@ class FinanceDataHub:
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        adjust: str = "qfq"
+        adjust: str = "qfq",
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取复权后的日线数据（同步方法）
@@ -1452,6 +1520,7 @@ class FinanceDataHub:
                      - 'qfq': 前复权（默认，技术分析推荐）
                      - 'hfq': 后复权（收益率计算推荐）
                      - 'none': 不复权
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 复权后的日线数据，包含 time, symbol, open, high, low,
@@ -1473,14 +1542,17 @@ class FinanceDataHub:
             >>> data = fdh.get_daily_adjusted(['600519.SH'], '2024-01-01', '2024-12-31', adjust='none')
             >>> print(data.head())
         """
-        return asyncio.run(self.get_daily_adjusted_async(symbols, start_date, end_date, adjust))
+        return asyncio.run(
+            self.get_daily_adjusted_async(symbols, start_date, end_date, adjust, market)
+        )
 
     async def get_daily_adjusted_async(
         self,
         symbols: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        adjust: str = "qfq"
+        adjust: str = "qfq",
+        market: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取复权后的日线数据（异步方法）
@@ -1490,6 +1562,7 @@ class FinanceDataHub:
             start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
             end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
             adjust: 复权类型，可选 'qfq'（前复权）, 'hfq'（后复权）, 'none'（不复权）
+            market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
 
         Returns:
             Optional[pd.DataFrame]: 复权后的日线数据
@@ -1506,7 +1579,12 @@ class FinanceDataHub:
         
         # 获取原始日线数据（包含 adj_factor）
         symbols_param = symbols if symbols else None
-        df = await self.ops.get_symbol_daily(symbols_param, start_date, end_date)
+        if market is None:
+            df = await self.ops.get_symbol_daily(symbols_param, start_date, end_date)
+        else:
+            df = await self.ops.get_symbol_daily(
+                symbols_param, start_date, end_date, market=market
+            )
         
         if df is None or df.empty:
             return df

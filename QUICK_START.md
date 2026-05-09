@@ -86,6 +86,29 @@ fdh-cli update --dataset basic
 
 这将获取所有股票的基本信息，耗时约1分钟。
 
+### 5.1.1 更新港股股票列表 (HK)
+
+港股股票列表、日线和分钟线依赖 `xtquant_helper`，开始前请确认：
+
+```bash
+# .env 中至少需要有 XTQUANT_API_URL
+XTQUANT_API_URL=http://<your-xtquant-helper-host>:8100
+```
+
+然后执行：
+
+```bash
+# 更新港股股票列表
+fdh-cli update --dataset basic --market HK
+
+# 同时更新 A 股和港股股票列表
+fdh-cli update --dataset basic --market ALL
+```
+
+说明：
+- 港股 `basic` 通过 XtQuant 板块 `香港联交所股票` 获取
+- v1 版本港股基础信息以代码列表为主，名称缺失时会使用 symbol 占位
+
 ### 5.2 智能下载日线数据 (推荐)
 
 ```bash
@@ -96,6 +119,27 @@ fdh-cli update --dataset daily
 **智能下载逻辑**:
 - 第一次运行: 获取全部历史数据 (约5000只股票，需要15-30分钟)
 - 后续运行: 只获取增量数据 (仅新交易日，约10秒)
+
+### 5.2.1 港股日线更新
+
+```bash
+# 智能增量更新全部港股日线
+fdh-cli update --dataset daily --market HK
+
+# 强制补历史区间
+fdh-cli update --dataset daily --market HK --force \
+  --start-date 2024-01-01 --end-date 2024-12-31
+
+# 只更新指定港股
+fdh-cli update --dataset daily --market HK --symbols 00700.HK,00005.HK
+
+# 指定交易日更新全部港股日线
+fdh-cli update --dataset daily --market HK --trade-date 2024-11-18
+```
+
+说明：
+- 港股日线固定从 XtQuant 获取，避免误走 Tushare
+- 落库保存的是原始未复权日线；前/后复权依赖 `adj_factor`
 
 ### 5.3 指定日期范围 (可选)
 
@@ -110,6 +154,43 @@ fdh-cli update --dataset daily --start-date 2024-01-01 --end-date 2024-12-31
 # 只更新特定股票 (节省时间)
 fdh-cli update --dataset daily --symbols 600519.SH,000858.SZ
 ```
+
+### 5.5 更新港股分钟线 (可选)
+
+```bash
+# 1分钟线
+fdh-cli update --dataset minute_1 --market HK --symbols 00700.HK
+
+# 5分钟线
+fdh-cli update --dataset minute_5 --market HK --symbols 00700.HK
+
+# 15分钟 / 30分钟 / 60分钟线
+fdh-cli update --dataset minute_15 --market HK --symbols 00700.HK
+fdh-cli update --dataset minute_30 --market HK --symbols 00700.HK
+fdh-cli update --dataset minute_60 --market HK --symbols 00700.HK
+
+# 不传 symbols 时，CLI 会从港股股票池中按默认 limit 抽样更新
+fdh-cli update --dataset minute_1 --market HK
+```
+
+### 5.6 更新港股复权因子 (推荐与日线配套执行)
+
+```bash
+# 智能增量更新全部港股复权因子
+fdh-cli update --dataset adj_factor --market HK
+
+# 指定港股或日期范围
+fdh-cli update --dataset adj_factor --market HK --symbols 00700.HK
+fdh-cli update --dataset adj_factor --market HK --force \
+  --start-date 2024-01-01 --end-date 2024-12-31
+
+# 指定交易日
+fdh-cli update --dataset adj_factor --market HK --trade-date 2024-11-18
+```
+
+说明：
+- 港股 `adj_factor` 由 XtQuant 的未复权日线与 `back_ratio/back` 日线推导
+- 当前不支持港股 `daily_basic`
 
 ---
 
@@ -160,6 +241,22 @@ fdh-cli update --dataset adj_factor
 # 更新指数日线行情（项目支持指数）
 fdh-cli update --dataset index_daily
 fdh-cli update --dataset index_daily --symbols 000300.SH
+```
+
+### 场景 5: 港股全链路更新
+
+```bash
+# 1. 先刷新港股股票池
+fdh-cli update --dataset basic --market HK
+
+# 2. 再更新港股日线
+fdh-cli update --dataset daily --market HK
+
+# 3. 更新港股复权因子
+fdh-cli update --dataset adj_factor --market HK
+
+# 4. 按需更新分钟线
+fdh-cli update --dataset minute_1 --market HK --symbols 00700.HK,00005.HK
 ```
 
 ---
@@ -227,6 +324,14 @@ docker-compose restart postgres
 1. 检查 Tushare token 是否正确
 2. 检查股票代码是否正确 (格式: 600519.SH)
 3. 检查日期是否为交易日 (排除周末和节假日)
+
+### 问题: 港股列表或 K 线更新失败
+
+**解决**:
+1. 检查 `XTQUANT_API_URL` 是否指向可访问的 `xtquant_helper`
+2. 检查 Windows 侧 QMT / XtQuant 是否已启动并有行情权限
+3. 先执行 `fdh-cli update --dataset basic --market HK`，确认本地已有港股股票池
+4. 分钟线建议先用单只股票验证，例如 `00700.HK`
 
 ---
 

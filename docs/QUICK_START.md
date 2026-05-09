@@ -128,13 +128,17 @@ fdh-cli status --help
 # 获取所有股票列表
 fdh-cli update --frequency basic
 
-# 仅获取指定市场的股票
-# （注：当前版本会获取全部，可通过修改updater.py支持market参数）
+# 仅获取港股股票列表
+fdh-cli update --dataset basic --market HK
+
+# 同时获取 A 股和港股股票列表
+fdh-cli update --dataset basic --market ALL
 ```
 
 **注意：** 运行此命令需要：
 - 正确配置 `.env` 文件中的 `DATABASE_URL`
 - 正确配置 `TUSHARE_TOKEN`
+- 如需港股，正确配置 `XTQUANT_API_URL` 并确保 `xtquant_helper` 可访问
 - PostgreSQL和Redis服务正在运行
 - 正确配置 `sources.yml` 文件
 
@@ -147,11 +151,21 @@ fdh-cli update --dataset daily
 # 更新指定股票
 fdh-cli update --dataset daily --symbols 600519.SH,000858.SZ
 
+# 更新全部港股日线
+fdh-cli update --dataset daily --market HK
+
+# 更新指定港股
+fdh-cli update --dataset daily --market HK --symbols 00700.HK,00005.HK
+
 # 获取前复权数据
 fdh-cli update --dataset daily --symbols 600519.SH --adj qfq
 
 # 指定日期范围
 fdh-cli update --dataset daily --symbols 600519.SH \
+    --start-date 2024-01-01 --end-date 2024-12-31
+
+# 港股指定日期范围
+fdh-cli update --dataset daily --market HK --force \
     --start-date 2024-01-01 --end-date 2024-12-31
 ```
 
@@ -163,6 +177,10 @@ fdh-cli update --dataset minute_1 --symbols 600519.SH
 # 5分钟数据
 fdh-cli update --dataset minute_5 --symbols 600519.SH
 
+# 港股 1 分钟 / 5 分钟
+fdh-cli update --dataset minute_1 --market HK --symbols 00700.HK
+fdh-cli update --dataset minute_5 --market HK --symbols 00700.HK
+
 # 查看详细日志
 fdh-cli update --dataset minute_1 --symbols 600519.SH --verbose
 ```
@@ -173,7 +191,23 @@ fdh-cli update --dataset minute_1 --symbols 600519.SH --verbose
 fdh-cli update --dataset daily_basic --symbols 600519.SH
 ```
 
-#### 4.1 更新指数日线行情
+#### 4.1 更新港股复权因子
+```bash
+# 更新全部港股复权因子
+fdh-cli update --dataset adj_factor --market HK
+
+# 更新指定港股
+fdh-cli update --dataset adj_factor --market HK --symbols 00700.HK
+
+# 指定交易日
+fdh-cli update --dataset adj_factor --market HK --trade-date 2024-11-18
+```
+
+**注意：**
+- 港股当前不支持 `daily_basic`
+- 港股 `adj_factor` 通过 XtQuant 日线间接推导，不依赖 Tushare 权限
+
+#### 4.2 更新指数日线行情
 ```bash
 # 更新项目支持的指数日线行情（智能增量）
 fdh-cli update --dataset index_daily

@@ -63,8 +63,9 @@ class ProviderRegistry:
             del cls._providers[name]
             logger.info(f"Unregistered provider: {name}")
 
-        if name in cls._instances:
-            del cls._instances[name]
+        for cache_key in list(cls._instances.keys()):
+            if cache_key == name or cache_key.startswith(f"{name}:"):
+                del cls._instances[cache_key]
 
     @classmethod
     def get_provider_class(cls, name: str) -> Type[BaseDataProvider]:
@@ -90,7 +91,11 @@ class ProviderRegistry:
 
     @classmethod
     def create_provider(
-        cls, name: str, config: Optional[dict] = None, cache: bool = True
+        cls,
+        name: str,
+        config: Optional[dict] = None,
+        cache: bool = True,
+        market: str = "CN",
     ) -> BaseDataProvider:
         """
         创建或获取Provider实例
@@ -106,24 +111,27 @@ class ProviderRegistry:
         Raises:
             ProviderError: 如果Provider未注册或初始化失败
         """
+        market = (market or "CN").upper()
+        cache_key = f"{name}:{market}"
+
         # 如果启用缓存且实例已存在，直接返回
-        if cache and name in cls._instances:
-            logger.debug(f"Reusing cached provider instance: {name}")
-            return cls._instances[name]
+        if cache and cache_key in cls._instances:
+            logger.debug(f"Reusing cached provider instance: {cache_key}")
+            return cls._instances[cache_key]
 
         # 获取Provider类
         provider_class = cls.get_provider_class(name)
 
         # 创建实例
         try:
-            instance = provider_class(name=name, config=config)
+            instance = provider_class(name=name, config=config, market=market)
             instance.initialize()
 
             # 缓存实例
             if cache:
-                cls._instances[name] = instance
+                cls._instances[cache_key] = instance
 
-            logger.info(f"Created provider instance: {name}")
+            logger.info(f"Created provider instance: {cache_key}")
             return instance
 
         except Exception as e:

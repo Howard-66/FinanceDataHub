@@ -15,6 +15,7 @@ from finance_data_hub.database.manager import DatabaseManager
 from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.config import Settings
 from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES, SUPPORTED_EXCHANGES, SUPPORTED_INDEX_WEIGHT_CODES
+from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
 
 
 def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
@@ -107,17 +108,46 @@ class DataUpdater:
 
         logger.info("DataUpdater initialized successfully")
 
+    def _normalize_update_markets(self, market: Optional[str]) -> List[str]:
+        """Return concrete broad markets for an update request."""
+        market_code = normalize_market(market, default="CN")
+        if market_code == "ALL":
+            return ["CN", "HK"]
+        return [market_code]
+
+    def _symbols_for_market(
+        self,
+        symbols: Optional[List[str]],
+        market: str,
+    ) -> Optional[List[str]]:
+        """Filter an explicit symbol list for a concrete market in ALL mode."""
+        if symbols is None:
+            return None
+        return [
+            symbol
+            for symbol in symbols
+            if infer_market_from_symbol(symbol, default="CN") == market
+        ]
+
     async def update_stock_basic(self, market: Optional[str] = None) -> int:
         """
         更新股票基本信息
 
         Args:
-            market: 市场代码（SH/SZ）
+            market: 宽市场代码（CN/HK/ALL），默认 CN
 
         Returns:
             int: 更新的记录数
         """
-        logger.info(f"Updating stock basic info (market={market})")
+        markets = self._normalize_update_markets(market)
+        if len(markets) > 1:
+            total = 0
+            for market_code in markets:
+                total += await self.update_stock_basic(market=market_code)
+            return total
+
+        market_code = markets[0]
+        logger.info(f"Updating stock basic info (market={market_code})")
 
         try:
             # 从路由器获取数据
@@ -125,7 +155,7 @@ class DataUpdater:
                 asset_class="stock",
                 data_type="basic",
                 method_name="get_stock_basic",
-                market=market,
+                market=market_code,
                 list_status="L",
             )
 
@@ -151,6 +181,7 @@ class DataUpdater:
         adj: Optional[str] = None,
         trade_date: Optional[str] = None,
         force_update: bool = False,
+        market: Optional[str] = None,
     ) -> int:
         """
         更新日线数据
@@ -167,6 +198,7 @@ class DataUpdater:
             adj: 复权类型
             trade_date: 交易日期（YYYY-MM-DD格式），批量获取当日所有股票数据
             force_update: 是否强制更新（忽略数据库状态）
+            market: 宽市场代码（CN/HK/ALL），默认 CN
 
         Returns:
             int: 更新的记录数
@@ -174,13 +206,46 @@ class DataUpdater:
         Raises:
             ValueError: 当 trade_date 与 start_date 或 end_date 同时指定时
         """
+        markets = self._normalize_update_markets(market)
+        if len(markets) > 1:
+            total = 0
+            for market_code in markets:
+                market_symbols = self._symbols_for_market(symbols, market_code)
+                if symbols is not None and not market_symbols:
+                    continue
+                total += await self.update_daily_data(
+                    symbols=market_symbols,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adj=adj,
+                    trade_date=trade_date,
+                    force_update=force_update,
+                    market=market_code,
+                )
+            return total
+
+        market_code = markets[0]
+
         # 参数互斥检查
         if trade_date and (start_date or end_date):
             raise ValueError("trade_date cannot be used with start_date or end_date")
 
+        if trade_date and market_code == "HK":
+            logger.info(
+                f"HK trade_date mode: fetching per-symbol daily data for {trade_date}"
+            )
+            return await self.update_daily_data(
+                symbols=symbols,
+                start_date=trade_date,
+                end_date=trade_date,
+                adj=adj,
+                force_update=True,
+                market=market_code,
+            )
+
         # 交易日模式：批量获取当日所有股票数据
         if trade_date:
-            logger.info(f"Trade date mode: fetching all stocks for {trade_date}")
+            logger.info(f"Trade date mode: fetching all {market_code} stocks for {trade_date}")
 
             # 转换日期格式（CLI传入 YYYY-MM-DD，API需要 YYYYMMDD）
             trade_date_api = trade_date.replace("-", "")
@@ -192,6 +257,7 @@ class DataUpdater:
                 symbol=None,  # 获取所有股票
                 trade_date=trade_date_api,
                 adj=adj,
+                market=market_code,
             )
 
             if data is None or data.empty:
@@ -205,7 +271,7 @@ class DataUpdater:
         # 原有逻辑：按股票逐个获取
         if not symbols:
             # 如果没有指定股票，获取所有股票
-            symbols = await self.data_ops.get_symbol_list()
+            symbols = await self.data_ops.get_symbol_list(market=market_code)
 
         if not symbols:
             logger.warning("No symbols to update")
@@ -217,10 +283,12 @@ class DataUpdater:
 
         logger.info(
             f"Updating daily data for {len(symbols)} symbols "
-            f"from {start_date} to {end_date} (adj={adj}, force={force_update})"
+            f"from {start_date} to {end_date} "
+            f"(adj={adj}, market={market_code}, force={force_update})"
         )
 
         total_records = 0
+        single_symbol_request = len(symbols) == 1
 
         for symbol in symbols:
             try:
@@ -258,6 +326,7 @@ class DataUpdater:
                     start_date=symbol_start_date,
                     end_date=end_date,
                     adj=adj,
+                    market=market_code,
                 )
 
                 if data is not None and not data.empty:
@@ -272,6 +341,8 @@ class DataUpdater:
             except Exception as e:
                 logger.error(f"Failed to update {symbol}: {type(e).__name__}: {str(e)}")
                 logger.exception("Traceback:")
+                if single_symbol_request:
+                    raise
                 continue
 
         logger.info(f"Updated total {total_records} daily records")
@@ -284,6 +355,7 @@ class DataUpdater:
         end_date: Optional[str] = None,
         freq: str = "1m",
         force_update: bool = False,
+        market: Optional[str] = None,
     ) -> int:
         """
         更新分钟数据
@@ -294,13 +366,33 @@ class DataUpdater:
             end_date: 结束日期
             freq: 频率
             force_update: 是否强制更新（忽略数据库状态）
+            market: 宽市场代码（CN/HK/ALL），默认 CN
 
         Returns:
             int: 更新的记录数
         """
+        markets = self._normalize_update_markets(market)
+        if len(markets) > 1:
+            total = 0
+            for market_code in markets:
+                market_symbols = self._symbols_for_market(symbols, market_code)
+                if symbols is not None and not market_symbols:
+                    continue
+                total += await self.update_minute_data(
+                    symbols=market_symbols,
+                    start_date=start_date,
+                    end_date=end_date,
+                    freq=freq,
+                    force_update=force_update,
+                    market=market_code,
+                )
+            return total
+
+        market_code = markets[0]
+
         if not symbols:
             # 限制股票数量（分钟数据量很大）
-            symbols = await self.data_ops.get_symbol_list(limit=10)
+            symbols = await self.data_ops.get_symbol_list(market=market_code, limit=10)
 
         if not symbols:
             logger.warning("No symbols to update")
@@ -312,7 +404,8 @@ class DataUpdater:
 
         logger.info(
             f"Updating {freq} data for {len(symbols)} symbols "
-            f"from {start_date or 'smart'} to {end_date} (force={force_update})"
+            f"from {start_date or 'smart'} to {end_date} "
+            f"(market={market_code}, force={force_update})"
         )
 
         total_records = 0
@@ -352,6 +445,7 @@ class DataUpdater:
                     symbol=symbol,
                     start_date=symbol_start_date,
                     end_date=end_date,
+                    market=market_code,
                 )
 
                 if data is not None and not data.empty:
@@ -376,6 +470,7 @@ class DataUpdater:
         end_date: Optional[str] = None,
         trade_date: Optional[str] = None,
         force_update: bool = False,
+        market: Optional[str] = None,
     ) -> int:
         """
         更新每日指标数据
@@ -391,6 +486,7 @@ class DataUpdater:
             end_date: 结束日期
             trade_date: 交易日期（YYYY-MM-DD格式），批量获取当日所有股票数据
             force_update: 是否强制更新（忽略数据库状态）
+            market: 宽市场代码（CN/HK/ALL），默认 CN
 
         Returns:
             int: 更新的记录数
@@ -398,6 +494,11 @@ class DataUpdater:
         Raises:
             ValueError: 当 trade_date 与 start_date 或 end_date 同时指定时
         """
+        market_code = self._normalize_update_markets(market)[0]
+        if market_code != "CN":
+            logger.warning(f"daily_basic is only supported for CN in v1 (market={market_code})")
+            return 0
+
         # 参数互斥检查
         if trade_date and (start_date or end_date):
             raise ValueError("trade_date cannot be used with start_date or end_date")
@@ -415,6 +516,7 @@ class DataUpdater:
                 method_name="get_daily_basic",
                 symbol=None,  # 获取所有股票
                 trade_date=trade_date_api,
+                market=market_code,
             )
 
             if data is None or data.empty:
@@ -427,7 +529,7 @@ class DataUpdater:
 
         # 原有逻辑：按股票逐个获取
         if not symbols:
-            symbols = await self.data_ops.get_symbol_list()
+            symbols = await self.data_ops.get_symbol_list(market=market_code)
 
         if not symbols:
             logger.warning("No symbols to update")
@@ -478,6 +580,7 @@ class DataUpdater:
                     symbol=symbol,
                     start_date=symbol_start_date,
                     end_date=end_date,
+                    market=market_code,
                 )
 
                 if data is not None and not data.empty:
@@ -502,6 +605,7 @@ class DataUpdater:
         end_date: Optional[str] = None,
         trade_date: Optional[str] = None,
         force_update: bool = False,
+        market: Optional[str] = None,
     ) -> int:
         """
         更新复权因子数据
@@ -517,6 +621,7 @@ class DataUpdater:
             end_date: 结束日期
             trade_date: 交易日期（YYYY-MM-DD格式），批量获取当日所有股票复权因子
             force_update: 是否强制更新（忽略数据库状态）
+            market: 宽市场代码（CN/HK/ALL），默认 CN
 
         Returns:
             int: 更新的记录数
@@ -524,13 +629,44 @@ class DataUpdater:
         Raises:
             ValueError: 当 trade_date 与 start_date 或 end_date 同时指定时
         """
+        markets = self._normalize_update_markets(market)
+        if len(markets) > 1:
+            total = 0
+            for market_code in markets:
+                market_symbols = self._symbols_for_market(symbols, market_code)
+                if symbols is not None and not market_symbols:
+                    continue
+                total += await self.update_adj_factor(
+                    symbols=market_symbols,
+                    start_date=start_date,
+                    end_date=end_date,
+                    trade_date=trade_date,
+                    force_update=force_update,
+                    market=market_code,
+                )
+            return total
+
+        market_code = markets[0]
+
         # 参数互斥检查
         if trade_date and (start_date or end_date):
             raise ValueError("trade_date cannot be used with start_date or end_date")
 
+        if trade_date and market_code == "HK":
+            logger.info(
+                f"HK trade_date mode: deriving per-symbol adj_factor for {trade_date}"
+            )
+            return await self.update_adj_factor(
+                symbols=symbols,
+                start_date=trade_date,
+                end_date=trade_date,
+                force_update=True,
+                market=market_code,
+            )
+
         # 交易日模式：批量获取当日所有股票复权因子
         if trade_date:
-            logger.info(f"Trade date mode: fetching adj_factor for {trade_date}")
+            logger.info(f"Trade date mode: fetching {market_code} adj_factor for {trade_date}")
 
             data = self.router.route(
                 asset_class="stock",
@@ -538,6 +674,7 @@ class DataUpdater:
                 method_name="get_adj_factor",
                 symbol=None,  # 获取所有股票
                 trade_date=trade_date,
+                market=market_code,
             )
 
             if data is None or data.empty:
@@ -551,7 +688,7 @@ class DataUpdater:
         # 原有逻辑：按股票逐个获取
         if not symbols:
             # 如果没有指定股票，获取所有股票
-            symbols = await self.data_ops.get_symbol_list()
+            symbols = await self.data_ops.get_symbol_list(market=market_code)
 
         if not symbols:
             logger.warning("No symbols to update")
@@ -563,11 +700,13 @@ class DataUpdater:
 
         logger.info(
             f"Updating adj_factor for {len(symbols)} symbols "
-            f"from {start_date or 'smart'} to {end_date} (force={force_update})"
+            f"from {start_date or 'smart'} to {end_date} "
+            f"(market={market_code}, force={force_update})"
         )
 
         total_records = 0
         skipped_count = 0
+        single_symbol_request = len(symbols) == 1
 
         for symbol in symbols:
             try:
@@ -605,6 +744,7 @@ class DataUpdater:
                     symbol=symbol,
                     start_date=symbol_start_date,
                     end_date=end_date,
+                    market=market_code,
                 )
 
                 if data is not None and not data.empty:
@@ -620,6 +760,8 @@ class DataUpdater:
             except Exception as e:
                 logger.error(f"Failed to update adj_factor for {symbol}: {str(e)}")
                 logger.exception("Traceback:")
+                if single_symbol_request:
+                    raise
                 continue
 
         if skipped_count > 0:

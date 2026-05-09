@@ -397,18 +397,36 @@ fdh-cli update --dataset daily              # 默认安静模式，只显示必�
 fdh-cli update --dataset daily -v           # 详细模式，显示 INFO 日志
 fdh-cli update --dataset daily -q           # 安静模式（默认），日志级别 ERROR
 
+# 港股前置条件：确保 xtquant_helper 可访问
+# .env: XTQUANT_API_URL=http://<your-xtquant-helper-host>:8100
+
+# 港股股票列表
+fdh-cli update --dataset basic --market HK
+
 # 智能下载模式（默认）- 自动检测数据库状态
 fdh-cli update --dataset daily              # 自动增量更新所有股票
 fdh-cli update --dataset daily_basic        # 自动增量更新每日指标
 fdh-cli update --symbols 600519.SH,000858.SZ # 更新指定股票
 
+# 港股日线 / 分钟线 / 复权因子
+fdh-cli update --dataset daily --market HK
+fdh-cli update --dataset minute_1 --market HK --symbols 00700.HK
+fdh-cli update --dataset adj_factor --market HK
+
+# 同时更新 A 股和港股支持的数据集
+fdh-cli update --dataset basic --market ALL
+fdh-cli update --dataset daily --market ALL
+
 # 强制更新模式 - 忽略数据库状态
 fdh-cli update --dataset daily --force      # 强制全量更新所有股票
 fdh-cli update --dataset daily --force --start-date 2024-01-01 # 指定日期范围
+fdh-cli update --dataset daily --market HK --force --start-date 2024-01-01 --end-date 2024-12-31
 
 # 交易日批量更新 - 批量获取指定交易日所有股票
 fdh-cli update --dataset daily --trade-date 2024-11-18
 fdh-cli update --dataset daily_basic --trade-date 2024-11-18
+fdh-cli update --dataset daily --market HK --trade-date 2024-11-18
+fdh-cli update --dataset adj_factor --market HK --trade-date 2024-11-18
 # 注意: index_daily 不支持 --trade-date 全指数单日批量模式
 
 # 向后兼容 - 仍支持 --frequency 参数
@@ -482,6 +500,56 @@ EOF
 | `minute_5` | 5分钟数据 | `fdh-cli update --dataset minute_5 --symbols 600519.SH` |
 | `adj_factor` | 复权因子 | `fdh-cli update --dataset adj_factor` |
 | `index_daily` | 指数日线行情 | `fdh-cli update --dataset index_daily --symbols 000300.SH` |
+
+### 港股 CLI 指南
+
+港股 v1 当前支持：
+- `basic`：港股股票列表，通过 `xtquant_helper` 获取
+- `daily`：港股日线，保存原始未复权 K 线
+- `minute_1` / `minute_5` / `minute_15` / `minute_30` / `minute_60`：港股分钟线
+- `adj_factor`：港股复权因子，由 XtQuant 日线推导
+
+港股 v1 当前不支持：
+- `daily_basic`
+- 港股财务、估值类数据集
+
+推荐顺序：
+
+```bash
+# 1. 刷新港股股票池
+fdh-cli update --dataset basic --market HK
+
+# 2. 更新港股日线
+fdh-cli update --dataset daily --market HK
+
+# 3. 更新港股复权因子
+fdh-cli update --dataset adj_factor --market HK
+
+# 4. 按需更新分钟线
+fdh-cli update --dataset minute_1 --market HK --symbols 00700.HK,00005.HK
+```
+
+常用命令：
+
+```bash
+# 指定港股代码
+fdh-cli update --dataset daily --market HK --symbols 00700.HK,00941.HK
+
+# 指定历史区间
+fdh-cli update --dataset daily --market HK --force \
+  --start-date 2024-01-01 --end-date 2024-12-31
+
+# 指定交易日
+fdh-cli update --dataset daily --market HK --trade-date 2024-11-18
+
+# 5分钟线
+fdh-cli update --dataset minute_5 --market HK --symbols 00700.HK
+```
+
+注意：
+- 港股链路依赖 `XTQUANT_API_URL` 指向可用的 `xtquant_helper`
+- `--market ALL` 只对当前已支持多市场的数据集有意义，例如 `basic`、`daily`、`minute_*`、`adj_factor`
+- SDK 中 `get_daily_adjusted()` 会基于原始日线和 `adj_factor` 计算港股前复权、后复权
 
 ### 输出控制参数
 

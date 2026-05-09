@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS asset_basic (
     symbol VARCHAR(20) PRIMARY KEY,           -- 股票代码，如 600519.SH
     name VARCHAR(100) NOT NULL,               -- 证券名称
     market VARCHAR(20),                       -- 市场代码：主板、科创板、创业板、北交所等
-    -- exchange VARCHAR(20),                     -- 交易所代码
+    exchange VARCHAR(20),                     -- 交易所代码：SH/SZ/BJ/HK等
     area VARCHAR(50),                         -- 地区
     industry VARCHAR(50),                     -- 行业
     list_status VARCHAR(10) NOT NULL,         -- 上市状态：L-上市，D-退市，P-暂停上市
@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS asset_basic (
 
 -- 创建索引
 CREATE INDEX IF NOT EXISTS idx_asset_basic_market ON asset_basic(market);
+CREATE INDEX IF NOT EXISTS idx_asset_basic_exchange ON asset_basic(exchange);
 CREATE INDEX IF NOT EXISTS idx_asset_basic_list_status ON asset_basic(list_status);
 CREATE INDEX IF NOT EXISTS idx_asset_basic_industry ON asset_basic(industry);
 CREATE INDEX IF NOT EXISTS idx_asset_basic_list_date ON asset_basic(list_date);
@@ -25,6 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_asset_basic_list_date ON asset_basic(list_date);
 COMMENT ON TABLE asset_basic IS '资产基本信息表 - 存储股票、基金等资产的基础信息';
 COMMENT ON COLUMN asset_basic.symbol IS '证券代码，如600519.SH';
 COMMENT ON COLUMN asset_basic.market IS '市场分类：主板、科创板、创业板、北交所等';
+COMMENT ON COLUMN asset_basic.exchange IS '交易所代码：SH/SZ/BJ/HK等';
 COMMENT ON COLUMN asset_basic.list_status IS '上市状态：L-上市，D-退市，P-暂停上市';
 COMMENT ON COLUMN asset_basic.is_hs IS '沪深港通：N-否，H-沪股通，S-深股通';
 

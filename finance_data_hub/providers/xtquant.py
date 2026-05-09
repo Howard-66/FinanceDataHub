@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 import pandas as pd
 import httpx
+import numpy as np
 from loguru import logger
 
 from finance_data_hub.providers.base import (
@@ -28,6 +29,10 @@ from finance_data_hub.providers.schema import (
     convert_to_standard_columns,
     standardize_symbol,
 )
+from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
+
+
+HK_STOCK_SECTOR_NAME = "香港联交所股票"
 
 
 @register_provider("xtquant")
@@ -44,9 +49,12 @@ class XTQuantProvider(BaseDataProvider):
     """
 
     def __init__(
-        self, name: str = "xtquant", config: Optional[Dict[str, Any]] = None
+        self,
+        name: str = "xtquant",
+        config: Optional[Dict[str, Any]] = None,
+        market: str = "CN",
     ):
-        super().__init__(name, config)
+        super().__init__(name, config, market=market)
         self.api_url: str = (
             config.get("api_url", "http://localhost:8100") if config else "http://localhost:8100"
         )
@@ -224,23 +232,66 @@ class XTQuantProvider(BaseDataProvider):
         if not data_dict:
             return pd.DataFrame()
 
+        raw_symbol = str(symbol).strip().upper()
+        symbol = standardize_symbol(raw_symbol, provider_format="xtquant")
+        candidate_symbols = list(dict.fromkeys([symbol, raw_symbol]))
         logger.debug(f"Converting data dict, keys: {list(data_dict.keys())}")
 
-        # XTQuant返回的数据格式是嵌套的：{'symbol': {field: {key: value}}}
-        # 如果data_dict直接包含symbol数据，提取它
-        if symbol in data_dict:
-            data_dict = data_dict[symbol]
-            logger.debug(f"Extracted data for symbol {symbol}")
-        elif len(data_dict) == 1 and isinstance(list(data_dict.values())[0], dict):
-            # 如果只有一个symbol的数据，提取它
-            data_dict = list(data_dict.values())[0]
-            logger.debug(f"Extracted single symbol data")
+        matched_symbol = next(
+            (candidate for candidate in candidate_symbols if candidate in data_dict),
+            None,
+        )
+        if matched_symbol:
+            # Legacy/internal shape: {symbol: {field: {row_key: value}}}
+            data_dict = data_dict[matched_symbol]
+            df = pd.DataFrame(data_dict)
+            if "time" not in df.columns:
+                df = df.reset_index().rename(columns={"index": "time"})
+        else:
+            # xtquant_helper serializes XTQuant's {field: DataFrame} shape with
+            # DataFrame.to_dict(): {field: {time_key: {symbol: value}}}.
+            rows: Dict[Any, Dict[str, Any]] = {}
+            for field, field_data in data_dict.items():
+                if not isinstance(field_data, dict):
+                    continue
 
-        logger.debug(f"Processing fields: {list(data_dict.keys())}")
+                field_symbol = next(
+                    (
+                        candidate
+                        for candidate in candidate_symbols
+                        if candidate in field_data
+                        and isinstance(field_data[candidate], dict)
+                    ),
+                    None,
+                )
+                if field_symbol:
+                    iterable = field_data[field_symbol].items()
+                    for row_key, value in iterable:
+                        rows.setdefault(row_key, {})[field] = value
+                    continue
 
-        # 直接使用pandas的DataFrame构造器，它会自动处理字典格式的嵌套结构
-        # 这会创建：{field: [values_by_key_order]}
-        df = pd.DataFrame(data_dict)
+                for row_key, value_by_symbol in field_data.items():
+                    value = None
+                    if isinstance(value_by_symbol, dict):
+                        for candidate in candidate_symbols:
+                            value = value_by_symbol.get(candidate)
+                            if value is not None:
+                                break
+                        if value is None and len(value_by_symbol) == 1:
+                            value = next(iter(value_by_symbol.values()))
+                    else:
+                        value = value_by_symbol
+                    rows.setdefault(row_key, {})[field] = value
+
+            if not rows:
+                # Fallback for already row-oriented dicts.
+                df = pd.DataFrame(data_dict)
+            else:
+                df = pd.DataFrame.from_dict(rows, orient="index").reset_index()
+                if "time" not in df.columns:
+                    df = df.rename(columns={"index": "time"})
+                else:
+                    df = df.drop(columns=["index"], errors="ignore")
 
         if df.empty:
             logger.warning("Empty DataFrame after conversion")
@@ -253,11 +304,35 @@ class XTQuantProvider(BaseDataProvider):
             logger.debug(f"Converting time column, sample: {repr(sample_ts)}, type: {type(sample_ts).__name__}")
 
             try:
-                # xtquant返回的是UTC毫秒时间戳，需要转换为中国时区
-                # 首先转换为UTC时间的Timestamp
-                df["time"] = pd.to_datetime(time_values, unit="ms", utc=True)
-                # 然后转换为中国时区
-                df["time"] = df["time"].dt.tz_convert('Asia/Shanghai')
+                numeric_time = pd.to_numeric(time_values, errors="coerce")
+                if numeric_time.notna().any():
+                    numeric_non_null = numeric_time.dropna()
+                    numeric_strings = numeric_non_null.astype("int64").astype(str)
+                    unique_lengths = set(numeric_strings.str.len())
+                    max_abs = numeric_non_null.abs().max()
+                    if unique_lengths == {14}:
+                        df["time"] = pd.to_datetime(
+                            numeric_time.astype("Int64").astype(str),
+                            format="%Y%m%d%H%M%S",
+                            errors="coerce",
+                        )
+                    elif unique_lengths == {8}:
+                        df["time"] = pd.to_datetime(
+                            numeric_time.astype("Int64").astype(str),
+                            format="%Y%m%d",
+                            errors="coerce",
+                        )
+                    elif max_abs >= 10**11:
+                        # XTQuant commonly returns UTC millisecond timestamps.
+                        df["time"] = pd.to_datetime(numeric_time, unit="ms", utc=True)
+                        df["time"] = df["time"].dt.tz_convert("Asia/Shanghai")
+                    elif max_abs >= 10**9:
+                        df["time"] = pd.to_datetime(numeric_time, unit="s", utc=True)
+                        df["time"] = df["time"].dt.tz_convert("Asia/Shanghai")
+                    else:
+                        df["time"] = pd.to_datetime(time_values, errors="coerce")
+                else:
+                    df["time"] = pd.to_datetime(time_values, errors="coerce")
                 logger.debug(f"时间戳转换成功，时间范围: {df['time'].min()} 到 {df['time'].max()}")
             except (ValueError, TypeError) as e:
                 logger.error(f"Failed to convert timestamps: {e}")
@@ -291,14 +366,229 @@ class XTQuantProvider(BaseDataProvider):
         """
         logger.info(f"Fetching stock basic info from XTQuant (market={market})")
 
-        # XTQuant没有直接的股票列表接口，暂返回空
-        # 实际使用中可能需要维护一个股票列表文件或者从其他接口获取
-        logger.warning(
-            "XTQuant does not provide direct stock list API. "
-            "Consider using Tushare or maintaining a stock list file."
+        market_code = normalize_market(market, default=self.market)
+
+        if market_code != "HK":
+            logger.warning(
+                "XTQuant stock basic currently only supports HK via sector list. "
+                "Use Tushare for CN stock basic data."
+            )
+            return pd.DataFrame(columns=StockBasicSchema.get_required_columns())
+
+        # Refresh sector metadata first; failures here should not hide a usable
+        # cached sector list, so continue to read the sector if refresh fails.
+        try:
+            self._call_api("/download_sector_data")
+        except ProviderError as e:
+            logger.warning(f"Failed to refresh XTQuant sector data: {e}")
+
+        data = self._call_api(
+            "/get_stock_list_in_sector",
+            {"sector_name": HK_STOCK_SECTOR_NAME},
+        )
+        symbols = data.get("result", data) if isinstance(data, dict) else data
+        if not symbols:
+            logger.warning(f"No symbols returned for sector: {HK_STOCK_SECTOR_NAME}")
+            return pd.DataFrame(columns=StockBasicSchema.get_required_columns())
+
+        standardized_symbols = [
+            standardize_symbol(str(symbol), provider_format="xtquant")
+            for symbol in symbols
+            if symbol
+        ]
+        df = pd.DataFrame(
+            {
+                "symbol": standardized_symbols,
+                "name": standardized_symbols,
+                "market": ["HK"] * len(standardized_symbols),
+                "exchange": ["HK"] * len(standardized_symbols),
+                "industry": [None] * len(standardized_symbols),
+                "area": [None] * len(standardized_symbols),
+                "list_status": [list_status or "L"] * len(standardized_symbols),
+                "list_date": [pd.NaT] * len(standardized_symbols),
+                "delist_date": [pd.NaT] * len(standardized_symbols),
+                "is_hs": [None] * len(standardized_symbols),
+            }
         )
 
-        return pd.DataFrame(columns=StockBasicSchema.get_required_columns())
+        df = validate_dataframe(df, StockBasicSchema, provider_name=self.name)
+        logger.info(f"Fetched {len(df)} HK stocks from XTQuant sector list")
+        return df
+
+    def _format_daily_date(self, date_value: Optional[str], default: Optional[str]) -> str:
+        """Format a daily date for XTQuant endpoints."""
+        if date_value is None:
+            return default or ""
+        return str(date_value).replace("-", "")[:8]
+
+    def _format_minute_date(self, date_value: Optional[str]) -> str:
+        """Format a minute datetime for XTQuant endpoints."""
+        if date_value is None:
+            return ""
+        return str(date_value).replace("-", "").replace(" ", "").replace(":", "")
+
+    def _empty_daily_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
+
+    def _normalize_ohlcv_frame(
+        self,
+        data: Any,
+        symbol: str,
+        schema,
+    ) -> pd.DataFrame:
+        """Convert XTQuant kline payloads into the standard OHLCV schema."""
+        if not data:
+            logger.warning("Invalid or empty kline data from XTQuant")
+            return pd.DataFrame(columns=schema.get_required_columns())
+
+        df = self._convert_dict_to_dataframe(data, symbol)
+        if df.empty:
+            return pd.DataFrame(columns=schema.get_required_columns())
+
+        df.columns = [col.lower() for col in df.columns]
+
+        if "preclose" in df.columns and "close" in df.columns:
+            close = pd.to_numeric(df["close"], errors="coerce")
+            preclose = pd.to_numeric(df["preclose"], errors="coerce")
+            valid_preclose = preclose.notna() & (preclose != 0)
+
+            df["change_amount"] = (close - preclose).where(valid_preclose)
+            df["change_pct"] = ((close - preclose) / preclose * 100).where(
+                valid_preclose
+            )
+            df["change_amount"] = df["change_amount"].replace(
+                [np.inf, -np.inf], pd.NA
+            )
+            df["change_pct"] = df["change_pct"].replace([np.inf, -np.inf], pd.NA)
+        else:
+            logger.warning("Missing preclose field, cannot calculate change_pct/change_amount")
+            df["change_amount"] = None
+            df["change_pct"] = None
+
+        df = validate_dataframe(df, schema, provider_name=self.name)
+        return df.sort_values("time").reset_index(drop=True)
+
+    def _fetch_daily_by_dividend(
+        self,
+        symbol: str,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        dividend_type: str,
+    ) -> pd.DataFrame:
+        """Download and read daily data with a specific XTQuant dividend_type."""
+        start_time = self._format_daily_date(start_date, "20000101")
+        end_time = self._format_daily_date(
+            end_date,
+            datetime.now().strftime("%Y%m%d"),
+        )
+
+        download_payload = {
+            "stock_code": symbol,
+            "period": "1d",
+            "start_time": start_time,
+            "end_time": end_time,
+            "incrementally": None,
+        }
+
+        logger.debug(
+            f"Downloading daily data for {symbol}: {start_time} to {end_time}, "
+            f"dividend_type={dividend_type}"
+        )
+        self._call_api("/download_history_data", download_payload)
+
+        payload = {
+            "field_list": [],
+            "stock_list": [symbol],
+            "period": "1d",
+            "start_time": start_time,
+            "end_time": end_time,
+            "dividend_type": dividend_type,
+            "fill_data": True,
+            "use_client_data": False,
+        }
+
+        data = self._call_api("/get_local_data", payload)
+        return self._normalize_ohlcv_frame(data, symbol, DailyDataSchema)
+
+    def _derive_adj_factor_from_adjusted_close(
+        self,
+        raw_df: pd.DataFrame,
+        adjusted_df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Derive cumulative adj_factor from adjusted/raw close ratios."""
+        if raw_df.empty or adjusted_df.empty:
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        merged = raw_df[["time", "symbol", "close"]].merge(
+            adjusted_df[["time", "symbol", "close"]],
+            on=["time", "symbol"],
+            how="inner",
+            suffixes=("_raw", "_adjusted"),
+        )
+        if merged.empty:
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        raw_close = pd.to_numeric(merged["close_raw"], errors="coerce")
+        adjusted_close = pd.to_numeric(merged["close_adjusted"], errors="coerce")
+        valid = raw_close.notna() & adjusted_close.notna() & (raw_close != 0)
+        result = merged.loc[valid, ["symbol", "time"]].copy()
+        result["adj_factor"] = (
+            adjusted_close[valid].to_numpy() / raw_close[valid].to_numpy()
+        )
+        return result.sort_values("time").reset_index(drop=True)
+
+    def _derive_adj_factor_from_preclose_chain(
+        self,
+        raw_df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """
+        Derive cumulative adj_factor from raw daily bars using preclose jumps.
+
+        For HK, XTQuant currently returns identical bars for different
+        dividend_type values. We therefore infer ex-right / ex-dividend jumps
+        from the relationship between today's preclose and the previous
+        trading day's close, while filtering out clearly incompatible scale
+        changes (for example rows where preclose is still on a pre-split basis
+        but OHLC has already been normalized).
+        """
+        if raw_df.empty:
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        if "preclose" not in raw_df.columns:
+            logger.warning("Raw daily data has no preclose column; cannot derive adj_factor")
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        df = raw_df.sort_values("time").reset_index(drop=True).copy()
+        close = pd.to_numeric(df["close"], errors="coerce")
+        preclose = pd.to_numeric(df["preclose"], errors="coerce")
+        prev_close = close.shift(1)
+
+        ratio = preclose / prev_close
+        finite_ratio = ratio.replace([np.inf, -np.inf], pd.NA)
+
+        # Keep only same-scale event markers. This captures normal
+        # ex-dividend / rights adjustments while ignoring obviously
+        # incompatible values such as pre-split reference prices.
+        valid_jump = (
+            prev_close.notna()
+            & (prev_close > 0)
+            & preclose.notna()
+            & (preclose > 0)
+            & finite_ratio.notna()
+            & (finite_ratio > 0.5)
+            & (finite_ratio < 1.5)
+        )
+
+        multipliers = pd.Series(1.0, index=df.index, dtype="float64")
+        multipliers.loc[valid_jump] = (
+            prev_close.loc[valid_jump].to_numpy()
+            / preclose.loc[valid_jump].to_numpy()
+        )
+        multipliers = multipliers.replace([np.inf, -np.inf], 1.0).fillna(1.0)
+
+        result = df[["symbol", "time"]].copy()
+        result["adj_factor"] = multipliers.cumprod()
+        return result.sort_values("time").reset_index(drop=True)
 
     def get_daily_data(
         self,
@@ -306,6 +596,7 @@ class XTQuantProvider(BaseDataProvider):
         start_date: str,
         end_date: str,
         adj: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         获取日线行情数据
@@ -315,105 +606,32 @@ class XTQuantProvider(BaseDataProvider):
             start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD）
             end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD）
             adj: 复权类型（None=不复权, "qfq"=前复权, "hfq"=后复权）
+            market: 宽市场代码（CN/HK）
 
         Returns:
             pd.DataFrame: 标准格式的日线数据
         """
-        logger.info(
-            f"Fetching daily data for {symbol} from {start_date} to {end_date} (adj={adj})"
+        market_code = normalize_market(
+            market,
+            default=infer_market_from_symbol(symbol, default=self.market),
         )
 
-        # 转换symbol格式（Tushare格式 -> XTQuant格式: 600519.SH -> SH.600519）
-        # if "." in symbol:
-        #     code, exchange = symbol.split(".")
-        #     xtquant_symbol = f"{exchange}.{code}"
-        # else:
-        #     xtquant_symbol = symbol
-
-        # 转换日期格式
-        # None表示获取全量历史数据，使用默认起始日期
-        if start_date is None:
-            start_date = "20000101"  # 默认从2000年开始
-        else:
-            start_date = start_date.replace("-", "")
-
-        if end_date is None:
-            end_date = datetime.now().strftime("%Y%m%d")
-        else:
-            end_date = end_date.replace("-", "")
-
-        # 确定复权类型
         dividend_type = "none"
-        if adj == "qfq":
+        if market_code == "HK" and adj:
+            logger.warning(
+                "HK daily updates store raw unadjusted bars. "
+                "Use adj_factor + SDK adjustment for qfq/hfq queries."
+            )
+        elif adj == "qfq":
             dividend_type = "front"
         elif adj == "hfq":
             dividend_type = "back"
-        
-        # XTQuant需要两步：
-        # 1. 先下载数据到本地（使用 download_history_data）
-        # 2. 然后从本地获取（使用 get_local_data）
-        download_payload = {
-            "stock_code": symbol,
-            "period": "1d",
-            "start_time": start_date,
-            "end_time": end_date,
-            "incrementally": None,  # 增量下载
-        }
 
-        # 第一步：下载数据到本地
-        logger.debug(f"Downloading daily data for {symbol} from {start_date} to {end_date}")
-        self._call_api("/download_history_data", download_payload)
-
-        # 第二步：从本地获取数据
-        payload = {
-            "field_list": [],  # 空列表表示返回所有字段
-            "stock_list": [symbol],
-            "period": "1d",
-            "start_time": start_date,
-            "end_time": end_date,
-            "dividend_type": dividend_type,
-            "fill_data": True,
-            "use_client_data": False,
-        }
-
-        data = self._call_api("/get_local_data", payload)
-        # print('data from call_api:\n', data)
-
-        # 解析返回数据
-        if not data:
-            print("Invalid daily data from xtquant")
-            return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
-
-        # 转换为DataFrame
-        df = self._convert_dict_to_dataframe(data, symbol)
-        print(df.tail(5))
-
-        if df.empty:
-            return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
-
-        # 列名映射（XTQuant字段名 -> 标准字段名）
-        # XTQuant的字段名通常是小写的
-        df.columns = [col.lower() for col in df.columns]
-
-        # 计算缺失的字段
-        # xtquant没有直接提供change_pct和change_amount，但提供了preClose
-        if "close" in df.columns and "preclose" in df.columns:
-            # 计算涨跌额和涨跌幅
-            df["change_amount"] = df["close"] - df["preclose"]
-            df["change_pct"] = (df["close"] - df["preclose"]) / df["preclose"] * 100
-            logger.debug(f"Calculated change_pct and change_amount for {len(df)} records")
-        else:
-            logger.warning(f"Missing preclose field, cannot calculate change_pct and change_amount")
-            # 设为None
-            df["change_amount"] = None
-            df["change_pct"] = None
-
-        # 验证并转换数据
-        df = validate_dataframe(df, DailyDataSchema, provider_name=self.name)
-
-        # 按时间排序
-        df = df.sort_values("time").reset_index(drop=True)
-
+        logger.info(
+            f"Fetching daily data for {symbol} from {start_date} to {end_date} "
+            f"(adj={adj}, market={market_code}, dividend_type={dividend_type})"
+        )
+        df = self._fetch_daily_by_dividend(symbol, start_date, end_date, dividend_type)
         logger.info(f"Fetched {len(df)} daily records for {symbol}")
         return df
 
@@ -423,6 +641,7 @@ class XTQuantProvider(BaseDataProvider):
         start_date: str,
         end_date: str,
         freq: str = "1m",
+        market: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         获取分钟级行情数据
@@ -432,32 +651,17 @@ class XTQuantProvider(BaseDataProvider):
             start_date: 开始日期时间
             end_date: 结束日期时间
             freq: 频率（1m, 5m, 15m, 30m, 60m）
+            market: 宽市场代码（CN/HK）
 
         Returns:
             pd.DataFrame: 标准格式的分钟数据
         """
-        logger.info(
-            f"Fetching {freq} data for {symbol} from {start_date} to {end_date}"
+        market_code = normalize_market(
+            market,
+            default=infer_market_from_symbol(symbol, default=self.market),
         )
-
-        # 转换symbol格式
-        # if "." in symbol:
-        #     code, exchange = symbol.split(".")
-        #     xtquant_symbol = f"{exchange}.{code}"
-        # else:
-        #     xtquant_symbol = symbol
-
-        # 转换日期格式
-        # None表示获取全量历史数据，使用默认起始日期
-        if start_date is None:
-            start_date = ""  # 默认从2000年开始
-        else:
-            start_date = start_date.replace("-", "").replace(" ", "").replace(":", "")
-
-        if end_date is None:
-            end_date = ""
-        else:
-            end_date = end_date.replace("-", "").replace(" ", "").replace(":", "")
+        start_time = self._format_minute_date(start_date)
+        end_time = self._format_minute_date(end_date)
 
         # 转换频率格式
         freq_mapping = {
@@ -468,7 +672,11 @@ class XTQuantProvider(BaseDataProvider):
             "60m": "1h",
         }
         xtquant_freq = freq_mapping.get(freq, "1m")
-        logger.info(f"Frequency mapping: {freq} -> {xtquant_freq}")
+        dividend_type = "none" if market_code == "HK" else "front"
+        logger.info(
+            f"Fetching {freq} data for {symbol} from {start_date} to {end_date} "
+            f"(market={market_code}, dividend_type={dividend_type}, xtquant_freq={xtquant_freq})"
+        )
 
         # XTQuant需要两步：
         # 1. 先下载数据到本地（使用 download_history_data）
@@ -476,14 +684,18 @@ class XTQuantProvider(BaseDataProvider):
         download_payload = {
             "stock_code": symbol,
             "period": xtquant_freq,
-            "start_time": start_date[:8],  # 只取日期部分
-            "end_time": end_date[:8],
+            "start_time": start_time[:8],
+            "end_time": end_time[:8],
             "incrementally": None,  # 增量下载
         }
 
         # 第一步：下载数据到本地
-        logger.debug(f"Downloading {freq} data for {symbol} from {start_date[:8]} to {end_date[:8]}")
-        logger.debug(f"Download payload: period={xtquant_freq}, start={start_date[:8]}, end={end_date[:8]}")
+        logger.debug(
+            f"Downloading {freq} data for {symbol} from {start_time[:8]} to {end_time[:8]}"
+        )
+        logger.debug(
+            f"Download payload: period={xtquant_freq}, start={start_time[:8]}, end={end_time[:8]}"
+        )
         self._call_api("/download_history_data", download_payload)
 
         # 第二步：从本地获取数据
@@ -491,39 +703,115 @@ class XTQuantProvider(BaseDataProvider):
             "field_list": [],
             "stock_list": [symbol],
             "period": xtquant_freq,
-            "start_time": start_date[:8],  # 只取日期部分
-            "end_time": end_date[:8],
-            "dividend_type": "front",
+            "start_time": start_time[:8],
+            "end_time": end_time[:8],
+            "dividend_type": dividend_type,
             "fill_data": True,
             "use_client_data": False,
         }
 
-        logger.debug(f"Getting local data with payload: period={xtquant_freq}, start={start_date[:8]}, end={end_date[:8]}")
+        logger.debug(
+            f"Getting local data with payload: period={xtquant_freq}, "
+            f"start={start_time[:8]}, end={end_time[:8]}"
+        )
         data = self._call_api("/get_local_data", payload)
-        # print('data from call_api:\n', data)
 
-        if not data:
-            print('Invalid data...')
-            return pd.DataFrame(columns=MinuteDataSchema.get_required_columns())
-
-        # 转换为DataFrame
-        df = self._convert_dict_to_dataframe(data, symbol)
-        print(df.tail(5))
-
-        if df.empty:
-            return pd.DataFrame(columns=MinuteDataSchema.get_required_columns())
-
-        # 列名标准化
-        df.columns = [col.lower() for col in df.columns]
-
-        # 验证数据
-        df = validate_dataframe(df, MinuteDataSchema, provider_name=self.name)
-
-        # 按时间排序
-        df = df.sort_values("time").reset_index(drop=True)
+        df = self._normalize_ohlcv_frame(data, symbol, MinuteDataSchema)
 
         logger.info(f"Fetched {len(df)} minute records for {symbol}")
         return df
+
+    def get_adj_factor(
+        self,
+        symbol: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        market: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        通过 XTQuant 复权日线反推复权因子。
+
+        XTQuant 对港股未提供 get_divid_factors 明细，因此这里读取同一日期
+        范围内的未复权日线和 back_ratio 后复权比例日线，使用 close 比值推导：
+        adj_factor = back_ratio_close / raw_close。若 back_ratio 不可用，降级到 back。
+        """
+        if symbol is None:
+            raise ProviderError(
+                "XTQuant adj_factor derivation requires an explicit symbol",
+                provider_name=self.name,
+            )
+
+        if trade_date:
+            start_date = trade_date
+            end_date = trade_date
+
+        market_code = normalize_market(
+            market,
+            default=infer_market_from_symbol(symbol, default=self.market),
+        )
+        logger.info(
+            f"Deriving adj_factor for {symbol} from {start_date} to {end_date} "
+            f"(market={market_code})"
+        )
+
+        raw_df = self._fetch_daily_by_dividend(symbol, start_date, end_date, "none")
+        if raw_df.empty:
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        # First try XTQuant's documented dividend_type path. If the provider
+        # returns identical bars for raw/adjusted HK requests, fall back to
+        # raw preclose jump inference.
+        adjusted_result = pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+        try:
+            adjusted_df = self._fetch_daily_by_dividend(
+                symbol,
+                start_date,
+                end_date,
+                "back_ratio",
+            )
+        except ProviderError as e:
+            logger.warning(f"XTQuant back_ratio data unavailable for {symbol}: {e}")
+            adjusted_df = pd.DataFrame()
+
+        if adjusted_df.empty:
+            logger.warning(f"Falling back to dividend_type=back for {symbol}")
+            adjusted_df = self._fetch_daily_by_dividend(
+                symbol,
+                start_date,
+                end_date,
+                "back",
+            )
+
+        if not adjusted_df.empty:
+            adjusted_result = self._derive_adj_factor_from_adjusted_close(
+                raw_df, adjusted_df
+            )
+
+        use_preclose_fallback = market_code == "HK"
+        if not adjusted_result.empty:
+            all_one = np.allclose(
+                adjusted_result["adj_factor"].astype(float).to_numpy(),
+                1.0,
+                atol=1e-10,
+                rtol=1e-10,
+            )
+            if not (use_preclose_fallback and all_one):
+                logger.info(
+                    f"Derived {len(adjusted_result)} adj_factor records for {symbol} "
+                    f"via adjusted/raw close ratios"
+                )
+                return adjusted_result
+            logger.warning(
+                f"XTQuant returned identical HK bars across dividend_type values for {symbol}; "
+                "falling back to raw preclose chain"
+            )
+
+        result = self._derive_adj_factor_from_preclose_chain(raw_df)
+        logger.info(
+            f"Derived {len(result)} adj_factor records for {symbol} via raw preclose chain"
+        )
+        return result
 
     def get_daily_basic(
         self,
@@ -715,13 +1003,23 @@ class XTQuantProvider(BaseDataProvider):
             else:
                 freq = kwargs.get("freq", "1m")  # Default for "minute"
                 logger.debug(f"Using default frequency for data_type '{data_type}': {freq}")
-            return self._get_incremental_minute(symbol, start_date, end_date, freq)
+            return self._get_incremental_minute(
+                symbol,
+                start_date,
+                end_date,
+                freq,
+                market=kwargs.get("market"),
+            )
         elif data_type == "daily_basic":
             logger.warning("XTQuant does not support daily_basic incremental update")
             return pd.DataFrame(columns=DailyBasicSchema.get_required_columns())
         elif data_type == "adj_factor":
-            logger.warning("XTQuant does not support adj_factor incremental update")
-            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+            return self.get_adj_factor(
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date,
+                market=kwargs.get("market"),
+            )
         else:
             raise ProviderError(
                 f"Unsupported data type for incremental update: {data_type}",
@@ -760,6 +1058,7 @@ class XTQuantProvider(BaseDataProvider):
             start_date=start_date,
             end_date=end_date,
             adj=adj,
+            market=kwargs.get("market"),
         )
 
     def _get_incremental_minute(
@@ -768,6 +1067,7 @@ class XTQuantProvider(BaseDataProvider):
         start_date: Optional[str],
         end_date: Optional[str],
         freq: str,
+        market: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         获取分钟增量数据
@@ -792,4 +1092,5 @@ class XTQuantProvider(BaseDataProvider):
             start_date=start_date,
             end_date=end_date,
             freq=freq,
+            market=market,
         )

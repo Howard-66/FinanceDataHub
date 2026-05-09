@@ -6,6 +6,7 @@
 
 import os
 import time
+import inspect
 from typing import Optional, Dict, Any, List, Callable
 from pathlib import Path
 import yaml
@@ -18,6 +19,7 @@ from finance_data_hub.providers.base import (
     ProviderRateLimitError,
 )
 from finance_data_hub.providers.registry import ProviderRegistry
+from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
 
 
 class RoutingConfig:
@@ -31,7 +33,11 @@ class RoutingConfig:
         self.logging_config = config_dict.get("logging", {})
 
     def get_providers_for_route(
-        self, asset_class: str, data_type: str, freq: Optional[str] = None
+        self,
+        asset_class: str,
+        data_type: str,
+        freq: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> List[str]:
         """
         获取指定路由的提供者列表
@@ -44,7 +50,7 @@ class RoutingConfig:
         Returns:
             List[str]: 提供者名称列表，按优先级排序
         """
-        strategy = self.routing_strategy.get(asset_class, {})
+        strategy = self._get_strategy_for_market(asset_class, market)
 
         if freq and data_type in strategy:
             # 分钟数据有子频率配置
@@ -60,7 +66,11 @@ class RoutingConfig:
         return []
 
     def is_fallback_enabled(
-        self, asset_class: str, data_type: str, freq: Optional[str] = None
+        self,
+        asset_class: str,
+        data_type: str,
+        freq: Optional[str] = None,
+        market: Optional[str] = None,
     ) -> bool:
         """
         检查是否启用故障转移
@@ -73,7 +83,7 @@ class RoutingConfig:
         Returns:
             bool: 是否启用故障转移
         """
-        strategy = self.routing_strategy.get(asset_class, {})
+        strategy = self._get_strategy_for_market(asset_class, market)
 
         if freq and data_type in strategy:
             freq_config = strategy.get(data_type, {}).get(freq, {})
@@ -85,6 +95,31 @@ class RoutingConfig:
             return route_config.get("fallback", False)
 
         return False
+
+    def _get_strategy_for_market(
+        self, asset_class: str, market: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Return market-specific strategy while preserving old sources.yml shape."""
+        strategy = self.routing_strategy.get(asset_class, {})
+        if not isinstance(strategy, dict):
+            return {}
+
+        market_sections = {
+            key.upper()
+            for key, value in strategy.items()
+            if key.upper() in {"CN", "HK", "US", "JP"} and isinstance(value, dict)
+        }
+        if not market_sections:
+            return strategy
+
+        normalized_market = normalize_market(market, default="CN")
+        if normalized_market == "ALL":
+            normalized_market = "CN"
+        if normalized_market in strategy and isinstance(strategy[normalized_market], dict):
+            return strategy[normalized_market]
+
+        # Compatibility fallback if a mixed config keeps some routes at stock.daily.
+        return strategy
 
 
 class CircuitBreaker:
@@ -280,7 +315,9 @@ class SmartRouter:
                     return os.getenv(var_expr, obj)
         return obj
 
-    def _get_provider(self, provider_name: str) -> BaseDataProvider:
+    def _get_provider(
+        self, provider_name: str, market: Optional[str] = None
+    ) -> BaseDataProvider:
         """
         获取或创建提供者实例
 
@@ -293,9 +330,14 @@ class SmartRouter:
         Raises:
             ProviderError: 提供者不可用
         """
+        provider_market = normalize_market(market, default="CN") or "CN"
+        if provider_market == "ALL":
+            provider_market = "CN"
+        cache_key = f"{provider_name}:{provider_market}"
+
         # 检查是否已缓存
-        if provider_name in self._provider_instances:
-            return self._provider_instances[provider_name]
+        if cache_key in self._provider_instances:
+            return self._provider_instances[cache_key]
 
         # 检查配置
         if not self.config or provider_name not in self.config.providers:
@@ -315,11 +357,14 @@ class SmartRouter:
 
         # 创建实例
         provider = ProviderRegistry.create_provider(
-            provider_name, config=provider_config, cache=True
+            provider_name,
+            config=provider_config,
+            cache=True,
+            market=provider_market,
         )
 
         # 缓存实例
-        self._provider_instances[provider_name] = provider
+        self._provider_instances[cache_key] = provider
 
         return provider
 
@@ -349,6 +394,7 @@ class SmartRouter:
         asset_class: str,
         data_type: str,
         freq: Optional[str] = None,
+        market: Optional[str] = None,
         method_name: str = "get_daily_data",
         **kwargs,
     ) -> Any:
@@ -371,20 +417,24 @@ class SmartRouter:
         if not self.config:
             raise ProviderError("Router not configured")
 
+        route_market = normalize_market(market)
+        if not route_market:
+            route_market = infer_market_from_symbol(kwargs.get("symbol"), default="CN")
+
         # 获取提供者列表
         providers = self.config.get_providers_for_route(
-            asset_class, data_type, freq
+            asset_class, data_type, freq, route_market
         )
 
         if not providers:
             raise ProviderError(
                 f"No providers configured for route: "
-                f"{asset_class}/{data_type}" + (f"/{freq}" if freq else "")
+                f"{asset_class}/{route_market}/{data_type}" + (f"/{freq}" if freq else "")
             )
 
         # 是否启用故障转移
         fallback_enabled = self.config.is_fallback_enabled(
-            asset_class, data_type, freq
+            asset_class, data_type, freq, route_market
         )
 
         last_error: Optional[Exception] = None
@@ -402,7 +452,7 @@ class SmartRouter:
 
             try:
                 # 获取提供者实例
-                provider = self._get_provider(provider_name)
+                provider = self._get_provider(provider_name, route_market)
 
                 # 调用方法
                 method = getattr(provider, method_name, None)
@@ -413,15 +463,25 @@ class SmartRouter:
 
                 logger.debug(
                     f"Routing to provider: {provider_name} "
-                    f"(method: {method_name}, route: {asset_class}/{data_type})"
+                    f"(method: {method_name}, route: {asset_class}/{route_market}/{data_type})"
                 )
+
+                call_kwargs = dict(kwargs)
 
                 # 如果有 freq 参数，将其添加到 kwargs 中传递给 provider 方法
                 if freq:
-                    kwargs["freq"] = freq
+                    call_kwargs["freq"] = freq
                     logger.debug(f"Passing freq={freq} to provider method")
 
-                result = method(**kwargs)
+                if route_market:
+                    try:
+                        signature = inspect.signature(method)
+                        if "market" in signature.parameters and "market" not in call_kwargs:
+                            call_kwargs["market"] = route_market
+                    except (TypeError, ValueError):
+                        pass
+
+                result = method(**call_kwargs)
 
                 # 记录成功
                 self._record_call(provider_name, success=True)
@@ -455,6 +515,7 @@ class SmartRouter:
         # 所有提供者都失败
         error_msg = (
             f"All providers failed for route: {asset_class}/{data_type}"
+            + f" (market={route_market})"
             + (f"/{freq}" if freq else "")
         )
         if last_error:

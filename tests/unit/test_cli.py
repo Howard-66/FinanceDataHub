@@ -3,7 +3,7 @@ CLI 模块单元测试
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from typer.testing import CliRunner
 import pandas as pd
 
@@ -271,6 +271,27 @@ def test_cli_update_daily_basic():
         assert "数据类型: daily_basic" in result.output
 
 
+def test_cli_update_hk_basic_does_not_require_existing_symbol_pool():
+    """港股 basic 首刷不应依赖数据库中已有股票池。"""
+
+    fake_updater = Mock()
+    fake_updater.update_stock_basic = AsyncMock(return_value=2)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            ["update", "--dataset", "basic", "--market", "HK"],
+        )
+
+    assert result.exit_code == 0
+    assert "请先执行: fdh-cli update --dataset basic" not in result.output
+    fake_updater.update_stock_basic.assert_awaited_once_with(market="HK")
+
+
 def test_cli_update_adj_factor():
     """测试复权因子数据更新"""
     with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
@@ -281,6 +302,26 @@ def test_cli_update_adj_factor():
         ])
         assert result.exit_code == 0
         assert "数据类型: adj_factor" in result.output
+
+
+def test_cli_update_single_symbol_adj_factor_failure_exits_nonzero():
+    """单只股票 adj_factor 更新失败时，CLI 应直接报错退出。"""
+
+    fake_updater = Mock()
+    fake_updater.update_adj_factor = AsyncMock(side_effect=ValueError("bad adj factor row"))
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            ["update", "--dataset", "adj_factor", "--symbols", "00700.HK", "--market", "HK"],
+        )
+
+    assert result.exit_code != 0
+    assert "bad adj factor row" in result.output
 
 
 def test_estimate_fetch_start_date_adds_warmup_for_weekly_indicators():

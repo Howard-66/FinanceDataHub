@@ -43,6 +43,7 @@ from finance_data_hub.providers.schema import (
     validate_dataframe,
     convert_to_standard_columns,
 )
+from finance_data_hub.utils.market import get_exchange_from_symbol, normalize_market
 
 
 # 支持的指数代码列表（模块级别常量）
@@ -94,8 +95,13 @@ class TushareProvider(BaseDataProvider):
         retry_delay (float): 重试延迟（秒），默认1.0
     """
 
-    def __init__(self, name: str = "tushare", config: Optional[Dict[str, Any]] = None):
-        super().__init__(name, config)
+    def __init__(
+        self,
+        name: str = "tushare",
+        config: Optional[Dict[str, Any]] = None,
+        market: str = "CN",
+    ):
+        super().__init__(name, config, market=market)
         self.token: Optional[str] = None
         self.pro_api: Optional[Any] = None
         self.timeout: int = config.get("timeout", 30) if config else 30
@@ -287,12 +293,15 @@ class TushareProvider(BaseDataProvider):
             f"Fetching stock basic info (market={market}, list_status={list_status})"
         )
 
+        market_code = normalize_market(market)
+        exchange_filter = None if market_code in (None, "CN", "ALL") else market_code
+
         # 调用Tushare API
         df = self._call_api(
             "stock_basic",
             fields="ts_code,name,area,industry,market,list_date,delist_date,is_hs",
             list_status=list_status,
-            exchange=market,
+            exchange=exchange_filter,
         )
 
         if df.empty:
@@ -311,6 +320,7 @@ class TushareProvider(BaseDataProvider):
         }
 
         df = convert_to_standard_columns(df, column_mapping)
+        df["exchange"] = df["symbol"].map(get_exchange_from_symbol)
 
         # 添加list_status列
         df["list_status"] = list_status if list_status else "L"
