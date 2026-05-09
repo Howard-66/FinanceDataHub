@@ -230,6 +230,28 @@ class TestTaskExecutor:
         assert "--category macro_cycle" in joined
         assert "--all" in joined
 
+    def test_build_download_command_includes_market(self):
+        """下载命令应透传 market 参数。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        cmd = executor._build_download_command("daily", {"market": "HK", "trade_date": "2024-01-02"})
+
+        joined = " ".join(cmd)
+        assert "--dataset daily" in joined
+        assert "--market HK" in joined
+
+    def test_build_preprocess_command_includes_market(self):
+        """预处理命令应透传 market 参数。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        cmd = executor._build_preprocess_command("technical", {"all": True, "market": "HK"})
+
+        joined = " ".join(cmd)
+        assert "--category technical" in joined
+        assert "--market HK" in joined
+
 
 class TestScheduleManager:
     """调度管理器测试"""

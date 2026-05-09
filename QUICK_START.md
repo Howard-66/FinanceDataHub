@@ -192,6 +192,33 @@ fdh-cli update --dataset adj_factor --market HK --trade-date 2024-11-18
 - 港股 `adj_factor` 由 XtQuant 的未复权日线与 `back_ratio/back` 日线推导
 - 当前不支持港股 `daily_basic`
 
+### 5.7 港股技术指标预处理
+
+在港股 `daily` 和 `adj_factor` 更新完成后，可以直接运行技术指标预处理：
+
+```bash
+# 处理全部港股（日线 + 周线 + 月线）
+fdh-cli preprocess run --all --category technical --market HK
+
+# 处理指定港股
+fdh-cli preprocess run --category technical --market HK \
+  --symbols 00700.HK,00005.HK
+
+# 指定频率与复权方式
+fdh-cli preprocess run --all --category technical --market HK \
+  --freq daily,weekly,monthly --adjust qfq
+
+# 强制全量重算
+fdh-cli preprocess run --all --category technical --market HK --force
+```
+
+说明：
+- `preprocess run` 默认 `--market CN`
+- `--all --market HK` 会自动使用港股股票池，不需要手动传 symbol 列表
+- 港股当前仅支持 `technical` 预处理
+- `fundamental`、`quarterly_fundamental`、`industry_valuation`、`all` 仍然仅适用于 A 股
+- 如果通过 `schedules.yml` 调度，现有 A 股股票类任务建议显式写 `market: CN`，港股使用单独的 `hk_*` 任务
+
 ---
 
 ## 步骤 6: 查看数据状态
@@ -259,6 +286,22 @@ fdh-cli update --dataset adj_factor --market HK
 fdh-cli update --dataset minute_1 --market HK --symbols 00700.HK,00005.HK
 ```
 
+### 场景 6: 港股行情更新 + 技术指标预处理
+
+```bash
+# 1. 更新港股股票池
+fdh-cli update --dataset basic --market HK
+
+# 2. 更新港股日线
+fdh-cli update --dataset daily --market HK
+
+# 3. 更新港股复权因子
+fdh-cli update --dataset adj_factor --market HK
+
+# 4. 预处理全部港股技术指标
+fdh-cli preprocess run --all --category technical --market HK
+```
+
 ---
 
 ## 📊 验证数据
@@ -299,6 +342,8 @@ print(df)
 
 4. **并行处理**: 系统自动批量插入 (每批1000条)，无需手动处理
 
+5. **港股预处理**: 处理全部港股技术指标时，优先使用 `fdh-cli preprocess run --all --category technical --market HK`
+
 ---
 
 ## 🔧 故障排除
@@ -331,7 +376,8 @@ docker-compose restart postgres
 1. 检查 `XTQUANT_API_URL` 是否指向可访问的 `xtquant_helper`
 2. 检查 Windows 侧 QMT / XtQuant 是否已启动并有行情权限
 3. 先执行 `fdh-cli update --dataset basic --market HK`，确认本地已有港股股票池
-4. 分钟线建议先用单只股票验证，例如 `00700.HK`
+4. 如果是跑全部港股技术指标，请使用 `fdh-cli preprocess run --all --category technical --market HK`
+5. 分钟线建议先用单只股票验证，例如 `00700.HK`
 
 ---
 

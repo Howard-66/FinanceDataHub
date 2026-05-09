@@ -158,6 +158,11 @@ class TaskExecutor:
         
         # 添加 dataset 参数
         cmd.extend(["--dataset", dataset])
+
+        # 处理 market 参数
+        market = params.get("market")
+        if market:
+            cmd.extend(["--market", str(market)])
         
         # 处理 trade_date 参数
         trade_date = params.get("trade_date")
@@ -381,6 +386,11 @@ class TaskExecutor:
 
         # 添加 category 参数
         cmd.extend(["--category", category])
+
+        # 处理 market 参数
+        market = params.get("market")
+        if market:
+            cmd.extend(["--market", str(market)])
 
         # 处理 all 参数（处理全部股票）
         if params.get("all"):

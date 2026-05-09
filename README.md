@@ -551,6 +551,68 @@ fdh-cli update --dataset minute_5 --market HK --symbols 00700.HK
 - `--market ALL` 只对当前已支持多市场的数据集有意义，例如 `basic`、`daily`、`minute_*`、`adj_factor`
 - SDK 中 `get_daily_adjusted()` 会基于原始日线和 `adj_factor` 计算港股前复权、后复权
 
+### 港股技术指标预处理
+
+港股日线和 `adj_factor` 更新完成后，可以直接通过 `fdh-cli preprocess` 计算技术指标。
+
+```bash
+# 处理全部港股技术指标（日线 + 周线 + 月线）
+fdh-cli preprocess run --all --category technical --market HK
+
+# 处理指定港股
+fdh-cli preprocess run --category technical --market HK \
+  --symbols 00700.HK,00005.HK
+
+# 指定频率与复权类型
+fdh-cli preprocess run --all --category technical --market HK \
+  --freq daily,weekly,monthly --adjust qfq
+
+# 强制全量重算
+fdh-cli preprocess run --all --category technical --market HK --force
+```
+
+说明：
+- `preprocess run` 默认 `--market CN`，保持既有 A 股行为不变
+- 对港股使用 `--all --market HK` 时，会自动按港股股票池筛选，不需要手动传 `--symbols`
+- 当前非 `CN` 市场只支持 `technical`；`fundamental`、`quarterly_fundamental`、`industry_valuation`、`all` 仍然仅适用于 A 股
+
+### 调度配置中的 `market`
+
+如果通过 `schedules.yml` 驱动 `fdh-cli`，建议所有股票类任务都显式声明 `market`：
+
+- 现有 A 股下载 / 预处理任务应写成 `market: CN`
+- 港股应使用独立任务，例如 `hk_basic_update`、`hk_daily_update`、`hk_adj_factor_update`、`hk_technical_preprocess`
+
+示例：
+
+```yaml
+daily_update:
+  type: download
+  dataset: daily
+  params:
+    market: CN
+
+hk_daily_update:
+  type: download
+  dataset: daily
+  params:
+    market: HK
+
+technical_preprocess:
+  type: preprocess
+  category: technical
+  params:
+    all: true
+    market: CN
+
+hk_technical_preprocess:
+  type: preprocess
+  category: technical
+  params:
+    all: true
+    market: HK
+```
+
 ### 输出控制参数
 
 | 参数 | 说明 | 默认值 |

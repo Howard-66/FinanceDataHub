@@ -11,6 +11,10 @@ from finance_data_hub.database.operations import (
     _is_non_finite_number,
     _normalize_datetime_for_db,
 )
+from finance_data_hub.cli.preprocess import (
+    _build_market_scope_clause,
+    _get_all_stock_symbols,
+)
 from finance_data_hub.providers.xtquant import XTQuantProvider
 from finance_data_hub.providers.schema import DailyDataSchema
 from finance_data_hub.router.smart_router import RoutingConfig
@@ -193,6 +197,42 @@ def test_non_finite_number_helper_flags_inf():
     assert _is_non_finite_number(float("inf")) is True
     assert _is_non_finite_number(float("-inf")) is True
     assert _is_non_finite_number(1.23) is False
+
+
+def test_preprocess_market_scope_clause_supports_cn_and_hk():
+    hk_clause = _build_market_scope_clause("d.symbol", "HK", asset_alias="b")
+    cn_clause = _build_market_scope_clause("d.symbol", "CN", asset_alias="b")
+    all_clause = _build_market_scope_clause("d.symbol", "ALL", asset_alias="b")
+
+    assert "COALESCE(b.exchange" in hk_clause
+    assert "IN ('HK')" in hk_clause
+    assert "IN ('BJ', 'SH', 'SZ')" in cn_clause
+    assert all_clause == ""
+
+
+def test_preprocess_stock_pool_query_is_market_aware():
+    class FakeResult:
+        def fetchall(self):
+            return [("00700.HK",), ("00005.HK",)]
+
+    class FakeDBManager:
+        def __init__(self):
+            self.sql = None
+
+        async def initialize(self):
+            return None
+
+        async def execute_raw_sql(self, sql, params=None):
+            self.sql = sql
+            return FakeResult()
+
+    db_manager = FakeDBManager()
+    symbols = asyncio.run(_get_all_stock_symbols(db_manager, market="HK"))
+
+    assert symbols == ["00700.HK", "00005.HK"]
+    assert "FROM symbol_daily d" in db_manager.sql
+    assert "LEFT JOIN asset_basic b ON d.symbol = b.symbol" in db_manager.sql
+    assert "IN ('HK')" in db_manager.sql
 
 
 def test_updater_hk_daily_uses_market_specific_symbol_pool_and_route():

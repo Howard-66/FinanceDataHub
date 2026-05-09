@@ -44,6 +44,7 @@ from ..preprocessing.storage import (
     MacroCyclePhaseStorage,
 )
 from ..preprocessing.technical.base import create_indicator
+from ..utils.market import exchanges_for_market, normalize_market
 
 console = Console(legacy_windows=False)
 
@@ -487,14 +488,46 @@ def _compute_fundamental_in_process(
     return pickle.dumps(df)
 
 
-async def _get_all_stock_symbols(db_manager: DatabaseManager) -> List[str]:
-    """获取所有股票代码"""
+def _build_market_scope_clause(
+    symbol_column: str,
+    market: Optional[str],
+    asset_alias: Optional[str] = None,
+) -> str:
+    """Build a broad-market SQL filter for preprocess stock pools."""
+    market_code = normalize_market(market, default="CN")
+    if market_code == "ALL":
+        return ""
+
+    exchanges = sorted(exchanges_for_market(market_code))
+    if not exchanges:
+        return ""
+
+    exchange_list = ", ".join(f"'{exchange}'" for exchange in exchanges)
+    inferred_exchange_sql = f"UPPER(SPLIT_PART({symbol_column}, '.', 2))"
+    exchange_expr = (
+        f"COALESCE({asset_alias}.exchange, {inferred_exchange_sql})"
+        if asset_alias
+        else inferred_exchange_sql
+    )
+    return f"{exchange_expr} IN ({exchange_list})"
+
+
+async def _get_all_stock_symbols(
+    db_manager: DatabaseManager,
+    market: Optional[str] = "CN",
+) -> List[str]:
+    """获取指定市场的股票代码（基于已存在的日线数据）。"""
     await db_manager.initialize()
 
-    sql = """
-        SELECT DISTINCT symbol
-        FROM symbol_daily
-        ORDER BY symbol
+    market_clause = _build_market_scope_clause("d.symbol", market, asset_alias="b")
+    where_clause = f"WHERE {market_clause}" if market_clause else ""
+
+    sql = f"""
+        SELECT DISTINCT d.symbol
+        FROM symbol_daily d
+        LEFT JOIN asset_basic b ON d.symbol = b.symbol
+        {where_clause}
+        ORDER BY d.symbol
     """
 
     result = await db_manager.execute_raw_sql(sql)
@@ -593,14 +626,22 @@ async def _classify_stocks_by_adj_factor(
         return symbols, [], adj_map
 
 
-async def _get_all_stock_symbols_from_daily_basic(db_manager: DatabaseManager) -> List[str]:
-    """从 daily_basic 表获取有基本面数据的股票代码"""
+async def _get_all_stock_symbols_from_daily_basic(
+    db_manager: DatabaseManager,
+    market: Optional[str] = "CN",
+) -> List[str]:
+    """从 daily_basic 表获取指定市场、且有基本面数据的股票代码。"""
     await db_manager.initialize()
 
-    sql = """
-        SELECT DISTINCT symbol
-        FROM daily_basic
-        ORDER BY symbol
+    market_clause = _build_market_scope_clause("d.symbol", market, asset_alias="b")
+    where_clause = f"WHERE {market_clause}" if market_clause else ""
+
+    sql = f"""
+        SELECT DISTINCT d.symbol
+        FROM daily_basic d
+        LEFT JOIN asset_basic b ON d.symbol = b.symbol
+        {where_clause}
+        ORDER BY d.symbol
     """
 
     result = await db_manager.execute_raw_sql(sql)
@@ -608,14 +649,22 @@ async def _get_all_stock_symbols_from_daily_basic(db_manager: DatabaseManager) -
     return [row[0] for row in rows]
 
 
-async def _get_all_stock_symbols_from_fina_indicator(db_manager: DatabaseManager) -> List[str]:
-    """从 fina_indicator 表获取有财务数据的股票代码"""
+async def _get_all_stock_symbols_from_fina_indicator(
+    db_manager: DatabaseManager,
+    market: Optional[str] = "CN",
+) -> List[str]:
+    """从 fina_indicator 表获取指定市场、且有财务数据的股票代码。"""
     await db_manager.initialize()
 
-    sql = """
-        SELECT DISTINCT ts_code
-        FROM fina_indicator
-        ORDER BY ts_code
+    market_clause = _build_market_scope_clause("f.ts_code", market, asset_alias="b")
+    where_clause = f"WHERE {market_clause}" if market_clause else ""
+
+    sql = f"""
+        SELECT DISTINCT f.ts_code
+        FROM fina_indicator f
+        LEFT JOIN asset_basic b ON f.ts_code = b.symbol
+        {where_clause}
+        ORDER BY f.ts_code
     """
 
     result = await db_manager.execute_raw_sql(sql)
@@ -761,6 +810,7 @@ async def _get_stock_data_by_records(
 async def _run_technical_preprocess(
     db_manager: DatabaseManager,
     symbols: Optional[List[str]] = None,
+    market: Optional[str] = "CN",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     indicators: Optional[List[str]] = None,
@@ -785,6 +835,7 @@ async def _run_technical_preprocess(
     """
     import pandas as pd
 
+    market_code = normalize_market(market, default="CN")
     indicators = indicators or DEFAULT_INDICATORS
     freqs = freqs or ["daily"]
     requested_start_date = start_date
@@ -798,8 +849,8 @@ async def _run_technical_preprocess(
     # 获取股票列表
     if not symbols:
         console.print("[cyan]获取股票列表...[/cyan]")
-        symbols = await _get_all_stock_symbols(db_manager)
-        console.print(f"共 {len(symbols)} 只股票")
+        symbols = await _get_all_stock_symbols(db_manager, market=market_code)
+        console.print(f"共 {len(symbols)} 只股票 ({market_code})")
 
     # 智能增量策略：根据 adj_factor 变化分类股票
     if force:
@@ -1101,6 +1152,7 @@ async def _run_technical_preprocess(
 async def _run_fundamental_preprocess(
     db_manager: DatabaseManager,
     symbols: Optional[List[str]] = None,
+    market: Optional[str] = "CN",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     batch_size: int = 100,
@@ -1119,6 +1171,8 @@ async def _run_fundamental_preprocess(
     import pandas as pd
     from datetime import timedelta
 
+    market_code = normalize_market(market, default="CN")
+
     # 自动确定工作进程数
     if num_workers is None:
         num_workers = min(os.cpu_count() - 1, 4) if os.cpu_count() and os.cpu_count() > 1 else 1
@@ -1126,8 +1180,10 @@ async def _run_fundamental_preprocess(
     # 获取股票列表（从 daily_basic 表获取，确保有基本面数据）
     if not symbols:
         console.print("[cyan]获取有基本面数据的股票列表...[/cyan]")
-        symbols = await _get_all_stock_symbols_from_daily_basic(db_manager)
-        console.print(f"共 {len(symbols)} 只股票有基本面数据")
+        symbols = await _get_all_stock_symbols_from_daily_basic(
+            db_manager, market=market_code
+        )
+        console.print(f"共 {len(symbols)} 只股票有基本面数据 ({market_code})")
 
     # === 智能增量：确定时间范围 ===
     WINDOW_BUFFER_DAYS = 1900
@@ -1278,6 +1334,7 @@ async def _run_fundamental_preprocess(
 async def _run_quarterly_fundamental_preprocess(
     db_manager: DatabaseManager,
     symbols: Optional[List[str]] = None,
+    market: Optional[str] = "CN",
     batch_size: int = 50,
     verbose: bool = False,
     force: bool = False,
@@ -1297,11 +1354,15 @@ async def _run_quarterly_fundamental_preprocess(
     from ..preprocessing.fundamental.quality import FScoreCalculator
     from ..preprocessing.storage import QuarterlyFundamentalDataStorage
 
+    market_code = normalize_market(market, default="CN")
+
     # 获取股票列表（从 fina_indicator 表获取，确保有财务数据）
     if not symbols:
         console.print("[cyan]获取有财务数据的股票列表...[/cyan]")
-        symbols = await _get_all_stock_symbols_from_fina_indicator(db_manager)
-        console.print(f"共 {len(symbols)} 只股票有财务数据")
+        symbols = await _get_all_stock_symbols_from_fina_indicator(
+            db_manager, market=market_code
+        )
+        console.print(f"共 {len(symbols)} 只股票有财务数据 ({market_code})")
     
     # === 智能增量：确定 upsert 范围 ===
     upsert_cutoff = None  # None = upsert 全部
@@ -1630,6 +1691,7 @@ async def _run_macro_cycle_preprocess(
 async def _run_industry_valuation_preprocess(
     db_manager: DatabaseManager,
     symbols: Optional[List[str]] = None,
+    market: Optional[str] = "CN",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     batch_size: int = 100,
@@ -1660,11 +1722,15 @@ async def _run_industry_valuation_preprocess(
     from ..preprocessing.fundamental.industry_valuation import IndustryValuationCalculator
     from ..preprocessing.storage import IndustryValuationStorage, FundamentalDataStorage
 
+    market_code = normalize_market(market, default="CN")
+
     # 1. 获取股票列表
     if not symbols:
         console.print("[cyan]获取股票列表...[/cyan]")
-        symbols = await _get_all_stock_symbols_from_daily_basic(db_manager)
-        console.print(f"共 {len(symbols)} 只股票")
+        symbols = await _get_all_stock_symbols_from_daily_basic(
+            db_manager, market=market_code
+        )
+        console.print(f"共 {len(symbols)} 只股票 ({market_code})")
 
     # 2. 智能增量：确定时间范围
     incremental_mode = False
@@ -1846,6 +1912,11 @@ def run_preprocess(
         "-s",
         help="股票代码列表（逗号分隔）"
     ),
+    market: str = typer.Option(
+        "CN",
+        "--market",
+        help="宽市场代码 (CN, HK, ALL)。默认 CN，保持既有 A 股行为"
+    ),
     start_date: Optional[str] = typer.Option(
         None,
         "--start-date",
@@ -1926,6 +1997,7 @@ def run_preprocess(
         freq_list = ["daily"]  # 默认只处理日线
 
     category = category or "technical"
+    market_code = normalize_market(market, default="CN")
 
     requires_symbol_scope = category not in ["macro_cycle"]
 
@@ -1939,12 +2011,26 @@ def run_preprocess(
         console.print("[yellow]macro_cycle 预处理不使用 --symbols 参数，将忽略该参数[/yellow]")
         symbol_list = None
 
+    if market_code != "CN" and category in {
+        "fundamental",
+        "quarterly_fundamental",
+        "quarterly",
+        "industry_valuation",
+        "all",
+    }:
+        console.print(
+            "[bold red]ERROR:[/bold red] 当前非 CN 市场仅支持技术指标预处理；"
+            "请使用 `--category technical`。"
+        )
+        raise typer.Exit(1)
+
     # 如果使用 --force，清除日期限制进行全量处理
     if force:
         console.print("[yellow]强制模式: 将进行全量重新计算[/yellow]")
         start_date = None
     
     console.print(f"类别: {category}")
+    console.print(f"市场: {market_code}")
     console.print(f"复权类型: {adjust}")
     console.print(f"频率: {', '.join(freq_list)}")
     if symbol_list:
@@ -1974,6 +2060,7 @@ def run_preprocess(
                 result = await _run_technical_preprocess(
                     db_manager,
                     symbols=symbol_list,
+                    market=market_code,
                     start_date=start_date,
                     end_date=end_date,
                     freqs=freq_list,
@@ -1994,6 +2081,7 @@ def run_preprocess(
                 result = await _run_fundamental_preprocess(
                     db_manager,
                     symbols=symbol_list,
+                    market=market_code,
                     start_date=start_date,
                     end_date=end_date,
                     batch_size=batch_size,
@@ -2012,6 +2100,7 @@ def run_preprocess(
                 result = await _run_quarterly_fundamental_preprocess(
                     db_manager,
                     symbols=symbol_list,
+                    market=market_code,
                     batch_size=batch_size,
                     verbose=verbose,
                     force=force,
@@ -2026,6 +2115,7 @@ def run_preprocess(
                 result = await _run_industry_valuation_preprocess(
                     db_manager,
                     symbols=symbol_list,
+                    market=market_code,
                     start_date=start_date,
                     end_date=end_date,
                     batch_size=batch_size,

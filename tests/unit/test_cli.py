@@ -324,6 +324,17 @@ def test_cli_update_single_symbol_adj_factor_failure_exits_nonzero():
     assert "bad adj factor row" in result.output
 
 
+def test_cli_preprocess_hk_fundamental_rejected():
+    """港股当前不支持基本面预处理，应明确报错。"""
+    result = runner.invoke(
+        app,
+        ["preprocess", "run", "--all", "--category", "fundamental", "--market", "HK"],
+    )
+
+    assert result.exit_code != 0
+    assert "仅支持技术指标预处理" in result.output
+
+
 def test_estimate_fetch_start_date_adds_warmup_for_weekly_indicators():
     """技术预处理在带 start_date 回填时，应补足周线指标 warm-up 窗口。"""
     from finance_data_hub.cli.preprocess import _estimate_fetch_start_date

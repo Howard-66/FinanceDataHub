@@ -207,6 +207,26 @@ fdh-cli update --dataset adj_factor --market HK --trade-date 2024-11-18
 - 港股当前不支持 `daily_basic`
 - 港股 `adj_factor` 通过 XtQuant 日线间接推导，不依赖 Tushare 权限
 
+#### 4.1.1 港股技术指标预处理
+```bash
+# 处理全部港股技术指标
+fdh-cli preprocess run --all --category technical --market HK
+
+# 处理指定港股
+fdh-cli preprocess run --category technical --market HK \
+    --symbols 00700.HK,00005.HK
+
+# 指定频率与复权方式
+fdh-cli preprocess run --all --category technical --market HK \
+    --freq daily,weekly,monthly --adjust qfq
+```
+
+**说明：**
+- `preprocess run` 默认 `--market CN`
+- 使用 `--all --market HK` 时会自动按港股股票池筛选
+- 港股当前仅支持 `technical`；其他预处理类别仍然仅支持 A 股
+- 如果通过 `schedules.yml` 调度，A 股股票类任务建议显式写 `market: CN`，港股使用独立的 `hk_*` 任务
+
 #### 4.2 更新指数日线行情
 ```bash
 # 更新项目支持的指数日线行情（智能增量）
@@ -282,6 +302,19 @@ fdh-cli update --dataset minute_1 \
 # 查看数据量
 psql postgresql://fdh_user:fdh_password@localhost:5432/financedatahub \
     -c "SELECT symbol, COUNT(*) FROM symbol_minute WHERE symbol='600519.SH' GROUP BY symbol;"
+```
+
+### 场景5：港股行情更新与技术指标预处理
+```bash
+# 更新港股股票池
+fdh-cli update --dataset basic --market HK
+
+# 更新港股日线与复权因子
+fdh-cli update --dataset daily --market HK
+fdh-cli update --dataset adj_factor --market HK
+
+# 处理全部港股技术指标
+fdh-cli preprocess run --all --category technical --market HK
 ```
 
 ## 🔍 故障排除

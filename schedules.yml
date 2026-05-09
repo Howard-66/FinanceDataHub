@@ -23,7 +23,25 @@ jobs:
       minute: 0
       day_of_week: "mon-fri"
     params:
+      market: CN
       trade_date: "latest"        # 自动获取最新交易日
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 港股日线数据 - 每日收盘后更新（17:05）
+  hk_daily_update:
+    enabled: true
+    type: download
+    dataset: daily
+    schedule:
+      type: cron
+      hour: 17
+      minute: 5
+      day_of_week: "mon-fri"
+    params:
+      market: HK
+      trade_date: "latest"
     retry:
       max_retries: 3
       delay: 300
@@ -39,6 +57,7 @@ jobs:
       minute: 30
       day_of_week: "mon-fri"
     params:
+      market: CN
       trade_date: "latest"
     depends_on: [daily_update]
     retry:
@@ -56,7 +75,26 @@ jobs:
       minute: 15
       day_of_week: "mon-fri"
     params:
+      market: CN
       trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 港股复权因子 - 每日更新（17:20）
+  hk_adj_factor_update:
+    enabled: true
+    type: download
+    dataset: adj_factor
+    schedule:
+      type: cron
+      hour: 17
+      minute: 20
+      day_of_week: "mon-fri"
+    params:
+      market: HK
+      trade_date: "latest"
+    depends_on: [hk_daily_update]
     retry:
       max_retries: 3
       delay: 300
@@ -71,6 +109,24 @@ jobs:
       day_of_week: "mon"
       hour: 7
       minute: 0
+    params:
+      market: CN
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 港股股票基本信息 - 每周一更新
+  hk_basic_update:
+    enabled: true
+    type: download
+    dataset: basic
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 7
+      minute: 10
+    params:
+      market: HK
     retry:
       max_retries: 3
       delay: 300
@@ -85,6 +141,8 @@ jobs:
       day: "1,15"
       hour: 6
       minute: 0
+    params:
+      market: CN
     retry:
       max_retries: 3
       delay: 600
@@ -226,9 +284,30 @@ jobs:
       day_of_week: "mon-fri"
     params:
       all: true
+      market: CN
       freq: "daily,weekly,monthly"
       adjust: qfq
     depends_on: [daily_update, adj_factor_update]
+    retry:
+      max_retries: 2
+      delay: 600
+
+  # 港股技术指标预处理 - 每日运行（18:50）
+  hk_technical_preprocess:
+    enabled: true
+    type: preprocess
+    category: technical
+    schedule:
+      type: cron
+      hour: 18
+      minute: 50
+      day_of_week: "mon-fri"
+    params:
+      all: true
+      market: HK
+      freq: "daily,weekly,monthly"
+      adjust: qfq
+    depends_on: [hk_daily_update, hk_adj_factor_update]
     retry:
       max_retries: 2
       delay: 600
@@ -246,6 +325,7 @@ jobs:
       day_of_week: "mon-fri"
     params:
       all: true
+      market: CN
     depends_on: [daily_basic_update]
     retry:
       max_retries: 2
@@ -264,6 +344,7 @@ jobs:
       day_of_week: "mon-fri"
     params:
       all: true
+      market: CN
     depends_on: [financial_update]
     retry:
       max_retries: 2
@@ -283,6 +364,7 @@ jobs:
       day_of_week: "mon-fri"
     params:
       all: true
+      market: CN
     depends_on: [fundamental_preprocess]
     retry:
       max_retries: 2

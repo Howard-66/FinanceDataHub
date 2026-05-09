@@ -166,10 +166,25 @@ jobs:
       minute: 0
       day_of_week: "mon-fri"
     params:
+      market: CN
       trade_date: "latest"        # 自动获取最新交易日
     retry:
       max_retries: 3
       delay: 300                  # 重试间隔（秒）
+
+  # 港股日线数据 - 每日收盘后更新
+  hk_daily_update:
+    enabled: true
+    type: download
+    dataset: daily
+    schedule:
+      type: cron
+      hour: 17
+      minute: 5
+      day_of_week: "mon-fri"
+    params:
+      market: HK
+      trade_date: "latest"
 
   # 每日基本面 - 每日收盘后更新
   daily_basic_update:
@@ -182,6 +197,7 @@ jobs:
       minute: 30
       day_of_week: "mon-fri"
     params:
+      market: CN
       trade_date: "latest"
     depends_on: [daily_update]    # 依赖日线更新完成
 
@@ -195,6 +211,23 @@ jobs:
       hour: 17
       minute: 15
       day_of_week: "mon-fri"
+    params:
+      market: CN
+
+  # 港股复权因子 - 每日更新
+  hk_adj_factor_update:
+    enabled: true
+    type: download
+    dataset: adj_factor
+    schedule:
+      type: cron
+      hour: 17
+      minute: 20
+      day_of_week: "mon-fri"
+    params:
+      market: HK
+      trade_date: "latest"
+    depends_on: [hk_daily_update]
 
   # 财务数据 - 每月更新（财报季更频繁）
   financial_update:
@@ -205,6 +238,8 @@ jobs:
       type: cron
       day: "1,15"                 # 每月1号和15号
       hour: 6
+    params:
+      market: CN
 
   # 宏观数据 - 每月更新
   macro_update:
@@ -241,9 +276,27 @@ jobs:
       day_of_week: "mon-fri"
     params:
       all: true
+      market: CN
       freq: "daily,weekly,monthly"
       adjust: qfq
     depends_on: [daily_update, adj_factor_update]
+
+  # 港股技术指标预处理 - 每日运行
+  hk_technical_preprocess:
+    enabled: true
+    type: preprocess
+    category: technical
+    schedule:
+      type: cron
+      hour: 18
+      minute: 50
+      day_of_week: "mon-fri"
+    params:
+      all: true
+      market: HK
+      freq: "daily,weekly,monthly"
+      adjust: qfq
+    depends_on: [hk_daily_update, hk_adj_factor_update]
 
   # 基本面指标预处理 - 每日运行
   fundamental_preprocess:
@@ -257,6 +310,7 @@ jobs:
       day_of_week: "mon-fri"
     params:
       all: true
+      market: CN
     depends_on: [daily_basic_update, financial_update]
 
   # 行业差异化估值预处理 - 每日运行
@@ -271,6 +325,7 @@ jobs:
       day_of_week: "mon-fri"
     params:
       all: true
+      market: CN
     depends_on: [fundamental_preprocess]
 
   # 中国宏观周期预处理 - 每月 15 号运行
@@ -287,6 +342,13 @@ jobs:
       all: true
     depends_on: [macro_update, sw_member_update]
 ```
+
+说明：
+- 股票类下载与预处理任务现在都建议显式声明 `market`
+- 现有 A 股任务应写为 `market: CN`，避免在接入港股后继续依赖默认值
+- 港股建议拆分为独立任务，例如 `hk_daily_update`、`hk_adj_factor_update`、`hk_technical_preprocess`
+- `fdh-cli preprocess run --all --category technical --market HK` 会自动按港股股票池取 symbol，不需要手动传列表
+- 当前非 `CN` 市场仅支持 `technical` 预处理
 
 #### 1.3 CLI 命令扩展
 

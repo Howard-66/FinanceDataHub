@@ -1230,6 +1230,7 @@ fdh-cli preprocess status
 | `--all, -a` | 处理全部股票 | `--all` |
 | `--category, -c` | 预处理类别 | `--category technical` |
 | `--symbols, -s` | 股票代码列表（逗号分隔） | `--symbols 600519.SH,000858.SZ` |
+| `--market` | 宽市场代码（`CN` / `HK` / `ALL`） | `--market HK` |
 | `--start-date` | 开始日期 (YYYY-MM-DD) | `--start-date 2024-01-01` |
 | `--end-date` | 结束日期 (YYYY-MM-DD) | `--end-date 2024-12-31` |
 | `--freq, -f` | 频率列表（逗号分隔） | `--freq daily,weekly,monthly` |
@@ -1306,6 +1307,12 @@ fdh-cli preprocess run --all --category technical
 # 处理技术指标（日线+周线+月线）
 fdh-cli preprocess run --all --category technical --freq daily,weekly,monthly
 
+# 处理全部港股技术指标
+fdh-cli preprocess run --all --category technical --market HK
+
+# 处理指定港股技术指标
+fdh-cli preprocess run --category technical --market HK --symbols 00700.HK,00005.HK
+
 # 处理日频基本面指标
 fdh-cli preprocess run --all --category fundamental
 
@@ -1363,12 +1370,23 @@ fdh-cli preprocess run --all --category technical --verbose
 #### 注意事项
 
 - 预处理命令会自动从 `symbol_daily` 表获取原始数据
+- `preprocess run` 默认 `--market CN`，保持既有 A 股行为
+- 使用 `--all --market HK` 时，会自动按港股股票池筛选 symbol
 - 技术指标计算需要足够的历史数据（如 MA250 需要至少 250 天数据）
 - 基本面指标需要 `daily_basic` 表中的 PE/PB/PS 数据
+- 当前非 `CN` 市场仅支持 `technical`；`fundamental`、`quarterly_fundamental`、`industry_valuation`、`all` 仍然仅适用于 A 股
 - `macro_cycle` 会读取 `cn_m`、`cn_ppi`、`cn_pmi`、`cn_gdp` 和 `sw_industry_member`
 - `macro_cycle` 不按股票粒度运行，`--symbols` 会被忽略，`--start-date/--end-date` 当前也不会参与计算
 - 使用 `--force` 会重新计算所有数据，耗时较长
 - 批处理大小（`--batch-size`）可根据内存情况调整
+
+#### 调度配置提示
+
+如果通过 `schedules.yml` 触发 `fdh-cli update` 或 `fdh-cli preprocess run`：
+
+- 现有 A 股股票类任务建议显式写 `market: CN`
+- 港股建议使用单独任务，例如 `hk_basic_update`、`hk_daily_update`、`hk_adj_factor_update`、`hk_technical_preprocess`
+- 调度器会把 `market` 参数原样透传给 CLI
 
 #### 查询预处理数据
 
