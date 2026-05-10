@@ -76,7 +76,7 @@ routing_strategy:
     # 香港股票
     HK:
       basic:
-        providers: [xtquant]
+        providers: [tushare]
         fallback: false
       daily:
         providers: [xtquant]

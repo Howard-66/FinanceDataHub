@@ -397,10 +397,7 @@ fdh-cli update --dataset daily              # 默认安静模式，只显示必�
 fdh-cli update --dataset daily -v           # 详细模式，显示 INFO 日志
 fdh-cli update --dataset daily -q           # 安静模式（默认），日志级别 ERROR
 
-# 港股前置条件：确保 xtquant_helper 可访问
-# .env: XTQUANT_API_URL=http://<your-xtquant-helper-host>:8100
-
-# 港股股票列表
+# 港股股票列表（通过 Tushare hk_basic 获取）
 fdh-cli update --dataset basic --market HK
 
 # 智能下载模式（默认）- 自动检测数据库状态
@@ -408,7 +405,8 @@ fdh-cli update --dataset daily              # 自动增量更新所有股票
 fdh-cli update --dataset daily_basic        # 自动增量更新每日指标
 fdh-cli update --symbols 600519.SH,000858.SZ # 更新指定股票
 
-# 港股日线 / 分钟线 / 复权因子
+# 港股日线 / 分钟线 / 复权因子前置条件：确保 xtquant_helper 可访问
+# .env: XTQUANT_API_URL=http://<your-xtquant-helper-host>:8100
 fdh-cli update --dataset daily --market HK
 fdh-cli update --dataset minute_1 --market HK --symbols 00700.HK
 fdh-cli update --dataset adj_factor --market HK
@@ -504,7 +502,7 @@ EOF
 ### 港股 CLI 指南
 
 港股 v1 当前支持：
-- `basic`：港股股票列表，通过 `xtquant_helper` 获取
+- `basic`：港股股票列表，通过 Tushare `hk_basic` 获取并映射到统一主数据字段
 - `daily`：港股日线，保存原始未复权 K 线
 - `minute_1` / `minute_5` / `minute_15` / `minute_30` / `minute_60`：港股分钟线
 - `adj_factor`：港股复权因子，由 XtQuant 日线推导
@@ -547,7 +545,7 @@ fdh-cli update --dataset minute_5 --market HK --symbols 00700.HK
 ```
 
 注意：
-- 港股链路依赖 `XTQUANT_API_URL` 指向可用的 `xtquant_helper`
+- 港股 `daily` / `minute_*` / `adj_factor` 链路依赖 `XTQUANT_API_URL` 指向可用的 `xtquant_helper`；`basic` 改为走 Tushare `hk_basic`
 - `--market ALL` 只对当前已支持多市场的数据集有意义，例如 `basic`、`daily`、`minute_*`、`adj_factor`
 - SDK 中 `get_daily_adjusted()` 会基于原始日线和 `adj_factor` 计算港股前复权、后复权
 

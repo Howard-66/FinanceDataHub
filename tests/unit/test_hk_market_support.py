@@ -15,6 +15,7 @@ from finance_data_hub.cli.preprocess import (
     _build_market_scope_clause,
     _get_all_stock_symbols,
 )
+from finance_data_hub.providers.tushare import TushareProvider
 from finance_data_hub.providers.xtquant import XTQuantProvider
 from finance_data_hub.providers.schema import DailyDataSchema
 from finance_data_hub.router.smart_router import RoutingConfig
@@ -27,10 +28,12 @@ def test_market_aware_routing_keeps_cn_and_hk_separate():
             "routing_strategy": {
                 "stock": {
                     "CN": {
+                        "basic": {"providers": ["tushare"]},
                         "daily": {"providers": ["tushare", "xtquant"]},
                         "adj_factor": {"providers": ["tushare"]},
                     },
                     "HK": {
+                        "basic": {"providers": ["tushare"]},
                         "daily": {"providers": ["xtquant"]},
                         "adj_factor": {"providers": ["xtquant"]},
                         "minute": {
@@ -45,6 +48,12 @@ def test_market_aware_routing_keeps_cn_and_hk_separate():
     assert config.get_providers_for_route("stock", "daily", market="CN") == [
         "tushare",
         "xtquant",
+    ]
+    assert config.get_providers_for_route("stock", "basic", market="CN") == [
+        "tushare"
+    ]
+    assert config.get_providers_for_route("stock", "basic", market="HK") == [
+        "tushare"
     ]
     assert config.get_providers_for_route("stock", "daily", market="HK") == [
         "xtquant"
@@ -74,24 +83,38 @@ def test_legacy_routing_config_still_works():
     ]
 
 
-def test_xtquant_hk_stock_basic_from_sector_list():
-    provider = XTQuantProvider(market="HK")
+def test_tushare_hk_stock_basic_maps_hk_basic_fields():
+    provider = TushareProvider(config={"token": "test-token"}, market="HK")
 
-    def fake_call(endpoint, payload=None):
-        if endpoint == "/download_sector_data":
-            return {"ok": True}
-        if endpoint == "/get_stock_list_in_sector":
-            assert payload == {"sector_name": "香港联交所股票"}
-            return {"result": ["HK.00700", "HK.00005"]}
-        raise AssertionError(f"unexpected endpoint: {endpoint}")
+    raw = pd.DataFrame(
+        {
+            "ts_code": ["00700.HK", "00005.HK"],
+            "name": ["腾讯控股", "汇丰控股"],
+            "market": ["主板", "主板"],
+            "list_status": ["L", "D"],
+            "list_date": ["20040716", "19740612"],
+            "delist_date": [None, "20250101"],
+            "curr_type": ["HKD", "HKD"],
+        }
+    )
 
-    with patch.object(provider, "_call_api", side_effect=fake_call):
-        df = provider.get_stock_basic(market="HK")
+    with patch.object(provider, "_call_api", return_value=raw) as mock_call:
+        df = provider.get_stock_basic(market="HK", list_status="L")
+
+    mock_call.assert_called_once_with(
+        "hk_basic",
+        fields="ts_code,name,market,list_status,list_date,delist_date",
+        list_status="L",
+    )
 
     assert list(df["symbol"]) == ["00700.HK", "00005.HK"]
+    assert list(df["name"]) == ["腾讯控股", "汇丰控股"]
     assert set(df["exchange"]) == {"HK"}
-    assert set(df["market"]) == {"HK"}
-    assert set(df["list_status"]) == {"L"}
+    assert set(df["market"]) == {"主板"}
+    assert list(df["list_status"]) == ["L", "D"]
+    assert df["list_date"].iloc[0] == pd.Timestamp("2004-07-16")
+    assert pd.isna(df["delist_date"].iloc[0])
+    assert df["delist_date"].iloc[1] == pd.Timestamp("2025-01-01")
 
 
 def test_xtquant_cn_adj_factor_derived_from_back_ratio_close():

@@ -294,6 +294,38 @@ class TushareProvider(BaseDataProvider):
         )
 
         market_code = normalize_market(market)
+
+        if market_code == "HK":
+            hk_kwargs: Dict[str, Any] = {}
+            if list_status:
+                hk_kwargs["list_status"] = list_status
+
+            df = self._call_api(
+                "hk_basic",
+                fields="ts_code,name,market,list_status,list_date,delist_date",
+                **hk_kwargs,
+            )
+
+            if df.empty:
+                return pd.DataFrame(columns=StockBasicSchema.get_required_columns())
+
+            column_mapping = {
+                "ts_code": "symbol",
+                "name": "name",
+                "market": "market",
+                "list_status": "list_status",
+                "list_date": "list_date",
+                "delist_date": "delist_date",
+            }
+
+            df = convert_to_standard_columns(df, column_mapping)
+            df["exchange"] = df["symbol"].map(get_exchange_from_symbol)
+
+            df = validate_dataframe(df, StockBasicSchema, provider_name=self.name)
+
+            logger.info(f"Fetched {len(df)} HK stocks from Tushare hk_basic")
+            return df
+
         exchange_filter = None if market_code in (None, "CN", "ALL") else market_code
 
         # 调用Tushare API
