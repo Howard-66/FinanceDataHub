@@ -94,8 +94,8 @@ def test_xtquant_hk_stock_basic_from_sector_list():
     assert set(df["list_status"]) == {"L"}
 
 
-def test_xtquant_adj_factor_derived_from_back_ratio_close():
-    provider = XTQuantProvider(market="HK")
+def test_xtquant_cn_adj_factor_derived_from_back_ratio_close():
+    provider = XTQuantProvider(market="CN")
     raw = pd.DataFrame(
         {
             "time": pd.to_datetime(["2024-01-02", "2024-01-03"]),
@@ -119,17 +119,17 @@ def test_xtquant_adj_factor_derived_from_back_ratio_close():
         side_effect=[raw, adjusted],
     ) as fetch:
         df = provider.get_adj_factor(
-            symbol="00700.HK",
+            symbol="600519.SH",
             start_date="2024-01-02",
             end_date="2024-01-03",
-            market="HK",
+            market="CN",
         )
 
     assert [call.args[3] for call in fetch.call_args_list] == ["none", "back_ratio"]
     assert list(df["adj_factor"].round(6)) == [1.2, 1.25]
 
 
-def test_xtquant_hk_adj_factor_falls_back_to_preclose_chain_when_dividend_type_ignored():
+def test_xtquant_hk_adj_factor_uses_preclose_chain_only():
     provider = XTQuantProvider(market="HK")
     raw = pd.DataFrame(
         {
@@ -152,7 +152,7 @@ def test_xtquant_hk_adj_factor_falls_back_to_preclose_chain_when_dividend_type_i
             market="HK",
         )
 
-    assert [call.args[3] for call in fetch.call_args_list] == ["none", "back_ratio"]
+    assert [call.args[3] for call in fetch.call_args_list] == ["none"]
     assert list(df["adj_factor"].round(6)) == [1.0, 1.052632, 1.052632]
 
 
@@ -306,15 +306,20 @@ def test_updater_single_symbol_adj_factor_failure_is_raised():
     updater = DataUpdater(settings=Mock())
     updater.router = Mock()
     updater.data_ops = Mock()
+    updater.data_ops.get_latest_adj_factor_record = AsyncMock(return_value=None)
+    updater.data_ops.get_latest_symbol_daily_bar = AsyncMock(return_value=None)
+    updater.data_ops.get_symbol_daily_for_adj_factor = AsyncMock(
+        return_value=pd.DataFrame(
+            {
+                "time": pd.to_datetime(["2024-01-02"]),
+                "symbol": ["00700.HK"],
+                "close": [100.0],
+                "preclose": [0.0],
+            }
+        )
+    )
     updater.data_ops.insert_adj_factor_batch = AsyncMock(
         side_effect=ValueError("bad adj factor row")
-    )
-    updater.router.route.return_value = pd.DataFrame(
-        {
-            "time": [pd.Timestamp("2024-01-02")],
-            "symbol": ["00700.HK"],
-            "adj_factor": [1.01],
-        }
     )
 
     with pytest.raises(ValueError, match="bad adj factor row"):
@@ -327,3 +332,62 @@ def test_updater_single_symbol_adj_factor_failure_is_raised():
                 market="HK",
             )
         )
+
+
+def test_updater_hk_adj_factor_uses_local_daily_data_not_router():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.data_ops = Mock()
+    updater.data_ops.get_latest_adj_factor_record = AsyncMock(return_value=None)
+    updater.data_ops.get_latest_symbol_daily_bar = AsyncMock(return_value=None)
+    updater.data_ops.get_symbol_daily_for_adj_factor = AsyncMock(
+        return_value=pd.DataFrame(
+            {
+                "time": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
+                "symbol": ["00700.HK", "00700.HK", "00700.HK"],
+                "close": [100.0, 97.0, 98.0],
+                "preclose": [0.0, 95.0, 97.0],
+            }
+        )
+    )
+    updater.data_ops.insert_adj_factor_batch = AsyncMock(return_value=3)
+
+    count = asyncio.run(
+        updater.update_adj_factor(
+            symbols=["00700.HK"],
+            start_date="2024-01-02",
+            end_date="2024-01-04",
+            force_update=True,
+            market="HK",
+        )
+    )
+
+    assert count == 3
+    updater.router.route.assert_not_called()
+    updater.data_ops.get_symbol_daily_for_adj_factor.assert_awaited_once_with(
+        "00700.HK",
+        start_date="2024-01-02",
+        end_date="2024-01-04",
+        market="HK",
+    )
+
+
+def test_updater_hk_adj_factor_incremental_derivation_uses_anchor_bar_and_base_factor():
+    updater = DataUpdater(settings=Mock())
+    raw_df = pd.DataFrame(
+        {
+            "time": pd.to_datetime(["2024-01-03", "2024-01-04", "2024-01-05"]),
+            "symbol": ["00700.HK", "00700.HK", "00700.HK"],
+            "close": [97.0, 98.0, 99.0],
+            "preclose": [95.0, 97.0, 98.0],
+        }
+    )
+
+    result = updater._derive_hk_adj_factor_from_local_daily(
+        raw_df,
+        base_adj_factor=1.0526315789,
+        output_start_date="2024-01-04",
+    )
+
+    assert list(result["time"].dt.strftime("%Y-%m-%d")) == ["2024-01-04", "2024-01-05"]
+    assert list(result["adj_factor"].round(6)) == [1.052632, 1.052632]

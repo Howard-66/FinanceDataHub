@@ -730,11 +730,11 @@ class XTQuantProvider(BaseDataProvider):
         market: Optional[str] = None,
     ) -> pd.DataFrame:
         """
-        通过 XTQuant 复权日线反推复权因子。
+        通过 XTQuant 原始日线的 preclose 链反推复权因子。
 
-        XTQuant 对港股未提供 get_divid_factors 明细，因此这里读取同一日期
-        范围内的未复权日线和 back_ratio 后复权比例日线，使用 close 比值推导：
-        adj_factor = back_ratio_close / raw_close。若 back_ratio 不可用，降级到 back。
+        对港股，XTQuant 当前无论 dividend_type 如何设置，返回的都是未复权
+        日线，因此这里不再尝试 back_ratio/back，而是直接基于原始日线中的
+        preclose 与前一交易日 close 的跳变关系推导累计复权因子。
         """
         if symbol is None:
             raise ProviderError(
@@ -759,53 +759,39 @@ class XTQuantProvider(BaseDataProvider):
         if raw_df.empty:
             return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
 
-        # First try XTQuant's documented dividend_type path. If the provider
-        # returns identical bars for raw/adjusted HK requests, fall back to
-        # raw preclose jump inference.
-        adjusted_result = pd.DataFrame(columns=["symbol", "time", "adj_factor"])
-        try:
-            adjusted_df = self._fetch_daily_by_dividend(
-                symbol,
-                start_date,
-                end_date,
-                "back_ratio",
-            )
-        except ProviderError as e:
-            logger.warning(f"XTQuant back_ratio data unavailable for {symbol}: {e}")
-            adjusted_df = pd.DataFrame()
+        if market_code != "HK":
+            adjusted_result = pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+            try:
+                adjusted_df = self._fetch_daily_by_dividend(
+                    symbol,
+                    start_date,
+                    end_date,
+                    "back_ratio",
+                )
+            except ProviderError as e:
+                logger.warning(f"XTQuant back_ratio data unavailable for {symbol}: {e}")
+                adjusted_df = pd.DataFrame()
 
-        if adjusted_df.empty:
-            logger.warning(f"Falling back to dividend_type=back for {symbol}")
-            adjusted_df = self._fetch_daily_by_dividend(
-                symbol,
-                start_date,
-                end_date,
-                "back",
-            )
+            if adjusted_df.empty:
+                logger.warning(f"Falling back to dividend_type=back for {symbol}")
+                adjusted_df = self._fetch_daily_by_dividend(
+                    symbol,
+                    start_date,
+                    end_date,
+                    "back",
+                )
 
-        if not adjusted_df.empty:
-            adjusted_result = self._derive_adj_factor_from_adjusted_close(
-                raw_df, adjusted_df
-            )
+            if not adjusted_df.empty:
+                adjusted_result = self._derive_adj_factor_from_adjusted_close(
+                    raw_df, adjusted_df
+                )
 
-        use_preclose_fallback = market_code == "HK"
-        if not adjusted_result.empty:
-            all_one = np.allclose(
-                adjusted_result["adj_factor"].astype(float).to_numpy(),
-                1.0,
-                atol=1e-10,
-                rtol=1e-10,
-            )
-            if not (use_preclose_fallback and all_one):
+            if not adjusted_result.empty:
                 logger.info(
                     f"Derived {len(adjusted_result)} adj_factor records for {symbol} "
                     f"via adjusted/raw close ratios"
                 )
                 return adjusted_result
-            logger.warning(
-                f"XTQuant returned identical HK bars across dividend_type values for {symbol}; "
-                "falling back to raw preclose chain"
-            )
 
         result = self._derive_adj_factor_from_preclose_chain(raw_df)
         logger.info(

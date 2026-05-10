@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS symbol_daily (
     high DECIMAL(20,6),                       -- 最高价
     low DECIMAL(20,6),                        -- 最低价
     close DECIMAL(20,6),                      -- 收盘价
+    preclose DECIMAL(20,6),                   -- 昨收价（HK adj_factor 推导使用，A股可为空）
     volume BIGINT,                            -- 成交量
     amount DECIMAL(30,6),                     -- 成交额
     change_pct DECIMAL(16,6),                 -- 涨跌幅（扩展精度以容纳1990年代极端值如18430%）

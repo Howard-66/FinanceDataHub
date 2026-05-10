@@ -156,17 +156,18 @@ class DataOperations:
         insert_sql = """
             INSERT INTO symbol_daily (
                 time, symbol, open, high, low, close,
-                volume, amount, change_pct, change_amount
+                preclose, volume, amount, change_pct, change_amount
             )
             VALUES (
                 :time, :symbol, :open, :high, :low, :close,
-                :volume, :amount, :change_pct, :change_amount
+                :preclose, :volume, :amount, :change_pct, :change_amount
             )
             ON CONFLICT (symbol, time) DO UPDATE SET
                 open = EXCLUDED.open,
                 high = EXCLUDED.high,
                 low = EXCLUDED.low,
                 close = EXCLUDED.close,
+                preclose = EXCLUDED.preclose,
                 volume = EXCLUDED.volume,
                 amount = EXCLUDED.amount,
                 change_pct = EXCLUDED.change_pct,
@@ -199,6 +200,7 @@ class DataOperations:
 
             # 确保所有必需字段都存在，缺失的字段设置为None
             required_fields = {
+                "preclose": None,
                 "change_pct": None,
                 "change_amount": None,
             }
@@ -215,6 +217,7 @@ class DataOperations:
                 "high",
                 "low",
                 "close",
+                "preclose",
                 "volume",
                 "amount",
                 "change_pct",
@@ -511,6 +514,144 @@ class DataOperations:
 
         return row.latest_time if row and row.latest_time else None
 
+    async def get_latest_symbol_daily_bar(
+        self,
+        symbol: str,
+        before_date: Optional[str] = None,
+        market: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """获取指定日期之前最近一条日线，供 HK adj_factor 增量递推使用。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        params: Dict[str, Any] = {"symbol": symbol}
+        query_market = market or infer_market_from_symbol(symbol)
+        conditions = ["d.symbol = :symbol"]
+
+        if before_date:
+            params["before_date"] = _normalize_datetime_for_db(
+                before_date, "daily", query_market
+            )
+            conditions.append("d.time < :before_date")
+
+        market_clause = _market_filter_clause(
+            "d.symbol", query_market, params, asset_alias="b"
+        )
+        if market_clause:
+            conditions.append(market_clause)
+
+        query = text(
+            f"""
+            SELECT d.time, d.symbol, d.close, d.preclose
+            FROM symbol_daily d
+            LEFT JOIN asset_basic b ON d.symbol = b.symbol
+            WHERE {' AND '.join(conditions)}
+            ORDER BY d.time DESC
+            LIMIT 1
+            """
+        )
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(query, params)
+            row = result.fetchone()
+
+        return row._asdict() if row else None
+
+    async def get_symbol_daily_for_adj_factor(
+        self,
+        symbol: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        market: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取推导 HK adj_factor 所需的原始日线字段。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        params: Dict[str, Any] = {"symbol": symbol}
+        query_market = market or infer_market_from_symbol(symbol)
+        conditions = ["d.symbol = :symbol"]
+
+        if start_date:
+            params["start_date"] = _normalize_datetime_for_db(
+                start_date, "daily", query_market
+            )
+            conditions.append("d.time >= :start_date")
+
+        if end_date:
+            params["end_date"] = _normalize_datetime_for_db(
+                end_date + " 23:59:59", "daily", query_market
+            )
+            conditions.append("d.time <= :end_date")
+
+        market_clause = _market_filter_clause(
+            "d.symbol", query_market, params, asset_alias="b"
+        )
+        if market_clause:
+            conditions.append(market_clause)
+
+        query = text(
+            f"""
+            SELECT d.time, d.symbol, d.close, d.preclose
+            FROM symbol_daily d
+            LEFT JOIN asset_basic b ON d.symbol = b.symbol
+            WHERE {' AND '.join(conditions)}
+            ORDER BY d.time
+            """
+        )
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(query, params)
+            rows = result.fetchall()
+
+        if not rows:
+            return pd.DataFrame(columns=["time", "symbol", "close", "preclose"])
+
+        return pd.DataFrame([row._asdict() for row in rows])
+
+    async def get_latest_adj_factor_record(
+        self,
+        symbol: str,
+        before_date: Optional[str] = None,
+        market: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """获取指定日期之前最近一条复权因子记录。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        params: Dict[str, Any] = {"symbol": symbol}
+        query_market = market or infer_market_from_symbol(symbol)
+        conditions = ["a.symbol = :symbol"]
+
+        if before_date:
+            params["before_date"] = _normalize_datetime_for_db(
+                before_date, "adj_factor", query_market
+            )
+            conditions.append("a.time < :before_date")
+
+        market_clause = _market_filter_clause(
+            "a.symbol", query_market, params, asset_alias="b"
+        )
+        if market_clause:
+            conditions.append(market_clause)
+
+        query = text(
+            f"""
+            SELECT a.time, a.symbol, a.adj_factor
+            FROM adj_factor a
+            LEFT JOIN asset_basic b ON a.symbol = b.symbol
+            WHERE {' AND '.join(conditions)}
+            ORDER BY a.time DESC
+            LIMIT 1
+            """
+        )
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(query, params)
+            row = result.fetchone()
+
+        return row._asdict() if row else None
+
     async def get_latest_data_date_no_symbol(self, table: str) -> Optional[datetime]:
         """
         获取指定表的最新数据日期（适用于没有symbol列的表，如cn_gdp）
@@ -627,7 +768,7 @@ class DataOperations:
 
         query = text(f"""
             SELECT
-                d.time, d.symbol, d.open, d.high, d.low, d.close, d.volume, d.amount,
+                d.time, d.symbol, d.open, d.high, d.low, d.close, d.preclose, d.volume, d.amount,
                 COALESCE(a.adj_factor, 1.0) AS adj_factor
             FROM symbol_daily d
             LEFT JOIN adj_factor a ON d.symbol = a.symbol AND d.time = a.time

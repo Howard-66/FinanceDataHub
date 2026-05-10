@@ -80,6 +80,7 @@ DailyDataSchema = DataFrameSchema(
         ColumnSchema("high", "float64", False, "最高价"),
         ColumnSchema("low", "float64", False, "最低价"),
         ColumnSchema("close", "float64", False, "收盘价"),
+        ColumnSchema("preclose", "float64", True, "昨收价"),
         ColumnSchema("volume", "int64", False, "成交量"),
         ColumnSchema("amount", "float64", False, "成交额"),
         ColumnSchema("change_pct", "float64", True, "涨跌幅(%)"),
