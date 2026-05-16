@@ -25,14 +25,27 @@ from finance_data_hub.providers.schema import (
     DailyDataSchema,
     MinuteDataSchema,
     DailyBasicSchema,
+    FuturesDailySchema,
+    FuturesMinuteSchema,
     validate_dataframe,
     convert_to_standard_columns,
     standardize_symbol,
 )
 from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
+from finance_data_hub.utils.futures import (
+    extract_futures_product_code,
+    get_futures_exchange_from_symbol,
+    normalize_tushare_futures_symbol,
+    to_xtquant_futures_symbol,
+)
 
 
 HK_STOCK_SECTOR_NAME = "香港联交所股票"
+SUPPORTED_XTQUANT_MINUTE_FREQS = {
+    "1m": "1m",
+    "5m": "5m",
+    "60m": "1h",
+}
 
 
 @register_provider("xtquant")
@@ -232,9 +245,10 @@ class XTQuantProvider(BaseDataProvider):
         if not data_dict:
             return pd.DataFrame()
 
-        raw_symbol = str(symbol).strip().upper()
-        symbol = standardize_symbol(raw_symbol, provider_format="xtquant")
-        candidate_symbols = list(dict.fromkeys([symbol, raw_symbol]))
+        raw_symbol = str(symbol).strip()
+        raw_symbol_upper = raw_symbol.upper()
+        symbol = standardize_symbol(raw_symbol_upper, provider_format="xtquant")
+        candidate_symbols = list(dict.fromkeys([symbol, raw_symbol, raw_symbol_upper]))
         logger.debug(f"Converting data dict, keys: {list(data_dict.keys())}")
 
         matched_symbol = next(
@@ -650,7 +664,7 @@ class XTQuantProvider(BaseDataProvider):
             symbol: 股票代码
             start_date: 开始日期时间
             end_date: 结束日期时间
-            freq: 频率（1m, 5m, 15m, 30m, 60m）
+            freq: 频率（1m, 5m, 60m）
             market: 宽市场代码（CN/HK）
 
         Returns:
@@ -664,14 +678,12 @@ class XTQuantProvider(BaseDataProvider):
         end_time = self._format_minute_date(end_date)
 
         # 转换频率格式
-        freq_mapping = {
-            "1m": "1m",
-            "5m": "5m",
-            "15m": "15m",
-            "30m": "30m",
-            "60m": "1h",
-        }
-        xtquant_freq = freq_mapping.get(freq, "1m")
+        xtquant_freq = SUPPORTED_XTQUANT_MINUTE_FREQS.get(freq)
+        if not xtquant_freq:
+            raise ProviderDataError(
+                f"XTQuant minute only supports {', '.join(SUPPORTED_XTQUANT_MINUTE_FREQS)}; got {freq}",
+                provider_name=self.name,
+            )
         dividend_type = "none" if market_code == "HK" else "front"
         logger.info(
             f"Fetching {freq} data for {symbol} from {start_date} to {end_date} "
@@ -720,6 +732,183 @@ class XTQuantProvider(BaseDataProvider):
 
         logger.info(f"Fetched {len(df)} minute records for {symbol}")
         return df
+
+    def _normalize_futures_ohlcv_frame(
+        self,
+        data: Any,
+        xt_symbol: str,
+        canonical_symbol: str,
+        schema,
+        frequency: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Convert XTQuant futures kline payloads to FinanceDataHub futures schema."""
+        if not data:
+            return pd.DataFrame(columns=schema.get_required_columns())
+
+        df = self._convert_dict_to_dataframe(data, xt_symbol)
+        if df.empty:
+            return pd.DataFrame(columns=schema.get_required_columns())
+
+        df.columns = [col.lower() for col in df.columns]
+        df = df.rename(
+            columns={
+                "preclose": "pre_close",
+                "pre_close": "pre_close",
+                "presettle": "pre_settle",
+                "pre_settle": "pre_settle",
+                "settlement": "settle",
+                "openinterest": "open_interest",
+                "open_interest": "open_interest",
+                "oi": "open_interest",
+            }
+        )
+        df["symbol"] = canonical_symbol
+        df["product_code"] = extract_futures_product_code(canonical_symbol)
+        df["exchange"] = get_futures_exchange_from_symbol(canonical_symbol)
+        df["source"] = "xtquant"
+        if frequency:
+            df["frequency"] = frequency
+
+        if "amount" not in df.columns:
+            df["amount"] = None
+        if "volume" not in df.columns and "vol" in df.columns:
+            df["volume"] = df["vol"]
+
+        return validate_dataframe(df, schema, provider_name=self.name).sort_values(
+            "time"
+        ).reset_index(drop=True)
+
+    def get_futures_daily(
+        self,
+        symbol: Optional[str] = None,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        **_: Any,
+    ) -> pd.DataFrame:
+        """获取期货日线行情。"""
+        if symbol and not symbols:
+            symbols = [symbol]
+        if not symbols:
+            raise ProviderDataError(
+                "XTQuant futures daily requires explicit symbols",
+                provider_name=self.name,
+            )
+
+        start_time = self._format_daily_date(start_date, "20000101")
+        end_time = self._format_daily_date(
+            end_date,
+            datetime.now().strftime("%Y%m%d"),
+        )
+        all_data = []
+        for raw_symbol in symbols:
+            canonical_symbol = normalize_tushare_futures_symbol(raw_symbol)
+            xt_symbol = to_xtquant_futures_symbol(canonical_symbol)
+            self._call_api(
+                "/download_history_data",
+                {
+                    "stock_code": xt_symbol,
+                    "period": "1d",
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "incrementally": None,
+                },
+            )
+            data = self._call_api(
+                "/get_local_data",
+                {
+                    "field_list": [],
+                    "stock_list": [xt_symbol],
+                    "period": "1d",
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "dividend_type": "none",
+                    "fill_data": True,
+                    "use_client_data": False,
+                },
+            )
+            df = self._normalize_futures_ohlcv_frame(
+                data,
+                xt_symbol,
+                canonical_symbol,
+                FuturesDailySchema,
+            )
+            if not df.empty:
+                all_data.append(df)
+
+        if not all_data:
+            return pd.DataFrame(columns=FuturesDailySchema.get_required_columns())
+        return pd.concat(all_data, ignore_index=True, sort=False)
+
+    def get_futures_minute(
+        self,
+        symbol: Optional[str] = None,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        freq: str = "1m",
+        **_: Any,
+    ) -> pd.DataFrame:
+        """获取期货分钟行情。"""
+        if symbol and not symbols:
+            symbols = [symbol]
+        if not symbols:
+            raise ProviderDataError(
+                "XTQuant futures minute requires explicit symbols",
+                provider_name=self.name,
+            )
+
+        xt_freq = SUPPORTED_XTQUANT_MINUTE_FREQS.get(freq)
+        if not xt_freq:
+            raise ProviderDataError(
+                f"XTQuant futures minute only supports {', '.join(SUPPORTED_XTQUANT_MINUTE_FREQS)}; got {freq}",
+                provider_name=self.name,
+            )
+        start_time = self._format_minute_date(start_date)
+        end_time = self._format_minute_date(end_date)
+        start_day = start_time[:8]
+        end_day = end_time[:8]
+
+        all_data = []
+        for raw_symbol in symbols:
+            canonical_symbol = normalize_tushare_futures_symbol(raw_symbol)
+            xt_symbol = to_xtquant_futures_symbol(canonical_symbol)
+            self._call_api(
+                "/download_history_data",
+                {
+                    "stock_code": xt_symbol,
+                    "period": xt_freq,
+                    "start_time": start_day,
+                    "end_time": end_day,
+                    "incrementally": None,
+                },
+            )
+            data = self._call_api(
+                "/get_local_data",
+                {
+                    "field_list": [],
+                    "stock_list": [xt_symbol],
+                    "period": xt_freq,
+                    "start_time": start_day,
+                    "end_time": end_day,
+                    "dividend_type": "none",
+                    "fill_data": True,
+                    "use_client_data": False,
+                },
+            )
+            df = self._normalize_futures_ohlcv_frame(
+                data,
+                xt_symbol,
+                canonical_symbol,
+                FuturesMinuteSchema,
+                frequency=freq,
+            )
+            if not df.empty:
+                all_data.append(df)
+
+        if not all_data:
+            return pd.DataFrame(columns=FuturesMinuteSchema.get_required_columns())
+        return pd.concat(all_data, ignore_index=True, sort=False)
 
     def get_adj_factor(
         self,

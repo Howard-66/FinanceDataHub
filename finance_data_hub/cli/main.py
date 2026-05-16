@@ -146,7 +146,7 @@ def update(
         None,
         "--symbols",
         "-s",
-        help="股票代码列表，用逗号分隔，如: 600519.SH,000858.SZ"
+        help="代码列表，用逗号分隔，如: 600519.SH,000858.SZ；期货支持 --symbols all 表示按 contract_basic 展开全量合约池"
     ),
     start_date: Optional[str] = typer.Option(
         None,
@@ -213,6 +213,8 @@ def update(
       - index_weight: 指数成分和权重数据（月度数据，沪深300、中证500等）
       - sw_daily: 申万行业日线行情数据（申万2021版行业指数）
       - trade_cal: 交易日历数据（SSE/SZSE/CFFEX/SHFE/CZCE/DCE/INE）
+      - future/basic, future/daily 等: 使用 --asset-class future，并通过 --dataset 指定
+        basic, mapping, daily, minute_1, settle, index_daily, spot_basis, inventory
 
       - fina_indicator: 上市公司财务指标数据（每股收益、ROE、资产负债率等）
 
@@ -356,6 +358,24 @@ def _is_timeseries_data(data_type: str) -> bool:
     return data_type not in non_timeseries_types
 
 
+FUTURE_DATASETS = {
+    "basic",
+    "mapping",
+    "daily",
+    "minute",
+    "minute_1",
+    "minute_5",
+    "minute_60",
+    "settle",
+    "index_daily",
+    "spot_basis",
+    "inventory",
+    "term_structure",
+    "term_spread",
+    "roll_yield",
+}
+
+
 async def _run_update(
     settings,
     asset_class: str,
@@ -375,10 +395,27 @@ async def _run_update(
     symbol_list = None
     if symbols:
         symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    if asset_class == "future" and symbol_list:
+        lowered = {symbol.lower() for symbol in symbol_list}
+        if "all" in lowered and len(lowered) > 1:
+            raise ValueError("期货模式下 --symbols all 不能与其他代码混用")
 
     # 设置默认日期（交易日历数据不设置默认 end_date，允许 API 返回全年数据）
     if not end_date and data_type != "trade_cal":
         end_date = datetime.now().strftime("%Y-%m-%d")
+
+    if asset_class == "future":
+        return await _run_future_update(
+            settings,
+            data_type,
+            symbol_list,
+            start_date,
+            end_date,
+            force,
+            trade_date,
+            verbose,
+            quiet,
+        )
 
     # 更新策略矩阵：根据参数组合自动选择最优策略
     if trade_date:
@@ -409,6 +446,141 @@ async def _run_update(
             settings, asset_class, data_type, symbol_list,
             end_date, adj, trade_date, start_date, market, verbose, quiet
         )
+
+
+async def _run_future_update(
+    settings,
+    data_type: str,
+    symbol_list: Optional[List[str]],
+    start_date: Optional[str],
+    end_date: Optional[str],
+    force: bool,
+    trade_date: Optional[str],
+    verbose: bool,
+    quiet: bool = False,
+):
+    """执行期货数据更新。"""
+    if data_type not in FUTURE_DATASETS:
+        console.print(f"[bold red]不支持的期货数据类型: {data_type}[/bold red]")
+        raise typer.Exit(1)
+
+    freq_map = {
+        "minute": "1m",
+        "minute_1": "1m",
+        "minute_5": "5m",
+        "minute_60": "60m",
+    }
+    task_total = len(symbol_list) if symbol_list else 1
+    if data_type in {"daily", "minute", "minute_1", "minute_5", "minute_60", "settle", "mapping"} and symbol_list:
+        task_total = len(symbol_list)
+
+    if not quiet:
+        console.print("[bold]期货更新策略:[/bold]")
+        console.print("  - 使用 futures schema 专用表")
+        if symbol_list:
+            console.print(f"  - 输入代码数量: {len(symbol_list)}")
+            if len(symbol_list) == 1 and str(symbol_list[0]).lower() == "all":
+                console.print("  - 合约范围: 全量合约池（基于 futures.contract_basic 展开）")
+        if trade_date:
+            console.print(f"  - 交易日模式: {trade_date}")
+        elif force:
+            console.print("  - 强制更新模式")
+        else:
+            console.print("  - 智能增量模式")
+        console.print("")
+
+    with Progress(
+        get_spinner(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("正在更新期货数据...", total=task_total)
+
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            def progress_callback(current, total):
+                progress.update(task, completed=current, total=total)
+
+            try:
+                if data_type == "basic":
+                    count = await updater.update_futures_basic()
+                elif data_type == "mapping":
+                    count = await updater.update_futures_mapping(
+                        symbols=symbol_list,
+                        trade_date=trade_date,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=force,
+                        progress_callback=progress_callback,
+                    )
+                elif data_type == "daily":
+                    count = await updater.update_futures_daily(
+                        symbols=symbol_list,
+                        trade_date=trade_date,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=force,
+                        progress_callback=progress_callback,
+                    )
+                elif data_type.startswith("minute"):
+                    count = await updater.update_futures_minute(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        freq=freq_map.get(data_type, "1m"),
+                        force_update=force,
+                        progress_callback=progress_callback,
+                    )
+                elif data_type == "settle":
+                    count = await updater.update_futures_settle(
+                        symbols=symbol_list,
+                        trade_date=trade_date,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=force,
+                        progress_callback=progress_callback,
+                    )
+                elif data_type == "index_daily":
+                    count = await updater.update_futures_index_daily(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=force,
+                    )
+                elif data_type == "spot_basis":
+                    count = await updater.update_futures_spot_basis(
+                        product_codes=symbol_list,
+                        trade_date=trade_date,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=force,
+                    )
+                elif data_type == "inventory":
+                    count = await updater.update_futures_inventory(
+                        product_codes=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=force,
+                    )
+                else:
+                    result = await updater.preprocess_futures_term_data(
+                        product_codes=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    count = result.get(data_type, sum(result.values()))
+
+                progress.update(task, completed=task_total)
+                console.print(f"[green][OK][/green] 已更新 {count} 条期货数据")
+                return count
+            except Exception as e:
+                progress.update(task, failed=True)
+                console.print(f"[bold red]ERROR:[/bold red] 更新期货数据失败: {str(e)}")
+                if verbose:
+                    import traceback
+                    console.print(traceback.format_exc())
+                raise
 
 
 async def _run_smart_download(
@@ -1214,8 +1386,6 @@ async def _run_smart_download(
                             freq_map = {
                                 "minute_1": "1m",
                                 "minute_5": "5m",
-                                "minute_15": "15m",
-                                "minute_30": "30m",
                                 "minute_60": "60m",
                                 "minute": "1m",  # 默认
                             }
@@ -2094,8 +2264,6 @@ async def _run_force_update(
                             freq_map = {
                                 "minute_1": "1m",
                                 "minute_5": "5m",
-                                "minute_15": "15m",
-                                "minute_30": "30m",
                                 "minute_60": "60m",
                                 "minute": "1m",  # 默认
                             }

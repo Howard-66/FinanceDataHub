@@ -5,8 +5,9 @@ Tushare数据提供者
 """
 
 import time
+import re
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import tushare as ts
 from loguru import logger
@@ -40,10 +41,24 @@ from finance_data_hub.providers.schema import (
     SwIndustryMemberSchema,
     SwDailySchema,
     TradeCalSchema,
+    FuturesContractBasicSchema,
+    FuturesContractMappingSchema,
+    FuturesDailySchema,
+    FuturesSettleSchema,
+    FuturesIndexDailySchema,
     validate_dataframe,
     convert_to_standard_columns,
 )
 from finance_data_hub.utils.market import get_exchange_from_symbol, normalize_market
+from finance_data_hub.utils.futures import (
+    extract_futures_product_code,
+    extract_quote_unit_value,
+    get_futures_contract_type,
+    get_tushare_exchange_code,
+    normalize_futures_exchange,
+    normalize_tushare_futures_symbol,
+    supported_futures_exchanges,
+)
 
 
 # 支持的指数代码列表（模块级别常量）
@@ -68,6 +83,16 @@ SUPPORTED_EXCHANGES = [
     "CZCE",   # 郑商所
     "DCE",    # 大商所
     "INE",    # 上能源
+    "GFEX",   # 广期所
+]
+
+SUPPORTED_FUTURES_EXCHANGES = supported_futures_exchanges()
+SUPPORTED_FUTURES_INDEX_CODES = [
+    "NHCI.NH",  # 南华商品指数
+    "NHAI.NH",  # 南华农产品指数
+    "NHII.NH",  # 南华工业品指数
+    "NHMI.NH",  # 南华金属指数
+    "NHEN.NH",  # 南华能化指数
 ]
 
 # 支持的指数代码列表（用于指数成分权重）
@@ -111,6 +136,20 @@ class TushareProvider(BaseDataProvider):
         # Tushare API调用统计
         self._call_count = 0
         self._last_call_time = 0.0
+        self._last_call_time_by_api: Dict[str, float] = {}
+        self._default_rate_limit_per_minute: float = (
+            float(config.get("rate_limit_per_minute", 200)) if config else 200.0
+        )
+        api_rate_limit_overrides = (
+            config.get("api_rate_limits_per_minute", {}) if config else {}
+        )
+        self._api_rate_limits_per_minute: Dict[str, float] = {
+            "fut_settle": 75.0,
+            **{
+                str(api_name): float(limit)
+                for api_name, limit in api_rate_limit_overrides.items()
+            },
+        }
 
     def initialize(self) -> None:
         """
@@ -183,23 +222,57 @@ class TushareProvider(BaseDataProvider):
             logger.warning(f"Tushare health check failed: {str(e)}")
             return False
 
-    def _rate_limit_check(self) -> None:
+    @staticmethod
+    def _per_minute_to_min_interval(limit_per_minute: float) -> float:
+        """将每分钟调用上限转换为最小调用间隔，附带小幅安全边际。"""
+        if limit_per_minute <= 0:
+            return 0.0
+        return 60.0 / limit_per_minute * 1.05
+
+    @staticmethod
+    def _extract_rate_limit_hint(error_msg: str) -> Optional[float]:
+        """从错误文本中提取 `80次/分钟` 这类限频提示。"""
+        match = re.search(r"(\d+(?:\.\d+)?)\s*次\s*/\s*分钟", error_msg)
+        if not match:
+            return None
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
+
+    def _rate_limit_check(self, api_name: str) -> None:
         """
         限频检查
 
         Tushare Pro API有调用频率限制，确保不超过限制。
-        免费用户：每分钟最多200次调用
+        先应用全局调用间隔，再按接口覆盖更严格的频率上限。
         """
         current_time = time.time()
+        global_min_interval = self._per_minute_to_min_interval(
+            self._default_rate_limit_per_minute
+        )
+        api_limit = self._api_rate_limits_per_minute.get(api_name)
+        api_min_interval = (
+            self._per_minute_to_min_interval(api_limit) if api_limit else 0.0
+        )
 
-        # 如果距离上次调用小于0.3秒（每分钟200次 = 每次间隔0.3秒），则等待
-        time_since_last_call = current_time - self._last_call_time
-        if time_since_last_call < 0.3:
-            wait_time = 0.3 - time_since_last_call
-            logger.debug(f"Rate limiting: waiting {wait_time:.2f}s")
+        wait_time = 0.0
+        if self._last_call_time > 0:
+            time_since_last_call = current_time - self._last_call_time
+            wait_time = max(wait_time, global_min_interval - time_since_last_call)
+
+        last_api_call_time = self._last_call_time_by_api.get(api_name, 0.0)
+        if last_api_call_time > 0 and api_min_interval > 0:
+            time_since_api_call = current_time - last_api_call_time
+            wait_time = max(wait_time, api_min_interval - time_since_api_call)
+
+        if wait_time > 0:
+            logger.debug(f"Rate limiting {api_name}: waiting {wait_time:.2f}s")
             time.sleep(wait_time)
 
-        self._last_call_time = time.time()
+        now = time.time()
+        self._last_call_time = now
+        self._last_call_time_by_api[api_name] = now
         self._call_count += 1
 
     def _call_api(
@@ -225,7 +298,7 @@ class TushareProvider(BaseDataProvider):
             )
 
         # 限频检查
-        self._rate_limit_check()
+        self._rate_limit_check(api_name)
 
         # 获取API方法
         api_method = getattr(self.pro_api, api_name, None)
@@ -244,11 +317,20 @@ class TushareProvider(BaseDataProvider):
                     return api_method(**kwargs)
             except Exception as e:
                 error_msg = str(e)
-                if "抱歉，您每分钟最多访问" in error_msg:
+                if (
+                    "抱歉，您每分钟最多访问" in error_msg
+                    or "频率超限" in error_msg
+                    or "rate limit" in error_msg.lower()
+                ):
+                    parsed_limit = self._extract_rate_limit_hint(error_msg)
+                    if parsed_limit:
+                        self._api_rate_limits_per_minute[api_name] = parsed_limit
                     raise ProviderRateLimitError(
                         "Tushare rate limit exceeded",
                         provider_name=self.name,
                         retry_after=60,
+                        api_name=api_name,
+                        raw_message=error_msg,
                     )
                 elif "权限" in error_msg or "积分" in error_msg:
                     raise ProviderAuthError(
@@ -3111,6 +3193,344 @@ class TushareProvider(BaseDataProvider):
         else:
             return pd.DataFrame(columns=SwDailySchema.get_required_columns())
 
+    @staticmethod
+    def _clean_api_date(value: Optional[str]) -> Optional[str]:
+        """Convert YYYY-MM-DD-like values to Tushare YYYYMMDD strings."""
+        if not value:
+            return None
+        return str(value).replace("-", "")[:8]
+
+    @staticmethod
+    def _finalize_futures_metadata(df: pd.DataFrame, symbol_col: str = "symbol") -> pd.DataFrame:
+        """Populate canonical futures metadata columns from a symbol column."""
+        if df.empty:
+            return df
+        if symbol_col in df.columns:
+            df[symbol_col] = df[symbol_col].map(normalize_tushare_futures_symbol)
+            if "product_code" not in df.columns:
+                df["product_code"] = df[symbol_col].map(extract_futures_product_code)
+            else:
+                df["product_code"] = df["product_code"].fillna(
+                    df[symbol_col].map(extract_futures_product_code)
+                )
+            if "exchange" not in df.columns:
+                df["exchange"] = df[symbol_col].map(
+                    lambda value: normalize_futures_exchange(
+                        value.rsplit(".", 1)[-1] if isinstance(value, str) and "." in value else None
+                    )
+                )
+            else:
+                inferred_exchange = df[symbol_col].map(
+                    lambda value: normalize_futures_exchange(
+                        value.rsplit(".", 1)[-1] if isinstance(value, str) and "." in value else None
+                    )
+                )
+                df["exchange"] = df["exchange"].map(normalize_futures_exchange).fillna(
+                    inferred_exchange
+                )
+            if "contract_type" not in df.columns:
+                df["contract_type"] = df[symbol_col].map(get_futures_contract_type)
+        return df
+
+    def get_futures_basic(
+        self,
+        exchange: Optional[str] = None,
+        fut_type: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取期货合约基础信息。"""
+        fields = (
+            "ts_code,symbol,exchange,name,fut_code,fut_type,multiplier,trade_unit,"
+            "per_unit,quote_unit,quote_unit_desc,d_mode_desc,list_date,delist_date,"
+            "d_month,last_ddate,trade_time_desc"
+        )
+        exchanges = (
+            [exchange]
+            if exchange
+            else SUPPORTED_FUTURES_EXCHANGES
+        )
+        all_data = []
+
+        for exch in exchanges:
+            ts_exchange = normalize_futures_exchange(exch) or str(exch).upper()
+            api_params = {"exchange": ts_exchange}
+            if fut_type:
+                api_params["fut_type"] = fut_type
+
+            df = self._call_api("fut_basic", fields=fields, **api_params)
+            if df.empty:
+                continue
+
+            df = convert_to_standard_columns(
+                df,
+                {
+                    "ts_code": "symbol",
+                    "trade_time_desc": "trade_time_desc",
+                },
+            )
+            df = df.loc[:, ~df.columns.duplicated()]
+            if "fut_code" in df.columns:
+                df["product_code"] = df["fut_code"].astype(str).str.upper()
+
+            df = self._finalize_futures_metadata(df)
+            df["quote_unit_value"] = df.apply(
+                lambda row: extract_quote_unit_value(
+                    row.get("quote_unit_desc"), row.get("quote_unit")
+                ),
+                axis=1,
+            )
+            df["source"] = "tushare"
+            for col in ("list_date", "delist_date", "last_ddate"):
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], format="%Y%m%d", errors="coerce")
+
+            all_data.append(df)
+
+        if not all_data:
+            return pd.DataFrame(columns=FuturesContractBasicSchema.get_required_columns())
+
+        result = pd.concat(all_data, ignore_index=True, sort=False)
+        result = result.drop_duplicates(subset=["symbol"], keep="last")
+        return validate_dataframe(
+            result,
+            FuturesContractBasicSchema,
+            provider_name=self.name,
+        )
+
+    def get_futures_mapping(
+        self,
+        symbol: Optional[str] = None,
+        symbols: Optional[list[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取期货主力与连续合约映射。"""
+        fields = "ts_code,trade_date,mapping_ts_code"
+        if symbol and not symbols:
+            symbols = [symbol]
+        cleaned_trade_date = self._clean_api_date(trade_date)
+        cleaned_start = self._clean_api_date(start_date)
+        cleaned_end = self._clean_api_date(end_date)
+
+        targets = symbols or [None]
+        all_data = []
+        for target in targets:
+            api_params = {}
+            if target:
+                api_params["ts_code"] = normalize_tushare_futures_symbol(target)
+            if cleaned_trade_date:
+                api_params["trade_date"] = cleaned_trade_date
+            if cleaned_start:
+                api_params["start_date"] = cleaned_start
+            if cleaned_end:
+                api_params["end_date"] = cleaned_end
+
+            df = self._call_api("fut_mapping", fields=fields, **api_params)
+            if df.empty:
+                continue
+
+            df = convert_to_standard_columns(
+                df,
+                {
+                    "trade_date": "time",
+                    "ts_code": "symbol",
+                    "mapping_ts_code": "mapping_symbol",
+                },
+            )
+            df["time"] = pd.to_datetime(df["time"], format="%Y%m%d", errors="coerce")
+            df["symbol"] = df["symbol"].map(normalize_tushare_futures_symbol)
+            df["mapping_symbol"] = df["mapping_symbol"].map(normalize_tushare_futures_symbol)
+            df = self._finalize_futures_metadata(df)
+            df["source"] = "tushare"
+            all_data.append(df)
+
+        if not all_data:
+            return pd.DataFrame(columns=FuturesContractMappingSchema.get_required_columns())
+
+        result = pd.concat(all_data, ignore_index=True, sort=False)
+        result = result.drop_duplicates(subset=["time", "symbol", "mapping_symbol"])
+        return validate_dataframe(
+            result,
+            FuturesContractMappingSchema,
+            provider_name=self.name,
+        )
+
+    def get_futures_daily(
+        self,
+        symbol: Optional[str] = None,
+        symbols: Optional[list[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        exchange: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取期货日线行情。"""
+        fields = (
+            "ts_code,trade_date,pre_close,pre_settle,open,high,low,close,settle,"
+            "change1,change2,vol,amount,oi,oi_chg"
+        )
+        if symbol and not symbols:
+            symbols = [symbol]
+
+        targets = symbols or [None]
+        all_data = []
+        for target in targets:
+            current_end = end_date
+            while True:
+                api_params = {"fields": fields}
+                if target:
+                    api_params["ts_code"] = normalize_tushare_futures_symbol(target)
+                if trade_date:
+                    api_params["trade_date"] = self._clean_api_date(trade_date)
+                    if exchange:
+                        api_params["exchange"] = (
+                            normalize_futures_exchange(exchange) or str(exchange).upper()
+                        )
+                else:
+                    if start_date:
+                        api_params["start_date"] = self._clean_api_date(start_date)
+                    if current_end:
+                        api_params["end_date"] = self._clean_api_date(current_end)
+                    if exchange:
+                        api_params["exchange"] = (
+                            normalize_futures_exchange(exchange) or str(exchange).upper()
+                        )
+
+                fields_arg = api_params.pop("fields")
+                df = self._call_api("fut_daily", fields=fields_arg, **api_params)
+                if df.empty:
+                    break
+
+                df = convert_to_standard_columns(
+                    df,
+                    {
+                        "trade_date": "time",
+                        "ts_code": "symbol",
+                        "vol": "volume",
+                        "oi": "open_interest",
+                        "oi_chg": "open_interest_chg",
+                    },
+                )
+                df["time"] = pd.to_datetime(df["time"], format="%Y%m%d", errors="coerce")
+                df = self._finalize_futures_metadata(df)
+                df["source"] = "tushare"
+                all_data.append(df)
+
+                if trade_date or len(df) < 2000:
+                    break
+                earliest = df["time"].min()
+                current_end = (earliest - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        if not all_data:
+            return pd.DataFrame(columns=FuturesDailySchema.get_required_columns())
+
+        # 按 pandas 建议在 concat 前剔除全 NA 列，避免 FutureWarning：
+        # 列并集仍会把缺失列以 NaN 形式补齐，schema 校验不受影响
+        sanitized = [df.dropna(axis=1, how="all") for df in all_data if not df.empty]
+        if not sanitized:
+            return pd.DataFrame(columns=FuturesDailySchema.get_required_columns())
+
+        result = pd.concat(sanitized, ignore_index=True, sort=False)
+        result = result.drop_duplicates(subset=["time", "symbol"]).sort_values(
+            ["symbol", "time"]
+        )
+        return validate_dataframe(result, FuturesDailySchema, provider_name=self.name)
+
+    def get_futures_settle(
+        self,
+        symbol: Optional[str] = None,
+        symbols: Optional[list[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取期货每日结算参数。"""
+        fields = (
+            "ts_code,trade_date,settle,trading_fee_rate,trading_fee,delivery_fee,"
+            "b_hedging_margin_rate,s_hedging_margin_rate,long_margin_rate,"
+            "short_margin_rate,offset_today_fee"
+        )
+        if symbol and not symbols:
+            symbols = [symbol]
+        targets = symbols or [None]
+        all_data = []
+
+        for target in targets:
+            current_end = end_date
+            while True:
+                api_params = {"fields": fields}
+                if target:
+                    api_params["ts_code"] = normalize_tushare_futures_symbol(target)
+                if trade_date:
+                    api_params["trade_date"] = self._clean_api_date(trade_date)
+                else:
+                    if start_date:
+                        api_params["start_date"] = self._clean_api_date(start_date)
+                    if current_end:
+                        api_params["end_date"] = self._clean_api_date(current_end)
+
+                fields_arg = api_params.pop("fields")
+                df = self._call_api("fut_settle", fields=fields_arg, **api_params)
+                if df.empty:
+                    break
+
+                df = convert_to_standard_columns(
+                    df,
+                    {
+                        "trade_date": "time",
+                        "ts_code": "symbol",
+                    },
+                )
+                df["time"] = pd.to_datetime(df["time"], format="%Y%m%d", errors="coerce")
+                df = self._finalize_futures_metadata(df)
+                df["source"] = "tushare"
+                all_data.append(df)
+
+                if trade_date or len(df) < 1600:
+                    break
+                earliest = df["time"].min()
+                current_end = (earliest - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        if not all_data:
+            return pd.DataFrame(columns=FuturesSettleSchema.get_required_columns())
+
+        result = pd.concat(all_data, ignore_index=True, sort=False)
+        result = result.drop_duplicates(subset=["time", "symbol"]).sort_values(
+            ["symbol", "time"]
+        )
+        return validate_dataframe(result, FuturesSettleSchema, provider_name=self.name)
+
+    def get_futures_index_daily(
+        self,
+        symbol: Optional[str] = None,
+        symbols: Optional[list[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取南华等期货指数日线行情。"""
+        if symbol and not symbols:
+            symbols = [symbol]
+        targets = symbols or SUPPORTED_FUTURES_INDEX_CODES
+        raw = self.get_index_daily(
+            ts_code=",".join(targets),
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if raw.empty:
+            return pd.DataFrame(columns=FuturesIndexDailySchema.get_required_columns())
+
+        df = raw.rename(
+            columns={
+                "ts_code": "symbol",
+                "trade_date": "time",
+                "vol": "volume",
+            }
+        )
+        df["source"] = "tushare"
+        return validate_dataframe(df, FuturesIndexDailySchema, provider_name=self.name)
+
     def get_trade_cal(
         self,
         exchange: Optional[str] = None,
@@ -3148,11 +3568,12 @@ class TushareProvider(BaseDataProvider):
         all_dataframes = []
 
         for exch in exchanges:
+            request_exchange = normalize_futures_exchange(exch) or str(exch).upper()
             logger.info(f"Fetching trade calendar for {exch}")
 
             # 构建API参数
             api_params = {
-                "exchange": exch,
+                "exchange": request_exchange,
             }
             if start_date:
                 api_params["start_date"] = start_date
@@ -3175,6 +3596,10 @@ class TushareProvider(BaseDataProvider):
             }
 
             df = convert_to_standard_columns(df, column_mapping)
+            if "exchange" in df.columns:
+                df["exchange"] = df["exchange"].map(
+                    lambda value: normalize_futures_exchange(value) or str(value).upper()
+                )
 
             # 转换日期格式（YYYYMMDD字符串 -> datetime）
             df["cal_date"] = pd.to_datetime(df["cal_date"], format="%Y%m%d", errors="coerce")

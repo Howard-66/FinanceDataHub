@@ -7,6 +7,7 @@
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, timedelta
 from pathlib import Path
+import json
 import time
 import numpy as np
 import pandas as pd
@@ -16,8 +17,15 @@ from finance_data_hub.router.smart_router import SmartRouter
 from finance_data_hub.database.manager import DatabaseManager
 from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.config import Settings
-from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES, SUPPORTED_EXCHANGES, SUPPORTED_INDEX_WEIGHT_CODES
+from finance_data_hub.providers.tushare import (
+    SUPPORTED_INDEX_CODES,
+    SUPPORTED_EXCHANGES,
+    SUPPORTED_INDEX_WEIGHT_CODES,
+    SUPPORTED_FUTURES_EXCHANGES,
+    SUPPORTED_FUTURES_INDEX_CODES,
+)
 from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
+from finance_data_hub.utils.futures import extract_futures_product_code
 
 
 def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
@@ -61,6 +69,40 @@ def _convert_to_quarter_format(date_str: Optional[str]) -> Optional[str]:
         return f"{year}Q3"
     else:
         return f"{year}Q4"
+
+
+def _split_futures_symbols_and_products(
+    values: Optional[List[str]],
+) -> tuple[List[str], List[str]]:
+    """Split CLI-style futures inputs into contract symbols and product codes."""
+    symbols: List[str] = []
+    product_codes: List[str] = []
+    for value in values or []:
+        raw = str(value).strip()
+        if not raw:
+            continue
+        if "." not in raw and not any(char.isdigit() for char in raw):
+            product_codes.append(raw.upper())
+        else:
+            symbols.append(raw)
+    return symbols, product_codes
+
+
+def _is_all_futures_selector(values: Optional[List[str]]) -> bool:
+    """Return True when the CLI explicitly requests the full futures universe."""
+    cleaned = [str(value).strip().lower() for value in values or [] if str(value).strip()]
+    return len(cleaned) == 1 and cleaned[0] == "all"
+
+
+def _dedupe_preserve_order(values: List[str]) -> List[str]:
+    seen = set()
+    deduped: List[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
 
 
 class DataUpdater:
@@ -2380,6 +2422,616 @@ class DataUpdater:
         except Exception as e:
             logger.exception("Failed to update index_weight data")
             raise
+
+    def _incremental_start(
+        self,
+        latest_date: Optional[str],
+        start_date: Optional[str],
+        force_update: bool,
+    ) -> Optional[str]:
+        """Return the actual start date for smart incremental futures updates."""
+        if force_update or start_date or not latest_date:
+            return start_date
+        return (datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)).strftime(
+            "%Y-%m-%d"
+        )
+
+    async def _resolve_futures_symbol_universe(
+        self,
+        symbols: Optional[List[str]],
+        product_codes: Optional[List[str]],
+        contract_types: List[str],
+        start_date: Optional[str],
+        end_date: Optional[str],
+        force_update: bool,
+        default_active_only: bool,
+    ) -> List[str]:
+        """Resolve futures contract symbols from contract_basic with date-overlap filtering."""
+        explicit_all = _is_all_futures_selector(symbols) or _is_all_futures_selector(
+            product_codes
+        )
+        if not explicit_all and symbols:
+            return _dedupe_preserve_order(symbols)
+
+        normalized_products = None
+        if not explicit_all and product_codes:
+            normalized_products = _dedupe_preserve_order(
+                [str(code).strip().upper() for code in product_codes if str(code).strip()]
+            )
+
+        active_only = default_active_only and not explicit_all and not force_update and not start_date
+        overlap_start = start_date if (explicit_all or force_update or start_date) else None
+        overlap_end = end_date
+
+        resolved: List[str] = []
+        if normalized_products:
+            for product_code in normalized_products:
+                resolved.extend(
+                    await self.data_ops.get_futures_contract_symbols(
+                        product_code=product_code,
+                        contract_types=contract_types,
+                        active_only=active_only,
+                        overlap_start=overlap_start,
+                        overlap_end=overlap_end,
+                    )
+                )
+        else:
+            resolved = await self.data_ops.get_futures_contract_symbols(
+                contract_types=contract_types,
+                active_only=active_only,
+                overlap_start=overlap_start,
+                overlap_end=overlap_end,
+            )
+        return _dedupe_preserve_order(resolved)
+
+    async def update_futures_basic(self, exchange: Optional[str] = None) -> int:
+        """更新期货合约基础信息。"""
+        data = self.router.route(
+            asset_class="future",
+            data_type="basic",
+            method_name="get_futures_basic",
+            exchange=exchange,
+        )
+        if data is None or data.empty:
+            logger.warning("No futures contract basic data received")
+            return 0
+        return await self.data_ops.insert_futures_contract_basic_batch(data)
+
+    async def update_futures_mapping(
+        self,
+        symbols: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """更新期货主力/连续合约映射。"""
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        explicit_all = _is_all_futures_selector(symbols)
+        inferred_products: List[str] = []
+        if not explicit_all:
+            explicit_symbols, inferred_products = _split_futures_symbols_and_products(
+                symbols
+            )
+            if symbols is not None:
+                symbols = explicit_symbols
+
+        if trade_date:
+            data = self.router.route(
+                asset_class="future",
+                data_type="mapping",
+                method_name="get_futures_mapping",
+                trade_date=trade_date,
+            )
+            return await self.data_ops.insert_futures_contract_mapping_batch(data)
+
+        symbols = await self._resolve_futures_symbol_universe(
+            symbols=symbols if not explicit_all else ["all"],
+            product_codes=inferred_products,
+            contract_types=["main", "continuous"],
+            start_date=start_date,
+            end_date=end_date,
+            force_update=force_update,
+            default_active_only=False,
+        )
+
+        total = 0
+        for idx, symbol in enumerate(symbols or []):
+            latest = await self.data_ops.get_latest_futures_date(
+                "contract_mapping", symbol=symbol
+            )
+            actual_start = self._incremental_start(latest, start_date, force_update)
+            if actual_start and end_date and actual_start > end_date:
+                if progress_callback:
+                    progress_callback(idx + 1, len(symbols))
+                continue
+            data = self.router.route(
+                asset_class="future",
+                data_type="mapping",
+                method_name="get_futures_mapping",
+                symbol=symbol,
+                start_date=actual_start,
+                end_date=end_date,
+            )
+            if data is not None and not data.empty:
+                total += await self.data_ops.insert_futures_contract_mapping_batch(data)
+            if progress_callback:
+                progress_callback(idx + 1, len(symbols))
+        return total
+
+    async def update_futures_daily(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """更新期货日线行情。"""
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        explicit_all = _is_all_futures_selector(symbols)
+        inferred_products: List[str] = []
+        if not explicit_all:
+            explicit_symbols, inferred_products = _split_futures_symbols_and_products(
+                symbols
+            )
+            if symbols is not None:
+                symbols = explicit_symbols
+            if inferred_products:
+                product_codes = (product_codes or []) + inferred_products
+
+        if trade_date:
+            data = self.router.route(
+                asset_class="future",
+                data_type="daily",
+                method_name="get_futures_daily",
+                trade_date=trade_date,
+            )
+            return await self.data_ops.insert_futures_daily_batch(data)
+
+        symbols = await self._resolve_futures_symbol_universe(
+            symbols=symbols if not explicit_all else ["all"],
+            product_codes=product_codes,
+            contract_types=["normal", "main", "continuous"],
+            start_date=start_date,
+            end_date=end_date,
+            force_update=force_update,
+            default_active_only=True,
+        )
+        if not symbols:
+            logger.warning("No futures contracts found; run future basic first")
+            return 0
+
+        total = 0
+        for idx, symbol in enumerate(symbols):
+            latest = await self.data_ops.get_latest_futures_date("daily", symbol=symbol)
+            actual_start = self._incremental_start(latest, start_date, force_update)
+            if actual_start and end_date and actual_start > end_date:
+                if progress_callback:
+                    progress_callback(idx + 1, len(symbols))
+                continue
+            data = self.router.route(
+                asset_class="future",
+                data_type="daily",
+                method_name="get_futures_daily",
+                symbol=symbol,
+                start_date=actual_start,
+                end_date=end_date,
+            )
+            if data is not None and not data.empty:
+                total += await self.data_ops.insert_futures_daily_batch(data)
+            if progress_callback:
+                progress_callback(idx + 1, len(symbols))
+        return total
+
+    async def update_futures_minute(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        freq: str = "1m",
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """更新期货分钟行情。"""
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        explicit_all = _is_all_futures_selector(symbols)
+        symbols = await self._resolve_futures_symbol_universe(
+            symbols=symbols if not explicit_all else ["all"],
+            product_codes=None,
+            contract_types=["normal", "main", "continuous"]
+            if explicit_all
+            else ["main"],
+            start_date=start_date,
+            end_date=end_date,
+            force_update=force_update,
+            default_active_only=True,
+        )
+        if not symbols:
+            logger.warning("No futures symbols found for minute update")
+            return 0
+
+        total = 0
+        for idx, symbol in enumerate(symbols):
+            latest = await self.data_ops.get_latest_futures_date(
+                "minute", symbol=symbol, frequency=freq
+            )
+            actual_start = self._incremental_start(latest, start_date, force_update)
+            if actual_start and end_date and actual_start > end_date:
+                if progress_callback:
+                    progress_callback(idx + 1, len(symbols))
+                continue
+            data = self.router.route(
+                asset_class="future",
+                data_type="minute",
+                freq=freq,
+                method_name="get_futures_minute",
+                symbol=symbol,
+                start_date=actual_start,
+                end_date=end_date,
+            )
+            if data is not None and not data.empty:
+                total += await self.data_ops.insert_futures_minute_batch(data)
+            if progress_callback:
+                progress_callback(idx + 1, len(symbols))
+        return total
+
+    async def update_futures_settle(
+        self,
+        symbols: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """更新期货结算参数。"""
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        explicit_all = _is_all_futures_selector(symbols)
+        inferred_products: List[str] = []
+        if not explicit_all:
+            explicit_symbols, inferred_products = _split_futures_symbols_and_products(
+                symbols
+            )
+            if symbols is not None:
+                symbols = explicit_symbols
+        if trade_date:
+            data = self.router.route(
+                asset_class="future",
+                data_type="settle",
+                method_name="get_futures_settle",
+                trade_date=trade_date,
+            )
+            return await self.data_ops.insert_futures_settle_batch(data)
+        symbols = await self._resolve_futures_symbol_universe(
+            symbols=symbols if not explicit_all else ["all"],
+            product_codes=inferred_products,
+            contract_types=["normal"],
+            start_date=start_date,
+            end_date=end_date,
+            force_update=force_update,
+            default_active_only=True,
+        )
+
+        total = 0
+        for idx, symbol in enumerate(symbols or []):
+            latest = await self.data_ops.get_latest_futures_date("settle", symbol=symbol)
+            actual_start = self._incremental_start(latest, start_date, force_update)
+            if actual_start and end_date and actual_start > end_date:
+                if progress_callback:
+                    progress_callback(idx + 1, len(symbols))
+                continue
+            data = self.router.route(
+                asset_class="future",
+                data_type="settle",
+                method_name="get_futures_settle",
+                symbol=symbol,
+                start_date=actual_start,
+                end_date=end_date,
+            )
+            if data is not None and not data.empty:
+                total += await self.data_ops.insert_futures_settle_batch(data)
+            if progress_callback:
+                progress_callback(idx + 1, len(symbols))
+        return total
+
+    async def update_futures_index_daily(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+    ) -> int:
+        """更新期货指数日线行情。"""
+        if _is_all_futures_selector(symbols):
+            symbols = None
+        symbols = symbols or SUPPORTED_FUTURES_INDEX_CODES
+        total = 0
+        for symbol in symbols:
+            latest = await self.data_ops.get_latest_futures_date(
+                "index_daily", symbol=symbol
+            )
+            actual_start = self._incremental_start(latest, start_date, force_update)
+            data = self.router.route(
+                asset_class="future",
+                data_type="index_daily",
+                method_name="get_futures_index_daily",
+                symbols=[symbol],
+                start_date=actual_start,
+                end_date=end_date,
+            )
+            if data is not None and not data.empty:
+                total += await self.data_ops.insert_futures_index_daily_batch(data)
+        return total
+
+    async def update_futures_spot_basis(
+        self,
+        product_codes: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+    ) -> int:
+        """更新期货现货价格与基差。"""
+        if _is_all_futures_selector(product_codes):
+            product_codes = None
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        if trade_date:
+            data = self.router.route(
+                asset_class="future",
+                data_type="spot_basis",
+                method_name="get_futures_spot_basis",
+                trade_date=trade_date,
+                products=product_codes,
+            )
+            return await self.data_ops.insert_futures_spot_basis_batch(data)
+
+        latest = await self.data_ops.get_latest_futures_date("spot_basis")
+        actual_start = self._incremental_start(latest, start_date, force_update)
+        used_default_single_day = False
+        if not actual_start:
+            actual_start = end_date
+            used_default_single_day = start_date is None
+        data = self.router.route(
+            asset_class="future",
+            data_type="spot_basis",
+            method_name="get_futures_spot_basis",
+            products=product_codes,
+            start_date=actual_start,
+            end_date=end_date,
+        )
+
+        # AKShare 在非交易日会直接返回空表。对于“未显式指定日期”的默认单日拉取，
+        # 自动向前回退到最近一个有数据的交易日，避免周末/节假日更新 0 条。
+        if used_default_single_day and (data is None or data.empty) and actual_start == end_date:
+            fallback_cursor = datetime.strptime(end_date, "%Y-%m-%d")
+            for _ in range(7):
+                fallback_cursor -= timedelta(days=1)
+                fallback_date = fallback_cursor.strftime("%Y-%m-%d")
+                logger.info(
+                    "No futures spot basis data for %s, fallback to previous day %s",
+                    end_date,
+                    fallback_date,
+                )
+                data = self.router.route(
+                    asset_class="future",
+                    data_type="spot_basis",
+                    method_name="get_futures_spot_basis",
+                    products=product_codes,
+                    start_date=fallback_date,
+                    end_date=fallback_date,
+                )
+                if data is not None and not data.empty:
+                    break
+
+        return await self.data_ops.insert_futures_spot_basis_batch(data)
+
+    async def update_futures_inventory(
+        self,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+    ) -> int:
+        """更新期货注册仓单。"""
+        if _is_all_futures_selector(product_codes):
+            product_codes = None
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        latest = await self.data_ops.get_latest_futures_date("inventory_receipt")
+        actual_start = self._incremental_start(latest, start_date, force_update)
+
+        use_history = force_update and not actual_start
+        product_names = None
+        if use_history:
+            contracts = await self.data_ops.get_futures_contracts(product_codes=product_codes)
+            if contracts is not None and not contracts.empty:
+                product_names = (
+                    contracts.dropna(subset=["product_code", "name"])
+                    .drop_duplicates("product_code")
+                    .set_index("product_code")["name"]
+                    .to_dict()
+                )
+
+        if not actual_start and not use_history:
+            actual_start = end_date
+        data = self.router.route(
+            asset_class="future",
+            data_type="inventory",
+            method_name="get_futures_inventory",
+            products=product_codes,
+            product_names=product_names,
+            start_date=actual_start,
+            end_date=end_date,
+            use_history=use_history,
+        )
+        return await self.data_ops.insert_futures_inventory_batch(data)
+
+    def _load_futures_dominant_months(self) -> Dict[str, List[int]]:
+        """Load dominant month config from bundled or adjacent futures_nexus config."""
+        candidates = [
+            Path(__file__).parent.parent / "preprocessing" / "futures" / "variety.json",
+            Path(__file__).parent.parent.parent.parent / "futures_nexus" / "setting" / "variety.json",
+        ]
+        for path in candidates:
+            if not path.exists():
+                continue
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                return {
+                    str(code).upper(): [int(month) for month in value.get("DominantMonths", [])]
+                    for code, value in raw.items()
+                    if isinstance(value, dict) and value.get("DominantMonths")
+                }
+            except Exception as exc:
+                logger.warning(f"Failed to load futures dominant months from {path}: {exc}")
+        return {}
+
+    async def preprocess_futures_term_data(
+        self,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """合成期货期限结构、跨期价差和展期收益率。"""
+        if _is_all_futures_selector(product_codes):
+            product_codes = None
+        raw = await self.data_ops.get_futures_daily_for_preprocess(
+            product_codes=product_codes,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if raw.empty:
+            return {"term_structure": 0, "term_spread": 0, "roll_yield": 0}
+
+        dominant_months = self._load_futures_dominant_months()
+        term_rows = []
+        spread_rows = []
+        roll_rows = []
+
+        raw["price"] = pd.to_numeric(raw["settle"], errors="coerce").fillna(
+            pd.to_numeric(raw["close"], errors="coerce")
+        )
+        raw["open_interest"] = pd.to_numeric(raw["open_interest"], errors="coerce")
+
+        for (product, trade_time), group in raw.groupby(["product_code", "time"]):
+            months = dominant_months.get(str(product).upper()) or list(range(1, 13))
+            eligible = group[group["delivery_month"].isin(months)].copy()
+            eligible = eligible.dropna(subset=["price"])
+            if eligible.empty:
+                continue
+
+            curve = eligible.sort_values(["delivery_month_start", "symbol"]).reset_index(
+                drop=True
+            )
+            if curve["open_interest"].notna().any():
+                primary_pos = curve["open_interest"].idxmax()
+                curve = curve.iloc[int(primary_pos) :].reset_index(drop=True)
+            if curve.empty:
+                continue
+
+            prices = curve["price"].astype(float)
+            diffs = prices.diff().dropna()
+            trend = prices.iloc[-1] - prices.iloc[0] if len(prices) >= 2 else 0
+            if len(prices) < 2:
+                flag = 0
+            elif (diffs > 0).all():
+                flag = -1
+            elif (diffs < 0).all():
+                flag = 1
+            elif trend > 0:
+                flag = -0.5
+            elif trend < 0:
+                flag = 0.5
+            else:
+                flag = 0
+
+            primary = curve.iloc[0]
+            secondary = curve.iloc[1] if len(curve) > 1 else None
+
+            term_rows.append(
+                {
+                    "time": trade_time,
+                    "product_code": product,
+                    "exchange": primary.get("exchange"),
+                    "flag": flag,
+                    "primary_contract": primary.get("symbol"),
+                    "secondary_contract": secondary.get("symbol") if secondary is not None else None,
+                    "candidate_count": len(curve),
+                    "source": "preprocess",
+                }
+            )
+
+            if secondary is None:
+                continue
+
+            primary_price = float(primary["price"])
+            secondary_price = float(secondary["price"])
+            spread = primary_price - secondary_price
+            spread_rows.append(
+                {
+                    "time": trade_time,
+                    "product_code": product,
+                    "exchange": primary.get("exchange"),
+                    "primary_contract": primary.get("symbol"),
+                    "primary_contract_close": primary_price,
+                    "secondary_contract": secondary.get("symbol"),
+                    "secondary_contract_close": secondary_price,
+                    "spread": spread,
+                    "source": "preprocess",
+                }
+            )
+
+            primary_expiry = primary.get("last_ddate") or primary.get("delivery_month_start")
+            secondary_expiry = secondary.get("last_ddate") or secondary.get("delivery_month_start")
+            if pd.notna(primary_expiry) and pd.notna(secondary_expiry) and primary_price:
+                primary_expiry = pd.Timestamp(primary_expiry)
+                secondary_expiry = pd.Timestamp(secondary_expiry)
+                trade_ts = pd.Timestamp(trade_time)
+                days_to_primary = max((primary_expiry.date() - trade_ts.date()).days, 0)
+                days_between = (secondary_expiry.date() - primary_expiry.date()).days
+                annualized = None
+                if days_between > 0:
+                    annualized = ((secondary_price - primary_price) / primary_price) * (
+                        365 / days_between
+                    )
+                roll_rows.append(
+                    {
+                        "time": trade_time,
+                        "product_code": product,
+                        "exchange": primary.get("exchange"),
+                        "primary_contract": primary.get("symbol"),
+                        "secondary_contract": secondary.get("symbol"),
+                        "spread": spread,
+                        "days_to_primary_expiry": days_to_primary,
+                        "days_between_expiry": days_between,
+                        "annualized_roll_yield": annualized,
+                        "source": "preprocess",
+                    }
+                )
+
+        term_count = await self.data_ops.insert_futures_term_structure_batch(
+            pd.DataFrame(term_rows)
+        )
+        spread_count = await self.data_ops.insert_futures_term_spread_batch(
+            pd.DataFrame(spread_rows)
+        )
+        roll_count = await self.data_ops.insert_futures_roll_yield_batch(
+            pd.DataFrame(roll_rows)
+        )
+        return {
+            "term_structure": term_count,
+            "term_spread": spread_count,
+            "roll_yield": roll_count,
+        }
 
     async def close(self) -> None:
         """关闭资源"""

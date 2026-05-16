@@ -27,6 +27,7 @@ from finance_data_hub.providers.schema import (
 # 注意：这些导入只是为了触发@register_provider装饰器的执行
 from finance_data_hub.providers import tushare  # noqa: F401
 from finance_data_hub.providers import xtquant  # noqa: F401
+from finance_data_hub.providers import akshare_provider  # noqa: F401
 
 __all__ = [
     # Base classes and errors

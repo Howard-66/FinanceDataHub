@@ -3,7 +3,7 @@ CLI 模块单元测试
 """
 
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 from typer.testing import CliRunner
 import pandas as pd
 
@@ -257,6 +257,54 @@ def test_cli_update_minute_data():
         ])
         assert result.exit_code == 0
         assert "数据类型: minute_1" in result.output
+
+
+def test_cli_update_future_symbols_all_cannot_mix_with_other_codes():
+    result = runner.invoke(
+        app,
+        [
+            "update",
+            "--asset-class", "future",
+            "--dataset", "daily",
+            "--symbols", "all,RB2405.SHF",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--symbols all 不能与其他代码混用" in result.output
+
+
+def test_cli_update_future_symbols_all_shows_full_universe_hint():
+    fake_updater = Mock()
+    fake_updater.update_futures_daily = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--asset-class", "future",
+                "--dataset", "daily",
+                "--symbols", "all",
+                "--start-date", "2024-04-01",
+                "--end-date", "2024-04-30",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "全量合约池" in result.output
+    fake_updater.update_futures_daily.assert_awaited_once_with(
+        symbols=["all"],
+        trade_date=None,
+        start_date="2024-04-01",
+        end_date="2024-04-30",
+        force_update=False,
+        progress_callback=ANY,
+    )
 
 
 def test_cli_update_daily_basic():

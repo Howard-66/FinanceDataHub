@@ -986,6 +986,233 @@ TradeCalSchema = DataFrameSchema(
 
 
 # ===========================
+# 期货 Schema
+# ===========================
+
+
+FuturesContractBasicSchema = DataFrameSchema(
+    name="futures_contract_basic",
+    description="期货合约基础信息",
+    columns=[
+        ColumnSchema("symbol", "object", False, "Tushare 合约代码"),
+        ColumnSchema("product_code", "object", True, "品种代码"),
+        ColumnSchema("exchange", "object", True, "规范交易所代码"),
+        ColumnSchema("name", "object", True, "合约名称"),
+        ColumnSchema("fut_code", "object", True, "Tushare 品种代码"),
+        ColumnSchema("contract_type", "object", True, "normal/main/continuous"),
+        ColumnSchema("fut_type", "object", True, "Tushare 合约类型"),
+        ColumnSchema("multiplier", "float64", True, "合约乘数"),
+        ColumnSchema("trade_unit", "object", True, "交易单位"),
+        ColumnSchema("per_unit", "float64", True, "每手单位"),
+        ColumnSchema("quote_unit", "object", True, "报价单位"),
+        ColumnSchema("quote_unit_desc", "object", True, "报价单位描述"),
+        ColumnSchema("quote_unit_value", "float64", True, "报价单位数值"),
+        ColumnSchema("d_mode_desc", "object", True, "交割方式描述"),
+        ColumnSchema("list_date", "datetime64[ns]", True, "上市日期"),
+        ColumnSchema("delist_date", "datetime64[ns]", True, "退市日期"),
+        ColumnSchema("d_month", "object", True, "交割月份"),
+        ColumnSchema("last_ddate", "datetime64[ns]", True, "最后交割日"),
+        ColumnSchema("trade_time_desc", "object", True, "交易时间描述"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesContractMappingSchema = DataFrameSchema(
+    name="futures_contract_mapping",
+    description="期货主力/连续合约映射",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("symbol", "object", False, "主力/连续合约代码"),
+        ColumnSchema("mapping_symbol", "object", False, "实际合约代码"),
+        ColumnSchema("product_code", "object", True, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("contract_type", "object", True, "main/continuous"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesDailySchema = DataFrameSchema(
+    name="futures_daily",
+    description="期货日线行情",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("symbol", "object", False, "合约代码"),
+        ColumnSchema("product_code", "object", True, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("open", "float64", True, "开盘价"),
+        ColumnSchema("high", "float64", True, "最高价"),
+        ColumnSchema("low", "float64", True, "最低价"),
+        ColumnSchema("close", "float64", True, "收盘价"),
+        ColumnSchema("pre_close", "float64", True, "昨收价"),
+        ColumnSchema("settle", "float64", True, "结算价"),
+        ColumnSchema("pre_settle", "float64", True, "昨结算价"),
+        ColumnSchema("volume", "int64", True, "成交量"),
+        ColumnSchema("amount", "float64", True, "成交额"),
+        ColumnSchema("open_interest", "float64", True, "持仓量"),
+        ColumnSchema("open_interest_chg", "float64", True, "持仓量变化"),
+        ColumnSchema("change1", "float64", True, "涨跌一"),
+        ColumnSchema("change2", "float64", True, "涨跌二"),
+        ColumnSchema("pct_chg", "float64", True, "涨跌幅"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesMinuteSchema = DataFrameSchema(
+    name="futures_minute",
+    description="期货分钟行情",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "交易时间"),
+        ColumnSchema("symbol", "object", False, "合约代码"),
+        ColumnSchema("frequency", "object", False, "频率"),
+        ColumnSchema("product_code", "object", True, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("open", "float64", True, "开盘价"),
+        ColumnSchema("high", "float64", True, "最高价"),
+        ColumnSchema("low", "float64", True, "最低价"),
+        ColumnSchema("close", "float64", True, "收盘价"),
+        ColumnSchema("volume", "int64", True, "成交量"),
+        ColumnSchema("amount", "float64", True, "成交额"),
+        ColumnSchema("open_interest", "float64", True, "持仓量"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesSettleSchema = DataFrameSchema(
+    name="futures_settle",
+    description="期货结算参数",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("symbol", "object", False, "合约代码"),
+        ColumnSchema("product_code", "object", True, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("settle", "float64", True, "结算价"),
+        ColumnSchema("trading_fee_rate", "float64", True, "交易费率"),
+        ColumnSchema("trading_fee", "float64", True, "交易费"),
+        ColumnSchema("delivery_fee", "float64", True, "交割费"),
+        ColumnSchema("b_hedging_margin_rate", "float64", True, "买套保保证金率"),
+        ColumnSchema("s_hedging_margin_rate", "float64", True, "卖套保保证金率"),
+        ColumnSchema("long_margin_rate", "float64", True, "多头保证金率"),
+        ColumnSchema("short_margin_rate", "float64", True, "空头保证金率"),
+        ColumnSchema("offset_today_fee", "float64", True, "平今手续费"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesIndexDailySchema = DataFrameSchema(
+    name="futures_index_daily",
+    description="期货指数日线行情",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("symbol", "object", False, "指数代码"),
+        ColumnSchema("open", "float64", True, "开盘"),
+        ColumnSchema("high", "float64", True, "最高"),
+        ColumnSchema("low", "float64", True, "最低"),
+        ColumnSchema("close", "float64", True, "收盘"),
+        ColumnSchema("pre_close", "float64", True, "昨收"),
+        ColumnSchema("change", "float64", True, "涨跌"),
+        ColumnSchema("pct_chg", "float64", True, "涨跌幅"),
+        ColumnSchema("volume", "float64", True, "成交量"),
+        ColumnSchema("amount", "float64", True, "成交额"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesSpotBasisSchema = DataFrameSchema(
+    name="futures_spot_basis",
+    description="期货现货价格与基差",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("product_code", "object", False, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("spot_price", "float64", True, "现货价格"),
+        ColumnSchema("futures_price", "float64", True, "期货价格"),
+        ColumnSchema("near_contract", "object", True, "近月合约"),
+        ColumnSchema("near_contract_price", "float64", True, "近月合约价格"),
+        ColumnSchema("dominant_contract", "object", True, "主力合约"),
+        ColumnSchema("dominant_contract_price", "float64", True, "主力合约价格"),
+        ColumnSchema("near_basis", "float64", True, "近月基差"),
+        ColumnSchema("near_basis_rate", "float64", True, "近月基差率"),
+        ColumnSchema("dom_basis", "float64", True, "主力基差"),
+        ColumnSchema("dom_basis_rate", "float64", True, "主力基差率"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesInventoryReceiptSchema = DataFrameSchema(
+    name="futures_inventory_receipt",
+    description="期货注册仓单",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "日期"),
+        ColumnSchema("product_code", "object", False, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("receipt", "float64", True, "仓单"),
+        ColumnSchema("inventory", "float64", True, "库存"),
+        ColumnSchema("warehouse", "object", True, "仓库"),
+        ColumnSchema("region", "object", True, "地区"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesTermStructureSchema = DataFrameSchema(
+    name="futures_term_structure",
+    description="期货期限结构",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("product_code", "object", False, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("flag", "float64", True, "期限结构信号"),
+        ColumnSchema("primary_contract", "object", True, "主力合约"),
+        ColumnSchema("secondary_contract", "object", True, "次主力合约"),
+        ColumnSchema("candidate_count", "int64", True, "候选合约数量"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesTermSpreadSchema = DataFrameSchema(
+    name="futures_term_spread",
+    description="期货跨期价差",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("product_code", "object", False, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("primary_contract", "object", True, "主力合约"),
+        ColumnSchema("primary_contract_close", "float64", True, "主力合约收盘价"),
+        ColumnSchema("secondary_contract", "object", True, "次主力合约"),
+        ColumnSchema("secondary_contract_close", "float64", True, "次主力合约收盘价"),
+        ColumnSchema("spread", "float64", True, "价差"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+FuturesRollYieldSchema = DataFrameSchema(
+    name="futures_roll_yield",
+    description="期货展期收益率",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("product_code", "object", False, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("primary_contract", "object", True, "主力合约"),
+        ColumnSchema("secondary_contract", "object", True, "次主力合约"),
+        ColumnSchema("spread", "float64", True, "价差"),
+        ColumnSchema("days_to_primary_expiry", "int64", True, "距离主力到期天数"),
+        ColumnSchema("days_between_expiry", "int64", True, "合约到期日差"),
+        ColumnSchema("annualized_roll_yield", "float64", True, "年化展期收益率"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
+# ===========================
 # 指数成分权重 Schema
 # ===========================
 

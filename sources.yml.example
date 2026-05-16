@@ -21,6 +21,13 @@ providers:
     max_retry: 3
     priority: 2
 
+  # AKShare配置
+  akshare:
+    enabled: true
+    timeout: 60
+    max_retry: 3
+    priority: 3
+
 # 数据源路由策略
 # 定义不同资产类别和数据频率应该使用哪些提供者
 routing_strategy:
@@ -40,12 +47,6 @@ routing_strategy:
           providers: [xtquant]
           fallback: false
         5m:
-          providers: [xtquant]
-          fallback: true
-        15m:
-          providers: [xtquant]
-          fallback: true
-        30m:
           providers: [xtquant]
           fallback: true
         60m:
@@ -88,12 +89,6 @@ routing_strategy:
         5m:
           providers: [xtquant]
           fallback: false
-        15m:
-          providers: [xtquant]
-          fallback: false
-        30m:
-          providers: [xtquant]
-          fallback: false
         60m:
           providers: [xtquant]
           fallback: false
@@ -104,13 +99,38 @@ routing_strategy:
         providers: [xtquant]
         fallback: false
 
-  # 期货数据路由（暂未实现）
+  # 期货数据路由
   future:
-    daily:
-      providers: [xtquant]
+    basic:
+      providers: [tushare]
       fallback: false
+    mapping:
+      providers: [tushare]
+      fallback: false
+    daily:
+      providers: [tushare, xtquant]
+      fallback: true
     minute:
-      providers: [xtquant]
+      1m:
+        providers: [xtquant]
+        fallback: false
+      5m:
+        providers: [xtquant]
+        fallback: false
+      60m:
+        providers: [xtquant]
+        fallback: false
+    settle:
+      providers: [tushare]
+      fallback: false
+    index_daily:
+      providers: [tushare]
+      fallback: false
+    spot_basis:
+      providers: [akshare]
+      fallback: false
+    inventory:
+      providers: [akshare]
       fallback: false
 
   # 宏观经济数据路由

@@ -20,6 +20,14 @@ from finance_data_hub.utils.market import (
     infer_market_from_symbol,
     normalize_market,
 )
+from finance_data_hub.utils.futures import (
+    delivery_month_start,
+    extract_delivery_month,
+    extract_futures_product_code,
+    get_futures_exchange_from_symbol,
+    normalize_futures_exchange,
+    normalize_tushare_futures_symbol,
+)
 
 
 def _normalize_datetime_for_db(value, data_type="daily", market: Optional[str] = None):
@@ -5310,3 +5318,634 @@ class DataOperations:
             return latest_date.strftime("%Y-%m-%d")
 
         return None
+
+    async def _insert_futures_dataframe(
+        self,
+        table: str,
+        data: pd.DataFrame,
+        columns: List[str],
+        conflict_columns: List[str],
+        batch_size: int = 1000,
+        time_columns: Optional[set[str]] = None,
+        date_columns: Optional[set[str]] = None,
+        time_data_type: str = "daily",
+    ) -> int:
+        """Generic schema-qualified upsert helper for futures tables."""
+        if data.empty:
+            return 0
+
+        time_columns = time_columns or {"time"}
+        date_columns = date_columns or set()
+        insert_columns = [column for column in columns if column in data.columns]
+        for column in columns:
+            if column not in data.columns:
+                data[column] = None
+        insert_columns = columns
+
+        values_sql = ", ".join(f":{column}" for column in insert_columns)
+        columns_sql = ", ".join(insert_columns)
+        conflict_sql = ", ".join(conflict_columns)
+        update_columns = [
+            column for column in insert_columns if column not in set(conflict_columns)
+        ]
+        update_sql = ", ".join(
+            [f"{column} = EXCLUDED.{column}" for column in update_columns]
+            + ["updated_at = NOW()"]
+        )
+        insert_sql = f"""
+            INSERT INTO futures.{table} ({columns_sql})
+            VALUES ({values_sql})
+            ON CONFLICT ({conflict_sql}) DO UPDATE SET
+                {update_sql}
+        """
+
+        total_inserted = 0
+        for i in range(0, len(data), batch_size):
+            batch = data.iloc[i : i + batch_size]
+            records = batch[insert_columns].to_dict("records")
+            for record in records:
+                for key, value in list(record.items()):
+                    if pd.isna(value):
+                        record[key] = None
+                    elif _is_non_finite_number(value):
+                        record[key] = None
+                    elif key in time_columns or isinstance(value, pd.Timestamp):
+                        normalized = _normalize_datetime_for_db(
+                            value, data_type=time_data_type, market="CN"
+                        )
+                        record[key] = normalized
+                    if key in date_columns and record[key] is not None:
+                        record[key] = pd.to_datetime(record[key]).date()
+
+            async with self.db_manager._engine.begin() as conn:
+                await conn.execute(text(insert_sql), records)
+            total_inserted += len(records)
+
+        logger.info(f"Total upserted {total_inserted} records to futures.{table}")
+        return total_inserted
+
+    async def insert_futures_contract_basic_batch(self, data: pd.DataFrame) -> int:
+        columns = [
+            "symbol",
+            "product_code",
+            "exchange",
+            "name",
+            "fut_code",
+            "contract_type",
+            "fut_type",
+            "multiplier",
+            "trade_unit",
+            "per_unit",
+            "quote_unit",
+            "quote_unit_desc",
+            "quote_unit_value",
+            "d_mode_desc",
+            "list_date",
+            "delist_date",
+            "d_month",
+            "last_ddate",
+            "trade_time_desc",
+            "source",
+        ]
+        return await self._insert_futures_dataframe(
+            "contract_basic",
+            data.copy(),
+            columns,
+            ["symbol"],
+            date_columns={"list_date", "delist_date", "last_ddate"},
+        )
+
+    async def insert_futures_contract_mapping_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "contract_mapping",
+            data.copy(),
+            [
+                "time",
+                "symbol",
+                "mapping_symbol",
+                "product_code",
+                "exchange",
+                "contract_type",
+                "source",
+            ],
+            ["symbol", "mapping_symbol", "time"],
+        )
+
+    async def insert_futures_daily_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "daily",
+            data.copy(),
+            [
+                "time",
+                "symbol",
+                "product_code",
+                "exchange",
+                "open",
+                "high",
+                "low",
+                "close",
+                "pre_close",
+                "settle",
+                "pre_settle",
+                "volume",
+                "amount",
+                "open_interest",
+                "open_interest_chg",
+                "change1",
+                "change2",
+                "pct_chg",
+                "source",
+            ],
+            ["symbol", "time"],
+        )
+
+    async def insert_futures_minute_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "minute",
+            data.copy(),
+            [
+                "time",
+                "symbol",
+                "frequency",
+                "product_code",
+                "exchange",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+                "open_interest",
+                "source",
+            ],
+            ["symbol", "time", "frequency"],
+            time_data_type="minute",
+        )
+
+    async def insert_futures_settle_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "settle",
+            data.copy(),
+            [
+                "time",
+                "symbol",
+                "product_code",
+                "exchange",
+                "settle",
+                "trading_fee_rate",
+                "trading_fee",
+                "delivery_fee",
+                "b_hedging_margin_rate",
+                "s_hedging_margin_rate",
+                "long_margin_rate",
+                "short_margin_rate",
+                "offset_today_fee",
+                "source",
+            ],
+            ["symbol", "time"],
+        )
+
+    async def insert_futures_index_daily_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "index_daily",
+            data.copy(),
+            [
+                "time",
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+                "pre_close",
+                "change",
+                "pct_chg",
+                "volume",
+                "amount",
+                "source",
+            ],
+            ["symbol", "time"],
+        )
+
+    async def insert_futures_spot_basis_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "spot_basis",
+            data.copy(),
+            [
+                "time",
+                "product_code",
+                "exchange",
+                "spot_price",
+                "futures_price",
+                "near_contract",
+                "near_contract_price",
+                "dominant_contract",
+                "dominant_contract_price",
+                "near_basis",
+                "near_basis_rate",
+                "dom_basis",
+                "dom_basis_rate",
+                "source",
+            ],
+            ["product_code", "time"],
+        )
+
+    async def insert_futures_inventory_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "inventory_receipt",
+            data.copy(),
+            [
+                "time",
+                "product_code",
+                "exchange",
+                "receipt",
+                "inventory",
+                "warehouse",
+                "region",
+                "source",
+            ],
+            ["product_code", "time"],
+        )
+
+    async def insert_futures_term_structure_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "term_structure",
+            data.copy(),
+            [
+                "time",
+                "product_code",
+                "exchange",
+                "flag",
+                "primary_contract",
+                "secondary_contract",
+                "candidate_count",
+                "source",
+            ],
+            ["product_code", "time"],
+        )
+
+    async def insert_futures_term_spread_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "term_spread",
+            data.copy(),
+            [
+                "time",
+                "product_code",
+                "exchange",
+                "primary_contract",
+                "primary_contract_close",
+                "secondary_contract",
+                "secondary_contract_close",
+                "spread",
+                "source",
+            ],
+            ["product_code", "time"],
+        )
+
+    async def insert_futures_roll_yield_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_dataframe(
+            "roll_yield",
+            data.copy(),
+            [
+                "time",
+                "product_code",
+                "exchange",
+                "primary_contract",
+                "secondary_contract",
+                "spread",
+                "days_to_primary_expiry",
+                "days_between_expiry",
+                "annualized_roll_yield",
+                "source",
+            ],
+            ["product_code", "time"],
+        )
+
+    async def get_latest_futures_date(
+        self,
+        table: str,
+        symbol: Optional[str] = None,
+        product_code: Optional[str] = None,
+        frequency: Optional[str] = None,
+    ) -> Optional[str]:
+        allowed_tables = {
+            "contract_mapping",
+            "daily",
+            "minute",
+            "settle",
+            "index_daily",
+            "spot_basis",
+            "inventory_receipt",
+            "term_structure",
+            "term_spread",
+            "roll_yield",
+        }
+        if table not in allowed_tables:
+            raise ValueError(f"Unsupported futures table: {table}")
+
+        conditions = []
+        params: Dict[str, Any] = {}
+        product_tables = {
+            "spot_basis",
+            "inventory_receipt",
+            "term_structure",
+            "term_spread",
+            "roll_yield",
+        }
+        if symbol and table not in product_tables:
+            conditions.append("symbol = :symbol")
+            params["symbol"] = normalize_tushare_futures_symbol(symbol)
+        if product_code:
+            conditions.append("product_code = :product_code")
+            params["product_code"] = product_code.upper()
+        if frequency and table == "minute":
+            conditions.append("frequency = :frequency")
+            params["frequency"] = frequency
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = f"SELECT MAX(time) AS latest_date FROM futures.{table} {where_clause}"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row and row.latest_date:
+            latest_date = pd.to_datetime(row.latest_date)
+            if latest_date.tz is not None:
+                latest_date = latest_date.tz_convert("Asia/Shanghai")
+            return latest_date.strftime("%Y-%m-%d")
+        return None
+
+    async def get_futures_contract_symbols(
+        self,
+        product_code: Optional[str] = None,
+        contract_type: Optional[str] = None,
+        contract_types: Optional[List[str]] = None,
+        active_only: bool = True,
+        overlap_start: Optional[str] = None,
+        overlap_end: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[str]:
+        conditions = []
+        params: Dict[str, Any] = {}
+        if product_code:
+            conditions.append("product_code = :product_code")
+            params["product_code"] = product_code.upper()
+        if contract_type:
+            if contract_types:
+                raise ValueError("contract_type and contract_types cannot be used together")
+            conditions.append("contract_type = :contract_type")
+            params["contract_type"] = contract_type
+        elif contract_types:
+            conditions.append("contract_type = ANY(:contract_types)")
+            params["contract_types"] = contract_types
+        if active_only:
+            conditions.append("(delist_date IS NULL OR delist_date >= CURRENT_DATE)")
+        if overlap_end:
+            conditions.append("(list_date IS NULL OR list_date <= :overlap_end)")
+            params["overlap_end"] = pd.to_datetime(overlap_end).date()
+        if overlap_start:
+            conditions.append(
+                "(COALESCE(delist_date, last_ddate) IS NULL OR COALESCE(delist_date, last_ddate) >= :overlap_start)"
+            )
+            params["overlap_start"] = pd.to_datetime(overlap_start).date()
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = f"SELECT symbol FROM futures.contract_basic {where_clause} ORDER BY symbol"
+        if limit:
+            query += " LIMIT :limit"
+            params["limit"] = limit
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+        return [row.symbol for row in rows]
+
+    async def get_futures_product_codes(self) -> List[str]:
+        query = """
+            SELECT DISTINCT product_code
+            FROM futures.contract_basic
+            WHERE product_code IS NOT NULL
+            ORDER BY product_code
+        """
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query))
+            rows = result.fetchall()
+        return [row.product_code for row in rows]
+
+    async def get_futures_contracts(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        exchange: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        params: Dict[str, Any] = {}
+        conditions = ["1=1"]
+        if symbols:
+            conditions.append("symbol = ANY(:symbols)")
+            params["symbols"] = [
+                normalize_tushare_futures_symbol(symbol) for symbol in symbols
+            ]
+        if product_codes:
+            conditions.append("product_code = ANY(:product_codes)")
+            params["product_codes"] = [code.upper() for code in product_codes]
+        if exchange:
+            conditions.append("exchange = :exchange")
+            params["exchange"] = normalize_futures_exchange(exchange)
+
+        query = f"""
+            SELECT *
+            FROM futures.contract_basic
+            WHERE {' AND '.join(conditions)}
+            ORDER BY exchange, product_code, symbol
+        """
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+        return pd.DataFrame([row._asdict() for row in rows]) if rows else None
+
+    async def _query_futures_time_table(
+        self,
+        table: str,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        frequency: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        allowed_tables = {
+            "daily",
+            "minute",
+            "settle",
+            "index_daily",
+            "spot_basis",
+            "inventory_receipt",
+            "term_structure",
+            "term_spread",
+            "roll_yield",
+        }
+        if table not in allowed_tables:
+            raise ValueError(f"Unsupported futures table: {table}")
+
+        params: Dict[str, Any] = {}
+        conditions = []
+        if symbols and table in {"daily", "minute", "settle", "index_daily"}:
+            conditions.append("symbol = ANY(:symbols)")
+            params["symbols"] = [
+                normalize_tushare_futures_symbol(symbol) for symbol in symbols
+            ]
+        if product_codes and table != "index_daily":
+            conditions.append("product_code = ANY(:product_codes)")
+            params["product_codes"] = [code.upper() for code in product_codes]
+        if start_date:
+            conditions.append("time >= :start_date")
+            params["start_date"] = _normalize_datetime_for_db(
+                start_date, "minute" if table == "minute" else "daily"
+            )
+        if end_date:
+            conditions.append("time <= :end_date")
+            params["end_date"] = _normalize_datetime_for_db(
+                end_date + " 23:59:59",
+                "minute" if table == "minute" else "daily",
+            )
+        if frequency and table == "minute":
+            conditions.append("frequency = :frequency")
+            params["frequency"] = frequency
+
+        if not conditions:
+            return None
+
+        query = f"""
+            SELECT *
+            FROM futures.{table}
+            WHERE {' AND '.join(conditions)}
+            ORDER BY time, {('symbol' if table in {'daily', 'minute', 'settle', 'index_daily'} else 'product_code')}
+        """
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+        return pd.DataFrame([row._asdict() for row in rows]) if rows else None
+
+    async def get_futures_daily(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        return await self._query_futures_time_table(
+            "daily", symbols, product_codes, start_date, end_date
+        )
+
+    async def get_futures_minute(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str,
+        frequency: str = "1m",
+    ) -> Optional[pd.DataFrame]:
+        return await self._query_futures_time_table(
+            "minute", symbols, None, start_date, end_date, frequency
+        )
+
+    async def get_futures_spot_basis(
+        self,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        return await self._query_futures_time_table(
+            "spot_basis", None, product_codes, start_date, end_date
+        )
+
+    async def get_futures_inventory(
+        self,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        return await self._query_futures_time_table(
+            "inventory_receipt", None, product_codes, start_date, end_date
+        )
+
+    async def get_futures_term_structure(
+        self,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        return await self._query_futures_time_table(
+            "term_structure", None, product_codes, start_date, end_date
+        )
+
+    async def get_futures_term_spread(
+        self,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        return await self._query_futures_time_table(
+            "term_spread", None, product_codes, start_date, end_date
+        )
+
+    async def get_futures_roll_yield(
+        self,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        return await self._query_futures_time_table(
+            "roll_yield", None, product_codes, start_date, end_date
+        )
+
+    async def get_futures_daily_for_preprocess(
+        self,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        params: Dict[str, Any] = {}
+        conditions = ["d.symbol ~ '[0-9]'"]
+        if product_codes:
+            conditions.append("d.product_code = ANY(:product_codes)")
+            params["product_codes"] = [code.upper() for code in product_codes]
+        if start_date:
+            conditions.append("d.time >= :start_date")
+            params["start_date"] = _normalize_datetime_for_db(start_date, "daily")
+        if end_date:
+            conditions.append("d.time <= :end_date")
+            params["end_date"] = _normalize_datetime_for_db(
+                end_date + " 23:59:59", "daily"
+            )
+
+        query = f"""
+            SELECT d.time, d.symbol, d.product_code, d.exchange, d.close, d.settle,
+                   d.open_interest, b.list_date, b.delist_date, b.last_ddate
+            FROM futures.daily d
+            LEFT JOIN futures.contract_basic b ON d.symbol = b.symbol
+            WHERE {' AND '.join(conditions)}
+            ORDER BY d.product_code, d.time, d.open_interest DESC NULLS LAST, d.symbol
+        """
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return pd.DataFrame(
+                columns=[
+                    "time",
+                    "symbol",
+                    "product_code",
+                    "exchange",
+                    "close",
+                    "settle",
+                    "open_interest",
+                    "list_date",
+                    "delist_date",
+                    "last_ddate",
+                ]
+            )
+
+        df = pd.DataFrame([row._asdict() for row in rows])
+        df["delivery_month"] = df["symbol"].map(extract_delivery_month)
+        df["delivery_month_start"] = df["symbol"].map(delivery_month_start)
+        return df

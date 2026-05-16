@@ -420,6 +420,18 @@ fdh-cli update --dataset daily --force      # 强制全量更新所有股票
 fdh-cli update --dataset daily --force --start-date 2024-01-01 # 指定日期范围
 fdh-cli update --dataset daily --market HK --force --start-date 2024-01-01 --end-date 2024-12-31
 
+# 期货数据
+fdh-cli update --asset-class future --dataset basic
+fdh-cli update --asset-class future --dataset mapping --symbols all --start-date 2024-04-01 --end-date 2024-04-30
+fdh-cli update --asset-class future --dataset daily --symbols all --start-date 2024-04-01 --end-date 2024-04-30
+fdh-cli update --asset-class future --dataset daily --symbols RB2405.SHF --start-date 2024-04-30 --end-date 2024-04-30
+fdh-cli update --asset-class future --dataset minute_1 --symbols rb2405.SF --start-date "2024-04-30 09:30:00" --end-date "2024-04-30 10:00:00"
+fdh-cli update --asset-class future --dataset settle --symbols RB2405.SHF --start-date 2024-04-30 --end-date 2024-04-30
+fdh-cli update --asset-class future --dataset index_daily --symbols NHCI.NH --start-date 2024-04-30 --end-date 2024-04-30
+fdh-cli update --asset-class future --dataset spot_basis --symbols RB --trade-date 2024-04-30
+fdh-cli update --asset-class future --dataset inventory --symbols RB --start-date 2024-04-30 --end-date 2024-04-30
+# 说明: --symbols all 会按 futures.contract_basic 展开全量合约池
+
 # 交易日批量更新 - 批量获取指定交易日所有股票
 fdh-cli update --dataset daily --trade-date 2024-11-18
 fdh-cli update --dataset daily_basic --trade-date 2024-11-18
@@ -471,6 +483,14 @@ print(f"周线复权因子: {len(weekly_adj)} 条")
 # 获取月线复权因子
 monthly_adj = fdh.get_adj_factor_monthly(['600519.SH'], '2020-01-01', '2024-12-31')
 print(f"月线复权因子: {len(monthly_adj)} 条")
+
+# 获取期货数据
+contracts = fdh.get_futures_contracts(product_codes=['RB'])
+daily = fdh.get_futures_daily(symbols=['RB2405.SHF'], start_date='2024-04-30', end_date='2024-04-30')
+basis = fdh.get_futures_spot_basis(product_codes=['RB'], start_date='2024-04-30', end_date='2024-04-30')
+print(f"期货合约: {len(contracts)} 条")
+print(f"期货日线: {len(daily)} 条")
+print(f"期货基差: {len(basis)} 条")
 EOF
 ```
 
@@ -504,7 +524,7 @@ EOF
 港股 v1 当前支持：
 - `basic`：港股股票列表，通过 Tushare `hk_basic` 获取并映射到统一主数据字段
 - `daily`：港股日线，保存原始未复权 K 线
-- `minute_1` / `minute_5` / `minute_15` / `minute_30` / `minute_60`：港股分钟线
+- `minute_1` / `minute_5` / `minute_60`：港股分钟线（XtQuant 原生支持 `1m` / `5m` / `1h`）
 - `adj_factor`：港股复权因子，由 XtQuant 日线推导
 
 港股 v1 当前不支持：
