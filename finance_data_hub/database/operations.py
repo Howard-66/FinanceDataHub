@@ -29,6 +29,25 @@ from finance_data_hub.utils.futures import (
     normalize_tushare_futures_symbol,
 )
 
+FUTURES_MINUTE_AGGREGATE_TABLES = {
+    "5m": "minute_5m",
+    "15m": "minute_15m",
+    "30m": "minute_30m",
+    "60m": "minute_60m",
+}
+
+
+def _normalize_futures_minute_frequency(frequency: str) -> str:
+    """Normalize futures minute frequency aliases to storage keys."""
+    normalized = str(frequency or "1m").strip().lower()
+    if normalized in {"minute", "minute_1", "1"}:
+        return "1m"
+    if normalized.startswith("minute_"):
+        normalized = f"{normalized.split('_', 1)[1]}m"
+    if normalized == "1h":
+        return "60m"
+    return normalized
+
 
 def _normalize_datetime_for_db(value, data_type="daily", market: Optional[str] = None):
     """
@@ -5460,13 +5479,26 @@ class DataOperations:
         )
 
     async def insert_futures_minute_batch(self, data: pd.DataFrame) -> int:
+        data = data.copy()
+        if "frequency" in data.columns:
+            normalized_frequency = data["frequency"].map(
+                _normalize_futures_minute_frequency
+            )
+            non_1m = normalized_frequency != "1m"
+            if non_1m.any():
+                logger.warning(
+                    f"Skipping {int(non_1m.sum())} non-1m futures minute rows; "
+                    "5m/15m/30m/60m are derived by continuous aggregates"
+                )
+                data = data.loc[~non_1m].copy()
+        if data.empty:
+            return 0
         return await self._insert_futures_dataframe(
-            "minute",
-            data.copy(),
+            "minute_1m",
+            data,
             [
                 "time",
                 "symbol",
-                "frequency",
                 "product_code",
                 "exchange",
                 "open",
@@ -5478,7 +5510,7 @@ class DataOperations:
                 "open_interest",
                 "source",
             ],
-            ["symbol", "time", "frequency"],
+            ["symbol", "time"],
             time_data_type="minute",
         )
 
@@ -5556,11 +5588,7 @@ class DataOperations:
             [
                 "time",
                 "product_code",
-                "exchange",
-                "receipt",
                 "inventory",
-                "warehouse",
-                "region",
                 "source",
             ],
             ["product_code", "time"],
@@ -5658,8 +5686,20 @@ class DataOperations:
             conditions.append("product_code = :product_code")
             params["product_code"] = product_code.upper()
         if frequency and table == "minute":
-            conditions.append("frequency = :frequency")
-            params["frequency"] = frequency
+            normalized_frequency = _normalize_futures_minute_frequency(frequency)
+            if normalized_frequency != "1m":
+                aggregate_table = FUTURES_MINUTE_AGGREGATE_TABLES.get(
+                    normalized_frequency
+                )
+                if not aggregate_table:
+                    raise ValueError(
+                        f"Unsupported futures minute frequency: {frequency}"
+                    )
+                table = aggregate_table
+            else:
+                table = "minute_1m"
+        elif table == "minute":
+            table = "minute_1m"
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         query = f"SELECT MAX(time) AS latest_date FROM futures.{table} {where_clause}"
@@ -5843,9 +5883,62 @@ class DataOperations:
         end_date: str,
         frequency: str = "1m",
     ) -> Optional[pd.DataFrame]:
-        return await self._query_futures_time_table(
-            "minute", symbols, None, start_date, end_date, frequency
+        normalized_frequency = _normalize_futures_minute_frequency(frequency)
+        table = (
+            "minute_1m"
+            if normalized_frequency == "1m"
+            else FUTURES_MINUTE_AGGREGATE_TABLES.get(normalized_frequency)
         )
+        if not table:
+            raise ValueError(f"Unsupported futures minute frequency: {frequency}")
+
+        params: Dict[str, Any] = {}
+        conditions = []
+        if symbols:
+            conditions.append("symbol = ANY(:symbols)")
+            params["symbols"] = [
+                normalize_tushare_futures_symbol(symbol) for symbol in symbols
+            ]
+        if start_date:
+            conditions.append("time >= :start_date")
+            params["start_date"] = _normalize_datetime_for_db(start_date, "minute")
+        if end_date:
+            conditions.append("time <= :end_date")
+            params["end_date"] = _normalize_datetime_for_db(
+                end_date + " 23:59:59",
+                "minute",
+            )
+        if not conditions:
+            return None
+
+        frequency_select = (
+            "frequency"
+            if normalized_frequency != "1m"
+            else "'1m'::VARCHAR(8) AS frequency"
+        )
+        query = f"""
+            SELECT
+                time,
+                symbol,
+                {frequency_select},
+                product_code,
+                exchange,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                amount,
+                open_interest,
+                source
+            FROM futures.{table}
+            WHERE {' AND '.join(conditions)}
+            ORDER BY time, symbol
+        """
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+        return pd.DataFrame([row._asdict() for row in rows]) if rows else None
 
     async def get_futures_spot_basis(
         self,

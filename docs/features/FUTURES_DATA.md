@@ -89,13 +89,19 @@ FinanceDataHub 内部统一保存规范交易所代码：
 SQL 初始化文件：
 
 - [sql/init/008_create_futures_schema.sql](/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/sql/init/008_create_futures_schema.sql:1)
+- [sql/init/009_create_futures_minute_aggregates.sql](/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/sql/init/009_create_futures_minute_aggregates.sql:1)
 
 `futures` schema 当前包含：
 
 - 普通表：`contract_basic`
 - Hypertable：`contract_mapping`
 - Hypertable：`daily`
-- Hypertable：`minute`
+- Hypertable：`minute_1m`（1 分钟原始数据）
+- Continuous Aggregate：`minute_5m`
+- Continuous Aggregate：`minute_15m`
+- Continuous Aggregate：`minute_30m`
+- Continuous Aggregate：`minute_60m`
+- Legacy Hypertable：`minute`（旧版带 `frequency` 的分钟表，保留用于迁移兼容）
 - Hypertable：`settle`
 - Hypertable：`index_daily`
 - Hypertable：`spot_basis`
@@ -105,6 +111,8 @@ SQL 初始化文件：
 - Hypertable：`roll_yield`
 
 交易日历继续复用 `public.trade_cal`，并已支持 `GFEX` 增量写入。
+
+`inventory_receipt` 当前按品种和日期保存聚合库存，仅保留 `time`、`product_code`、`inventory`、`source`；交易所、仓库、地区等明细字段不再作为表结构字段。
 
 ## Provider 实现
 
@@ -135,13 +143,13 @@ SQL 初始化文件：
 已接入：
 
 - 期货日线
-- 1m/5m/1h 分钟线
+- 1m 分钟线原始下载
 
 调用方式：
 
 - 通过现有 `xtquant_helper` HTTP API
 - 使用 `/download_history_data` 和 `/get_local_data`
-- CLI/SDK 内部频率使用 `1m`、`5m`、`60m`，其中 `60m` 映射到 XtQuant 原生 `1h`
+- CLI/SDK 内部原始下载只写入 `1m`。`5m`、`15m`、`30m`、`60m` 由 TimescaleDB continuous aggregate 从 `minute_1m` 派生
 
 ### AKShare
 
@@ -159,6 +167,7 @@ SQL 初始化文件：
 - 基差统一按 `spot_price - futures_price` 重算
 - `get_receipt` 按 5 天窗口切片调用
 - `futures_inventory_99` 作为历史初始化补充来源
+- 库存表保存品种日期级聚合值，`get_receipt` 的 `receipt` 数值会归一到 `inventory`
 
 ## 预处理逻辑
 
@@ -195,8 +204,10 @@ fdh-cli update --asset-class future --dataset daily --symbols all --start-date 2
 fdh-cli update --asset-class future --dataset mapping --symbols RB.SHF --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset daily --symbols RB2405.SHF --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset minute_1 --symbols rb2405.SF --start-date 2024-04-30 09:30:00 --end-date 2024-04-30 10:00:00
-fdh-cli update --asset-class future --dataset minute_5 --symbols rb2405.SF --start-date 2024-04-30 09:30:00 --end-date 2024-04-30 10:30:00
-fdh-cli update --asset-class future --dataset minute_60 --symbols rb2405.SF --start-date 2024-04-30 09:00:00 --end-date 2024-04-30 15:00:00
+fdh-cli refresh-aggregates futures.minute_5m --start 2024-04-30 --end 2024-05-01
+fdh-cli refresh-aggregates futures.minute_15m --start 2024-04-30 --end 2024-05-01
+fdh-cli refresh-aggregates futures.minute_30m --start 2024-04-30 --end 2024-05-01
+fdh-cli refresh-aggregates futures.minute_60m --start 2024-04-30 --end 2024-05-01
 fdh-cli update --asset-class future --dataset settle --symbols RB2405.SHF --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset index_daily --symbols NHCI.NH --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset spot_basis --symbols RB --trade-date 2024-04-30
@@ -210,7 +221,7 @@ fdh-cli update --asset-class future --dataset term_structure --symbols RB --star
 - `--symbols` 对于 `spot_basis`、`inventory`、预处理场景可直接传品种代码，例如 `RB`
 - `--symbols all` 已支持，用于按 `futures.contract_basic` 展开全量合约池
 - 输入 `rb2405.SF` 这类 XtQuant 风格代码时，会自动转换到内部标准格式
-- XtQuant 分钟线当前只支持 `minute_1`、`minute_5`、`minute_60`
+- 期货分钟线只下载 `minute_1` 原始数据。`minute_5`、`minute_15`、`minute_30`、`minute_60` 为连续聚合查询结果，不再调用 Provider 下载
 
 `--symbols all` 的当前定义：
 
@@ -253,6 +264,7 @@ fdh = FinanceDataHub(get_settings())
 contracts = fdh.get_futures_contracts(product_codes=["RB"])
 daily = fdh.get_futures_daily(symbols=["RB2405.SHF"], start_date="2024-04-30", end_date="2024-04-30")
 minute = fdh.get_futures_minute(symbols=["rb2405.SF"], start_date="2024-04-30 09:30:00", end_date="2024-04-30 10:00:00", frequency="1m")
+minute_15 = fdh.get_futures_minute(symbols=["rb2405.SF"], start_date="2024-04-30 09:30:00", end_date="2024-04-30 15:00:00", frequency="15m")
 basis = fdh.get_futures_spot_basis(product_codes=["RB"], start_date="2024-04-30", end_date="2024-04-30")
 inventory = fdh.get_futures_inventory(product_codes=["RB"], start_date="2024-04-30", end_date="2024-04-30")
 ```

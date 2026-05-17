@@ -210,15 +210,11 @@ SELECT create_hypertable(
     chunk_time_interval => INTERVAL '5 years'
 );
 
--- 注册仓单
+-- 库存
 CREATE TABLE IF NOT EXISTS futures.inventory_receipt (
     time TIMESTAMPTZ NOT NULL,
     product_code VARCHAR(16) NOT NULL,
-    exchange VARCHAR(16),
-    receipt DECIMAL(30,6),
     inventory DECIMAL(30,6),
-    warehouse VARCHAR(128),
-    region VARCHAR(128),
     source VARCHAR(32) DEFAULT 'akshare',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -300,4 +296,3 @@ SELECT create_hypertable(
     if_not_exists => TRUE,
     chunk_time_interval => INTERVAL '5 years'
 );
-

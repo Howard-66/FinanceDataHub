@@ -123,6 +123,17 @@ class TestDataSourceConfig:
         config = DataSourceConfig(xtquant_api_url=url)
         assert config.xtquant_api_url == url
 
+    def test_futures_minute_max_workers_default_and_validation(self):
+        """测试期货分钟下载并发默认值和范围限制。"""
+        config = DataSourceConfig()
+        assert config.futures_minute_max_workers == 4
+
+        config = DataSourceConfig(futures_minute_max_workers=8)
+        assert config.futures_minute_max_workers == 8
+
+        with pytest.raises(ValidationError):
+            DataSourceConfig(futures_minute_max_workers=0)
+
 
 class TestLoggingConfig:
     """测试日志配置"""

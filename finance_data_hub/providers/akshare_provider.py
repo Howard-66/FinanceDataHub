@@ -40,6 +40,27 @@ def _find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     return None
 
 
+def _inventory_symbol_candidates(product: str, symbol: str) -> List[str]:
+    """Return likely 99qh inventory identifiers for a futures product."""
+    raw_values = [symbol, product, str(product).lower(), str(product).upper()]
+    symbol_text = str(symbol or "").strip()
+    for suffix in ("主力", "连续"):
+        if symbol_text.endswith(suffix):
+            raw_values.append(symbol_text[: -len(suffix)])
+
+    candidates: List[str] = []
+    for value in raw_values:
+        cleaned = str(value or "").strip()
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+    return candidates
+
+
+def _is_akshare_empty_inventory_error(error_msg: str) -> bool:
+    """Return True for AKShare inventory responses that represent empty source data."""
+    return "Length mismatch" in error_msg and "new values have 3 elements" in error_msg
+
+
 @register_provider("akshare")
 class AKShareProvider(BaseDataProvider):
     """AKShare data provider for futures spot basis and inventory receipt data."""
@@ -141,6 +162,20 @@ class AKShareProvider(BaseDataProvider):
                 return func(*args, **kwargs)
             except Exception as exc:
                 last_error = exc
+                error_msg = str(exc)
+                if "未找到品种" in error_msg and "对应的编号" in error_msg:
+                    raise ProviderDataError(
+                        f"AKShare call {func.__name__} unsupported product: {exc}",
+                        provider_name=self.name,
+                    ) from exc
+                if (
+                    func.__name__ == "futures_inventory_99"
+                    and _is_akshare_empty_inventory_error(error_msg)
+                ):
+                    raise ProviderDataError(
+                        f"AKShare call {func.__name__} empty inventory data: {exc}",
+                        provider_name=self.name,
+                    ) from exc
                 if attempt >= self.max_retry:
                     break
                 wait_time = self.retry_delay * (attempt + 1)
@@ -252,12 +287,13 @@ class AKShareProvider(BaseDataProvider):
                 provider_name=self.name,
             )
 
-        df = self._call_akshare(
-            ak.futures_spot_price_daily,
-            start_day=_clean_ak_date(start_date),
-            end_day=_clean_ak_date(end_date),
-            vars_list=products,
-        )
+        kwargs = {
+            "start_day": _clean_ak_date(start_date),
+            "end_day": _clean_ak_date(end_date),
+        }
+        if products:
+            kwargs["vars_list"] = products
+        df = self._call_akshare(ak.futures_spot_price_daily, **kwargs)
         return self._normalize_spot_basis(df)
 
     def _normalize_receipt(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -270,12 +306,8 @@ class AKShareProvider(BaseDataProvider):
             "date": "time",
             "var": "product_code",
             "symbol": "product_code",
-            "receipt": "receipt",
             "inventory": "inventory",
             "库存": "inventory",
-            "warehouse": "warehouse",
-            "area": "region",
-            "region": "region",
         }
         df = convert_to_standard_columns(df, column_mapping)
 
@@ -287,44 +319,28 @@ class AKShareProvider(BaseDataProvider):
             product_col = _find_column(df, ["品种", "var", "symbol"])
             if product_col:
                 df = df.rename(columns={product_col: "product_code"})
-        if "receipt" not in df.columns:
-            receipt_col = _find_column(df, ["仓单", "注册仓单", "receipt"])
-            if receipt_col:
-                df = df.rename(columns={receipt_col: "receipt"})
+        if "inventory" not in df.columns:
+            inventory_col = _find_column(df, ["库存", "仓单", "注册仓单", "receipt"])
+            if inventory_col:
+                df = df.rename(columns={inventory_col: "inventory"})
 
         df["time"] = pd.to_datetime(df["time"], errors="coerce")
         df["product_code"] = df["product_code"].astype(str).str.upper()
-        df["receipt"] = pd.to_numeric(df.get("receipt"), errors="coerce")
         if "inventory" in df.columns:
             df["inventory"] = pd.to_numeric(df["inventory"], errors="coerce")
         else:
             df["inventory"] = None
-        df["exchange"] = df.get("exchange", pd.Series([None] * len(df))).map(
-            normalize_futures_exchange
-        )
         df["source"] = "akshare"
 
-        # Store product/date aggregate rows in V1.
+        # Inventory is persisted as product/date aggregate rows.
         grouped = (
             df.groupby(["time", "product_code"], dropna=False)
             .agg(
-                exchange=("exchange", "first"),
-                receipt=("receipt", "sum"),
                 inventory=("inventory", "sum"),
-                warehouse=("warehouse", "first") if "warehouse" in df.columns else ("product_code", "first"),
-                region=("region", "first") if "region" in df.columns else ("product_code", "first"),
                 source=("source", "first"),
             )
             .reset_index()
         )
-        if "warehouse" in grouped.columns:
-            grouped["warehouse"] = grouped["warehouse"].where(
-                grouped["warehouse"].ne(grouped["product_code"])
-            )
-        if "region" in grouped.columns:
-            grouped["region"] = grouped["region"].where(
-                grouped["region"].ne(grouped["product_code"])
-            )
 
         return validate_dataframe(
             grouped,
@@ -350,10 +366,24 @@ class AKShareProvider(BaseDataProvider):
                 )
             frames = []
             for product, name in product_names.items():
-                df = self._call_akshare(
-                    ak.futures_inventory_99,
-                    symbol=name,
-                )
+                df = None
+                last_unsupported_error: Optional[ProviderDataError] = None
+                for candidate in _inventory_symbol_candidates(product, name):
+                    try:
+                        df = self._call_akshare(
+                            ak.futures_inventory_99,
+                            symbol=candidate,
+                        )
+                        break
+                    except ProviderDataError as exc:
+                        last_unsupported_error = exc
+                        continue
+                if df is None:
+                    logger.warning(
+                        f"Skipping futures inventory history for unsupported "
+                        f"product {product} ({name}): {last_unsupported_error}"
+                    )
+                    continue
                 if df is not None and not df.empty:
                     df["product_code"] = product
                     frames.append(df)
@@ -372,12 +402,13 @@ class AKShareProvider(BaseDataProvider):
         final = datetime.strptime(end_date, "%Y-%m-%d")
         while current <= final:
             window_end = min(current + timedelta(days=4), final)
-            df = self._call_akshare(
-                ak.get_receipt,
-                start_date=current.strftime("%Y%m%d"),
-                end_date=window_end.strftime("%Y%m%d"),
-                vars_list=products,
-            )
+            kwargs = {
+                "start_date": current.strftime("%Y%m%d"),
+                "end_date": window_end.strftime("%Y%m%d"),
+            }
+            if products:
+                kwargs["vars_list"] = products
+            df = self._call_akshare(ak.get_receipt, **kwargs)
             if df is not None and not df.empty:
                 frames.append(df)
             current = window_end + timedelta(days=1)

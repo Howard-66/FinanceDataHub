@@ -30,6 +30,10 @@ def test_futures_symbol_conversion():
     assert to_xtquant_futures_symbol("ZNL.SHF") == "znL0.SF"
 
 
+def test_xtquant_symbol_conversion_handles_invalid_main_symbol():
+    assert to_xtquant_futures_symbol("00.SHF") is None
+
+
 def test_futures_contract_metadata_parsing():
     assert extract_futures_product_code("RB2405.SHF") == "RB"
     assert extract_futures_product_code("RBL.SHF") == "RB"
@@ -45,4 +49,3 @@ def test_extract_quote_unit_value():
     assert extract_quote_unit_value("0.5人民币元/吨", "人民币元/吨") == 0.5
     assert extract_quote_unit_value("10 元/吨") == 10.0
     assert extract_quote_unit_value("人民币元/吨") is None
-

@@ -4,7 +4,9 @@
 集成Provider、Router和数据库操作，实现完整的数据更新流程。
 """
 
-from typing import List, Optional, Dict, Any, Union
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Optional, Dict, Any, Union, Iterator, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
@@ -26,6 +28,10 @@ from finance_data_hub.providers.tushare import (
 )
 from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
 from finance_data_hub.utils.futures import extract_futures_product_code
+
+FUTURES_SPOT_BASIS_HISTORY_START = "2011-01-04"
+FUTURES_SPOT_BASIS_CHUNK_DAYS = 31
+FUTURES_INVENTORY_SUPPORTED_EXCHANGES = {"DCE", "CZCE", "SHFE", "GFEX"}
 
 
 def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
@@ -105,6 +111,22 @@ def _dedupe_preserve_order(values: List[str]) -> List[str]:
     return deduped
 
 
+def _iter_date_chunks(
+    start_date: str,
+    end_date: str,
+    max_days: int,
+) -> Iterator[Tuple[str, str]]:
+    """Yield inclusive date chunks from start to end in ascending order."""
+    if max_days < 1:
+        raise ValueError("max_days must be >= 1")
+    current = datetime.strptime(start_date, "%Y-%m-%d")
+    final = datetime.strptime(end_date, "%Y-%m-%d")
+    while current <= final:
+        chunk_end = min(current + timedelta(days=max_days - 1), final)
+        yield current.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")
+        current = chunk_end + timedelta(days=1)
+
+
 class DataUpdater:
     """数据更新器"""
 
@@ -127,6 +149,21 @@ class DataUpdater:
         self.router: Optional[SmartRouter] = None
         self.db_manager: Optional[DatabaseManager] = None
         self.data_ops: Optional[DataOperations] = None
+
+    def _get_futures_minute_max_workers(self, symbol_count: int) -> int:
+        """Return bounded worker count for futures minute downloads."""
+        data_source_config = getattr(self.settings, "data_source", None)
+        configured_workers = getattr(
+            data_source_config, "futures_minute_max_workers", 4
+        )
+        try:
+            workers = int(configured_workers)
+        except (TypeError, ValueError):
+            workers = 4
+        workers = max(1, workers)
+        if symbol_count > 0:
+            workers = min(workers, symbol_count)
+        return workers
 
     async def initialize(self) -> None:
         """初始化所有组件"""
@@ -2639,6 +2676,12 @@ class DataUpdater:
         progress_callback: Optional[callable] = None,
     ) -> int:
         """更新期货分钟行情。"""
+        if freq != "1m":
+            logger.info(
+                f"Futures minute {freq} is derived from 1m continuous aggregates; "
+                "skip provider download"
+            )
+            return 0
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
         explicit_all = _is_all_futures_selector(symbols)
@@ -2657,29 +2700,75 @@ class DataUpdater:
             logger.warning("No futures symbols found for minute update")
             return 0
 
+        max_workers = self._get_futures_minute_max_workers(len(symbols))
+        logger.info(
+            f"Updating futures minute data for {len(symbols)} symbols "
+            f"(freq={freq}, max_workers={max_workers})"
+        )
+
+        loop = asyncio.get_running_loop()
+        semaphore = asyncio.Semaphore(max_workers)
+        progress_lock = asyncio.Lock()
+        completed = 0
+
+        async def report_progress() -> None:
+            nonlocal completed
+            if not progress_callback:
+                return
+            async with progress_lock:
+                completed += 1
+                progress_callback(completed, len(symbols))
+
+        async def update_one_symbol(
+            symbol: str, executor: ThreadPoolExecutor
+        ) -> int:
+            try:
+                async with semaphore:
+                    latest = await self.data_ops.get_latest_futures_date(
+                        "minute", symbol=symbol, frequency=freq
+                    )
+                    actual_start = self._incremental_start(
+                        latest, start_date, force_update
+                    )
+                    if actual_start and end_date and actual_start > end_date:
+                        return 0
+
+                    try:
+                        data = await loop.run_in_executor(
+                            executor,
+                            lambda: self.router.route(
+                                asset_class="future",
+                                data_type="minute",
+                                freq=freq,
+                                method_name="get_futures_minute",
+                                symbol=symbol,
+                                start_date=actual_start,
+                                end_date=end_date,
+                            ),
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            f"Skipping futures minute symbol {symbol} "
+                            f"(freq={freq}) after download failure: {exc}"
+                        )
+                        return 0
+
+                    if data is not None and not data.empty:
+                        return await self.data_ops.insert_futures_minute_batch(data)
+                    return 0
+            finally:
+                await report_progress()
+
         total = 0
-        for idx, symbol in enumerate(symbols):
-            latest = await self.data_ops.get_latest_futures_date(
-                "minute", symbol=symbol, frequency=freq
-            )
-            actual_start = self._incremental_start(latest, start_date, force_update)
-            if actual_start and end_date and actual_start > end_date:
-                if progress_callback:
-                    progress_callback(idx + 1, len(symbols))
-                continue
-            data = self.router.route(
-                asset_class="future",
-                data_type="minute",
-                freq=freq,
-                method_name="get_futures_minute",
-                symbol=symbol,
-                start_date=actual_start,
-                end_date=end_date,
-            )
-            if data is not None and not data.empty:
-                total += await self.data_ops.insert_futures_minute_batch(data)
-            if progress_callback:
-                progress_callback(idx + 1, len(symbols))
+        with ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="futures-minute"
+        ) as executor:
+            tasks = [
+                asyncio.create_task(update_one_symbol(symbol, executor))
+                for symbol in symbols
+            ]
+            results = await asyncio.gather(*tasks)
+        total = sum(results)
         return total
 
     async def update_futures_settle(
@@ -2794,45 +2883,49 @@ class DataUpdater:
             )
             return await self.data_ops.insert_futures_spot_basis_batch(data)
 
-        latest = await self.data_ops.get_latest_futures_date("spot_basis")
-        actual_start = self._incremental_start(latest, start_date, force_update)
-        used_default_single_day = False
-        if not actual_start:
-            actual_start = end_date
-            used_default_single_day = start_date is None
-        data = self.router.route(
-            asset_class="future",
-            data_type="spot_basis",
-            method_name="get_futures_spot_basis",
-            products=product_codes,
-            start_date=actual_start,
-            end_date=end_date,
+        if start_date:
+            actual_start = start_date
+        elif force_update:
+            actual_start = FUTURES_SPOT_BASIS_HISTORY_START
+        else:
+            latest = await self.data_ops.get_latest_futures_date("spot_basis")
+            actual_start = (
+                (datetime.strptime(latest, "%Y-%m-%d") + timedelta(days=1)).strftime(
+                    "%Y-%m-%d"
+                )
+                if latest
+                else FUTURES_SPOT_BASIS_HISTORY_START
+            )
+
+        if actual_start and end_date and actual_start > end_date:
+            return 0
+
+        chunks = list(
+            _iter_date_chunks(
+                actual_start,
+                end_date,
+                FUTURES_SPOT_BASIS_CHUNK_DAYS,
+            )
         )
+        if len(chunks) > 1:
+            logger.info(
+                f"Updating futures spot basis in {len(chunks)} chunks "
+                f"from {actual_start} to {end_date}"
+            )
 
-        # AKShare 在非交易日会直接返回空表。对于“未显式指定日期”的默认单日拉取，
-        # 自动向前回退到最近一个有数据的交易日，避免周末/节假日更新 0 条。
-        if used_default_single_day and (data is None or data.empty) and actual_start == end_date:
-            fallback_cursor = datetime.strptime(end_date, "%Y-%m-%d")
-            for _ in range(7):
-                fallback_cursor -= timedelta(days=1)
-                fallback_date = fallback_cursor.strftime("%Y-%m-%d")
-                logger.info(
-                    "No futures spot basis data for %s, fallback to previous day %s",
-                    end_date,
-                    fallback_date,
-                )
-                data = self.router.route(
-                    asset_class="future",
-                    data_type="spot_basis",
-                    method_name="get_futures_spot_basis",
-                    products=product_codes,
-                    start_date=fallback_date,
-                    end_date=fallback_date,
-                )
-                if data is not None and not data.empty:
-                    break
-
-        return await self.data_ops.insert_futures_spot_basis_batch(data)
+        total = 0
+        for chunk_start, chunk_end in chunks:
+            data = self.router.route(
+                asset_class="future",
+                data_type="spot_basis",
+                method_name="get_futures_spot_basis",
+                products=product_codes,
+                start_date=chunk_start,
+                end_date=chunk_end,
+            )
+            if data is not None and not data.empty:
+                total += await self.data_ops.insert_futures_spot_basis_batch(data)
+        return total
 
     async def update_futures_inventory(
         self,
@@ -2854,12 +2947,35 @@ class DataUpdater:
         if use_history:
             contracts = await self.data_ops.get_futures_contracts(product_codes=product_codes)
             if contracts is not None and not contracts.empty:
+                supported_contracts = contracts[
+                    contracts["exchange"].isin(FUTURES_INVENTORY_SUPPORTED_EXCHANGES)
+                ]
+                skipped_products = sorted(
+                    set(contracts["product_code"].dropna().astype(str).str.upper())
+                    - set(
+                        supported_contracts["product_code"]
+                        .dropna()
+                        .astype(str)
+                        .str.upper()
+                    )
+                )
+                if skipped_products:
+                    logger.info(
+                        "Skipping futures inventory products on unsupported "
+                        f"exchanges: {skipped_products}"
+                    )
                 product_names = (
-                    contracts.dropna(subset=["product_code", "name"])
+                    supported_contracts.dropna(subset=["product_code"])
                     .drop_duplicates("product_code")
-                    .set_index("product_code")["name"]
+                    .assign(inventory_symbol=lambda df: df["product_code"])
+                    .set_index("product_code")["inventory_symbol"]
                     .to_dict()
                 )
+                if not product_names:
+                    logger.warning(
+                        "No futures inventory-supported products found "
+                        f"(supported exchanges: {sorted(FUTURES_INVENTORY_SUPPORTED_EXCHANGES)})"
+                    )
 
         if not actual_start and not use_history:
             actual_start = end_date

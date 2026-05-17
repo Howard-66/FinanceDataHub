@@ -133,7 +133,7 @@ def update(
         None,
         "--dataset",
         "-d",
-        help="数据类型 (daily, minute_1, minute_5, daily_basic, adj_factor, basic, gdp)。"
+        help="数据类型 (daily, minute_1, minute_5, minute_15, minute_30, minute_60, daily_basic, adj_factor, basic, gdp)。"
              "取代 --frequency 参数，提供更准确的描述。"
     ),
     frequency: Optional[str] = typer.Option(
@@ -201,6 +201,9 @@ def update(
       - daily: 日线行情数据
       - minute_1: 1分钟线数据
       - minute_5: 5分钟线数据
+      - minute_15: 15分钟线数据
+      - minute_30: 30分钟线数据
+      - minute_60: 60分钟线数据
       - daily_basic: 每日基本面数据
       - adj_factor: 复权因子数据
       - basic: 股票基本信息（非时间序列，强制全量更新）
@@ -365,6 +368,8 @@ FUTURE_DATASETS = {
     "minute",
     "minute_1",
     "minute_5",
+    "minute_15",
+    "minute_30",
     "minute_60",
     "settle",
     "index_daily",
@@ -468,10 +473,12 @@ async def _run_future_update(
         "minute": "1m",
         "minute_1": "1m",
         "minute_5": "5m",
+        "minute_15": "15m",
+        "minute_30": "30m",
         "minute_60": "60m",
     }
     task_total = len(symbol_list) if symbol_list else 1
-    if data_type in {"daily", "minute", "minute_1", "minute_5", "minute_60", "settle", "mapping"} and symbol_list:
+    if data_type in {"daily", "minute", "minute_1", "minute_5", "minute_15", "minute_30", "minute_60", "settle", "mapping"} and symbol_list:
         task_total = len(symbol_list)
 
     if not quiet:
@@ -2896,6 +2903,10 @@ def config_show(
         table.add_row("  Tushare Token", tushare_display)
         table.add_row("  XTQuant API URL", settings.data_source.xtquant_api_url)
         table.add_row("  Sources Config", settings.data_source.sources_config_path)
+        table.add_row(
+            "  期货分钟下载并发",
+            str(settings.data_source.futures_minute_max_workers),
+        )
 
         # ETL 配置
         table.add_row("", "")

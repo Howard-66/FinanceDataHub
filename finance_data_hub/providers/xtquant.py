@@ -804,6 +804,11 @@ class XTQuantProvider(BaseDataProvider):
         for raw_symbol in symbols:
             canonical_symbol = normalize_tushare_futures_symbol(raw_symbol)
             xt_symbol = to_xtquant_futures_symbol(canonical_symbol)
+            if not xt_symbol:
+                raise ProviderDataError(
+                    f"Invalid XTQuant futures symbol: {raw_symbol}",
+                    provider_name=self.name,
+                )
             self._call_api(
                 "/download_history_data",
                 {

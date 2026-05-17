@@ -140,7 +140,10 @@ def to_xtquant_futures_symbol(
             code_lower = code_lower[:-1]
         code_lower = f"{code_lower}L0"
     elif inferred_type == "main":
-        code_lower = f"{extract_futures_product_code(raw).lower()}00"
+        product_code = extract_futures_product_code(raw)
+        if not product_code:
+            return None
+        code_lower = f"{product_code.lower()}00"
 
     return f"{code_lower}.{xt_exchange}"
 

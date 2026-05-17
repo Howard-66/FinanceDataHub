@@ -129,6 +129,14 @@ class DataSourceConfig(BaseSettings):
         env="SOURCES_CONFIG_PATH"
     )
 
+    futures_minute_max_workers: int = Field(
+        default=4,
+        ge=1,
+        le=32,
+        description="期货分钟数据下载最大线程并发数",
+        env="FUTURES_MINUTE_MAX_WORKERS",
+    )
+
 
 class LoggingConfig(BaseSettings):
     """日志配置"""

@@ -1147,15 +1147,11 @@ FuturesSpotBasisSchema = DataFrameSchema(
 
 FuturesInventoryReceiptSchema = DataFrameSchema(
     name="futures_inventory_receipt",
-    description="期货注册仓单",
+    description="期货库存",
     columns=[
         ColumnSchema("time", "datetime64[ns]", False, "日期"),
         ColumnSchema("product_code", "object", False, "品种代码"),
-        ColumnSchema("exchange", "object", True, "交易所代码"),
-        ColumnSchema("receipt", "float64", True, "仓单"),
         ColumnSchema("inventory", "float64", True, "库存"),
-        ColumnSchema("warehouse", "object", True, "仓库"),
-        ColumnSchema("region", "object", True, "地区"),
         ColumnSchema("source", "object", True, "数据源"),
     ],
 )
