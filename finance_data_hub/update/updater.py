@@ -2676,6 +2676,15 @@ class DataUpdater:
         progress_callback: Optional[callable] = None,
     ) -> int:
         """更新期货分钟行情。"""
+        self.last_futures_minute_summary: Dict[str, Any] = {
+            "total_symbols": 0,
+            "attempted_symbols": 0,
+            "inserted_symbols": 0,
+            "empty_symbols": 0,
+            "up_to_date_symbols": 0,
+            "failed_symbols": [],
+            "inserted_records": 0,
+        }
         if freq != "1m":
             logger.info(
                 f"Futures minute {freq} is derived from 1m continuous aggregates; "
@@ -2699,6 +2708,7 @@ class DataUpdater:
         if not symbols:
             logger.warning("No futures symbols found for minute update")
             return 0
+        self.last_futures_minute_summary["total_symbols"] = len(symbols)
 
         max_workers = self._get_futures_minute_max_workers(len(symbols))
         logger.info(
@@ -2721,7 +2731,7 @@ class DataUpdater:
 
         async def update_one_symbol(
             symbol: str, executor: ThreadPoolExecutor
-        ) -> int:
+        ) -> Dict[str, Any]:
             try:
                 async with semaphore:
                     latest = await self.data_ops.get_latest_futures_date(
@@ -2731,7 +2741,7 @@ class DataUpdater:
                         latest, start_date, force_update
                     )
                     if actual_start and end_date and actual_start > end_date:
-                        return 0
+                        return {"symbol": symbol, "status": "up_to_date", "records": 0}
 
                     try:
                         data = await loop.run_in_executor(
@@ -2744,6 +2754,7 @@ class DataUpdater:
                                 symbol=symbol,
                                 start_date=actual_start,
                                 end_date=end_date,
+                                wait_for_circuit_breaker=True,
                             ),
                         )
                     except Exception as exc:
@@ -2751,11 +2762,21 @@ class DataUpdater:
                             f"Skipping futures minute symbol {symbol} "
                             f"(freq={freq}) after download failure: {exc}"
                         )
-                        return 0
+                        return {
+                            "symbol": symbol,
+                            "status": "failed",
+                            "records": 0,
+                            "error": str(exc),
+                        }
 
                     if data is not None and not data.empty:
-                        return await self.data_ops.insert_futures_minute_batch(data)
-                    return 0
+                        inserted = await self.data_ops.insert_futures_minute_batch(data)
+                        return {
+                            "symbol": symbol,
+                            "status": "inserted",
+                            "records": inserted,
+                        }
+                    return {"symbol": symbol, "status": "empty", "records": 0}
             finally:
                 await report_progress()
 
@@ -2768,7 +2789,39 @@ class DataUpdater:
                 for symbol in symbols
             ]
             results = await asyncio.gather(*tasks)
-        total = sum(results)
+        total = sum(int(result.get("records", 0)) for result in results)
+        failed_symbols = [
+            {
+                "symbol": result["symbol"],
+                "error": result.get("error", "unknown error"),
+            }
+            for result in results
+            if result.get("status") == "failed"
+        ]
+        self.last_futures_minute_summary = {
+            "total_symbols": len(symbols),
+            "attempted_symbols": sum(
+                1 for result in results if result.get("status") != "up_to_date"
+            ),
+            "inserted_symbols": sum(
+                1 for result in results if result.get("status") == "inserted"
+            ),
+            "empty_symbols": sum(
+                1 for result in results if result.get("status") == "empty"
+            ),
+            "up_to_date_symbols": sum(
+                1 for result in results if result.get("status") == "up_to_date"
+            ),
+            "failed_symbols": failed_symbols,
+            "inserted_records": total,
+        }
+        if failed_symbols:
+            sample = ", ".join(item["symbol"] for item in failed_symbols[:10])
+            suffix = "..." if len(failed_symbols) > 10 else ""
+            logger.warning(
+                f"Futures minute update completed with {len(failed_symbols)} "
+                f"failed symbols out of {len(symbols)}: {sample}{suffix}"
+            )
         return total
 
     async def update_futures_settle(

@@ -268,7 +268,20 @@ def test_update_futures_minute_uses_bounded_parallel_downloads():
         assert inserted == 3
         assert max_seen == 2
         assert updater.router.route.call_count == 3
+        assert all(
+            call.kwargs["wait_for_circuit_breaker"]
+            for call in updater.router.route.call_args_list
+        )
         assert updater.data_ops.insert_futures_minute_batch.await_count == 3
+        assert updater.last_futures_minute_summary == {
+            "total_symbols": 3,
+            "attempted_symbols": 3,
+            "inserted_symbols": 3,
+            "empty_symbols": 0,
+            "up_to_date_symbols": 0,
+            "failed_symbols": [],
+            "inserted_records": 3,
+        }
 
     asyncio.run(_run())
 
@@ -291,6 +304,7 @@ def test_update_futures_minute_derived_frequency_skips_provider_download():
 
         assert inserted == 0
         updater.router.route.assert_not_called()
+        assert updater.last_futures_minute_summary["total_symbols"] == 0
 
     asyncio.run(_run())
 
@@ -322,6 +336,7 @@ def test_update_futures_minute_skips_symbols_without_download_when_up_to_date():
         updater.router.route.assert_not_called()
         updater.data_ops.insert_futures_minute_batch.assert_not_called()
         assert progress == [(1, 2), (2, 2)]
+        assert updater.last_futures_minute_summary["up_to_date_symbols"] == 2
 
     asyncio.run(_run())
 
@@ -363,6 +378,14 @@ def test_update_futures_minute_skips_failed_symbol_and_continues():
         assert updater.router.route.call_count == 3
         assert updater.data_ops.insert_futures_minute_batch.await_count == 2
         assert progress[-1] == (3, 3)
+        assert updater.last_futures_minute_summary["total_symbols"] == 3
+        assert updater.last_futures_minute_summary["inserted_symbols"] == 2
+        assert updater.last_futures_minute_summary["failed_symbols"] == [
+            {
+                "symbol": "BAD.SHF",
+                "error": "'NoneType' object has no attribute 'lower'",
+            }
+        ]
 
     asyncio.run(_run())
 

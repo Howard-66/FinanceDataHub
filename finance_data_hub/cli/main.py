@@ -326,15 +326,25 @@ def update(
                 console.print(f"[cyan]交易日:[/cyan] {trade_date}")
 
         # 执行更新流程
-        asyncio.run(_run_update(
+        update_result = asyncio.run(_run_update(
             settings, asset_class, data_type, symbols,
             start_date, end_date, adj, force, trade_date, market, verbose, quiet
         ))
+        partial_failure = (
+            isinstance(update_result, dict)
+            and update_result.get("partial_failure", False)
+        )
 
         if not quiet:
-            console.print("\n[bold green][OK][/bold green] 数据更新完成")
+            if partial_failure:
+                console.print("\n[bold yellow][PARTIAL][/bold yellow] 数据更新完成（有失败合约）")
+            else:
+                console.print("\n[bold green][OK][/bold green] 数据更新完成")
         else:
-            console.print("[bold green][OK][/bold green] 数据更新完成")
+            if partial_failure:
+                console.print("[bold yellow][PARTIAL][/bold yellow] 数据更新完成（有失败合约）")
+            else:
+                console.print("[bold green][OK][/bold green] 数据更新完成")
 
     except Exception as e:
         console.print(f"[bold red]ERROR:[/bold red] {str(e)}")
@@ -510,6 +520,7 @@ async def _run_future_update(
                 progress.update(task, completed=current, total=total)
 
             try:
+                minute_summary = None
                 if data_type == "basic":
                     count = await updater.update_futures_basic()
                 elif data_type == "mapping":
@@ -538,6 +549,9 @@ async def _run_future_update(
                         freq=freq_map.get(data_type, "1m"),
                         force_update=force,
                         progress_callback=progress_callback,
+                    )
+                    minute_summary = getattr(
+                        updater, "last_futures_minute_summary", None
                     )
                 elif data_type == "settle":
                     count = await updater.update_futures_settle(
@@ -578,8 +592,37 @@ async def _run_future_update(
                     )
                     count = result.get(data_type, sum(result.values()))
 
-                progress.update(task, completed=task_total)
-                console.print(f"[green][OK][/green] 已更新 {count} 条期货数据")
+                completed_total = (
+                    minute_summary["total_symbols"]
+                    if minute_summary and minute_summary.get("total_symbols")
+                    else task_total
+                )
+                progress.update(
+                    task, completed=completed_total, total=completed_total
+                )
+                failed_symbols = (
+                    minute_summary.get("failed_symbols", [])
+                    if minute_summary
+                    else []
+                )
+                if failed_symbols:
+                    console.print(
+                        f"[yellow][PARTIAL][/yellow] 已更新 {count} 条期货数据，"
+                        f"{len(failed_symbols)}/{minute_summary['total_symbols']} 个合约失败"
+                    )
+                    console.print(
+                        "[yellow]  分钟线摘要:[/yellow] "
+                        f"成功 {minute_summary['inserted_symbols']}，"
+                        f"空数据 {minute_summary['empty_symbols']}，"
+                        f"已是最新 {minute_summary['up_to_date_symbols']}，"
+                        f"失败 {len(failed_symbols)}"
+                    )
+                    sample = ", ".join(item["symbol"] for item in failed_symbols[:10])
+                    suffix = "..." if len(failed_symbols) > 10 else ""
+                    console.print(f"[yellow]  失败样例:[/yellow] {sample}{suffix}")
+                    return {"count": count, "partial_failure": True}
+                else:
+                    console.print(f"[green][OK][/green] 已更新 {count} 条期货数据")
                 return count
             except Exception as e:
                 progress.update(task, failed=True)

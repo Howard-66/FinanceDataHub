@@ -171,6 +171,14 @@ class CircuitBreaker:
 
         return True
 
+    def time_until_available(self, provider_name: str) -> float:
+        """Return seconds until an open circuit can be retried."""
+        state = self._states.get(provider_name)
+        if not state or not state["open"]:
+            return 0.0
+        elapsed = time.time() - state["open_time"]
+        return max(0.0, self.reset_timeout - elapsed)
+
     def record_success(self, provider_name: str) -> None:
         """
         记录成功调用
@@ -396,6 +404,7 @@ class SmartRouter:
         freq: Optional[str] = None,
         market: Optional[str] = None,
         method_name: str = "get_daily_data",
+        wait_for_circuit_breaker: bool = False,
         **kwargs,
     ) -> Any:
         """
@@ -406,6 +415,7 @@ class SmartRouter:
             data_type: 数据类型（例如 "daily", "minute"）
             freq: 频率（对于分钟数据）
             method_name: 提供者方法名
+            wait_for_circuit_breaker: 断路器打开时是否等待恢复后再尝试
             **kwargs: 传递给提供者方法的参数
 
         Returns:
@@ -445,10 +455,29 @@ class SmartRouter:
             if self._circuit_breaker and not self._circuit_breaker.is_available(
                 provider_name
             ):
-                logger.warning(
-                    f"Provider '{provider_name}' is unavailable (circuit breaker open)"
-                )
-                continue
+                if wait_for_circuit_breaker:
+                    wait_time = self._circuit_breaker.time_until_available(provider_name)
+                    if wait_time > 0:
+                        logger.warning(
+                            f"Provider '{provider_name}' circuit breaker is open; "
+                            f"waiting {wait_time:.1f}s before retry"
+                        )
+                        time.sleep(wait_time)
+                    if self._circuit_breaker.is_available(provider_name):
+                        logger.info(
+                            f"Provider '{provider_name}' circuit breaker is closed; retrying"
+                        )
+                    else:
+                        logger.warning(
+                            f"Provider '{provider_name}' is unavailable "
+                            "(circuit breaker open)"
+                        )
+                        continue
+                else:
+                    logger.warning(
+                        f"Provider '{provider_name}' is unavailable (circuit breaker open)"
+                    )
+                    continue
 
             try:
                 # 获取提供者实例

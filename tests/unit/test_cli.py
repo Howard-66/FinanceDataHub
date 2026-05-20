@@ -425,7 +425,7 @@ def test_build_incremental_upsert_rule_for_new_daily_data():
 
 
 def test_build_incremental_upsert_rule_for_open_week():
-    """周线若当前周已经存在部分结果，应包含当前周同一周末日期。"""
+    """周线未收盘时，不应继续把当前周半成品持久化。"""
     from finance_data_hub.cli.preprocess import _build_incremental_upsert_rule
 
     rule = _build_incremental_upsert_rule(
@@ -434,16 +434,49 @@ def test_build_incremental_upsert_rule_for_open_week():
         pd.Timestamp("2026-04-10 15:00:00", tz="Asia/Shanghai"),
     )
 
-    assert rule == {"start_date": pd.Timestamp("2026-04-10").date(), "inclusive": True}
+    assert rule is None
 
 
-def test_build_incremental_upsert_rule_for_new_month():
-    """月线在进入新月份但尚未生成当月记录时，应从上个已处理月之后回写。"""
+def test_filter_completed_period_rows_drops_open_week():
+    """周线写库前应过滤掉当前未收盘周的最后一根 K 线。"""
+    from finance_data_hub.cli.preprocess import (
+        _filter_completed_period_rows,
+        _get_open_period_cleanup_targets,
+    )
+
+    df = pd.DataFrame(
+        {
+            "time": [
+                pd.Timestamp("2026-04-03 15:00:00", tz="Asia/Shanghai"),
+                pd.Timestamp("2026-04-10 15:00:00", tz="Asia/Shanghai"),
+            ],
+            "symbol": ["600519.SH", "600519.SH"],
+            "open": [100.0, 110.0],
+            "high": [105.0, 115.0],
+            "low": [95.0, 108.0],
+            "close": [102.0, 112.0],
+            "volume": [1000, 2000],
+            "amount": [10000.0, 22000.0],
+        }
+    )
+    cleanup_targets = _get_open_period_cleanup_targets(
+        {"600519.SH": pd.Timestamp("2026-04-09 15:00:00", tz="Asia/Shanghai")},
+        "weekly",
+    )
+
+    result = _filter_completed_period_rows(df, "weekly", cleanup_targets)
+
+    assert len(result) == 1
+    assert result.iloc[0]["time"] == pd.Timestamp("2026-04-03 15:00:00", tz="Asia/Shanghai")
+
+
+def test_build_incremental_upsert_rule_for_closed_month():
+    """月线在月末收盘后，应从上个已处理月之后回写新月份数据。"""
     from finance_data_hub.cli.preprocess import _build_incremental_upsert_rule
 
     rule = _build_incremental_upsert_rule(
         "monthly",
-        pd.Timestamp("2026-04-09 15:00:00", tz="Asia/Shanghai"),
+        pd.Timestamp("2026-04-30 15:00:00", tz="Asia/Shanghai"),
         pd.Timestamp("2026-03-31 15:00:00", tz="Asia/Shanghai"),
     )
 
