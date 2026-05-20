@@ -224,110 +224,14 @@ def _build_incremental_upsert_rule(
         return {"start_date": latest_processed_date, "inclusive": False}
 
     source_period_end = _get_period_end_date(source_latest_time, freq_key)
-    period_closed = source_latest_date >= source_period_end
-
-    if not period_closed:
-        return None
 
     if latest_processed_date < source_period_end:
         return {"start_date": latest_processed_date, "inclusive": False}
 
+    if latest_processed_date == source_period_end:
+        return {"start_date": latest_processed_date, "inclusive": True}
+
     return None
-
-
-def _get_open_period_cleanup_targets(
-    source_latest_map: Dict[str, Any],
-    freq: str,
-) -> Dict[str, date]:
-    """
-    找出仍处于未收盘状态、需要从预处理表移除的高周期 K 线。
-
-    返回 symbol -> 周期结束日（周五/月末）。
-    """
-    freq_key = freq.lower()
-    if freq_key == "daily":
-        return {}
-
-    cleanup_targets: Dict[str, date] = {}
-    for symbol, latest_time in source_latest_map.items():
-        if latest_time is None:
-            continue
-
-        latest_date = _to_local_date(latest_time)
-        period_end = _get_period_end_date(latest_time, freq_key)
-        if latest_date < period_end:
-            cleanup_targets[symbol] = period_end
-
-    return cleanup_targets
-
-
-def _filter_completed_period_rows(
-    df: pd.DataFrame,
-    freq: str,
-    cleanup_targets: Dict[str, date],
-) -> pd.DataFrame:
-    """
-    过滤掉未收盘的周线/月线，确保数据库只持久化已完成周期。
-    """
-    if df.empty or freq.lower() == "daily" or not cleanup_targets:
-        return df
-
-    local_time = pd.to_datetime(df["time"])
-    if isinstance(local_time.dtype, pd.DatetimeTZDtype):
-        local_dates = local_time.dt.tz_convert("Asia/Shanghai").dt.date
-    else:
-        local_dates = local_time.dt.tz_localize("Asia/Shanghai").dt.date
-
-    open_period_end_dates = df["symbol"].map(cleanup_targets)
-    keep_mask = open_period_end_dates.isna() | (local_dates < open_period_end_dates)
-
-    return df[keep_mask].copy()
-
-
-async def _delete_open_period_rows(
-    db_manager: DatabaseManager,
-    symbols: List[str],
-    freq: str,
-    adjust_type: str,
-    cleanup_targets: Dict[str, date],
-) -> int:
-    """
-    删除已落库但尚未收盘的周线/月线记录。
-    """
-    if not symbols or not cleanup_targets:
-        return 0
-
-    table_name = ProcessedDataStorage.TABLE_MAP.get((freq.lower(), adjust_type.lower()))
-    if not table_name:
-        return 0
-
-    params: Dict[str, Any] = {}
-    clauses: List[str] = []
-
-    for idx, symbol in enumerate(symbols):
-        period_end = cleanup_targets.get(symbol)
-        if period_end is None:
-            continue
-
-        period_end_ts = (
-            pd.Timestamp(period_end)
-            .tz_localize("Asia/Shanghai")
-            .replace(hour=15, minute=0, second=0, microsecond=0)
-            .to_pydatetime()
-        )
-        params[f"sym_{idx}"] = symbol
-        params[f"time_{idx}"] = period_end_ts
-        clauses.append(f"(symbol = :sym_{idx} AND time = :time_{idx})")
-
-    if not clauses:
-        return 0
-
-    sql = f"""
-        DELETE FROM {table_name}
-        WHERE {" OR ".join(clauses)}
-    """
-    result = await db_manager.execute_raw_sql(sql, params)
-    return result.rowcount or 0
 
 
 async def _get_latest_source_times(
@@ -948,17 +852,6 @@ async def _run_technical_preprocess(
         symbols = await _get_all_stock_symbols(db_manager, market=market_code)
         console.print(f"共 {len(symbols)} 只股票 ({market_code})")
 
-    source_latest_map = await _get_latest_source_times(
-        db_manager,
-        symbols,
-        end_date=end_date,
-    )
-    cleanup_targets_by_freq = {
-        freq: _get_open_period_cleanup_targets(source_latest_map, freq)
-        for freq in freqs
-        if freq.lower() in {"weekly", "monthly"}
-    }
-
     # 智能增量策略：根据 adj_factor 变化分类股票
     if force:
         # 强制全量模式
@@ -977,6 +870,11 @@ async def _run_technical_preprocess(
 
     incremental_plan: Dict[str, Dict[str, Any]] = {}
     if incr_symbols:
+        source_latest_map = await _get_latest_source_times(
+            db_manager,
+            incr_symbols,
+            end_date=end_date,
+        )
         processed_latest_map = await _get_latest_processed_times(
             db_manager,
             incr_symbols,
@@ -1051,27 +949,6 @@ async def _run_technical_preprocess(
     console.print(f"  最终全量重算: {len(full_symbols)} 只")
     console.print(f"  最终增量处理: {len(incr_symbols)} 只")
 
-    cleanup_symbols = [symbol for symbol in symbols if symbol in source_latest_map]
-    cleanup_deleted = 0
-    if cleanup_symbols:
-        for freq in freqs:
-            targets = cleanup_targets_by_freq.get(freq)
-            if not targets:
-                continue
-
-            for i in range(0, len(cleanup_symbols), batch_size):
-                batch_symbols = cleanup_symbols[i:i + batch_size]
-                cleanup_deleted += await _delete_open_period_rows(
-                    db_manager,
-                    batch_symbols,
-                    freq,
-                    adjust_type,
-                    targets,
-                )
-
-        if cleanup_deleted and verbose:
-            console.print(f"  [dim]已清理开放周期周/月线记录: {cleanup_deleted} 条[/dim]")
-
     # 初始化存储（resample 已移入子进程）
     storage = ProcessedDataStorage(db_manager)
 
@@ -1139,11 +1016,6 @@ async def _run_technical_preprocess(
             for freq in freqs:
                 data = freq_results.get(freq)
                 if data is None or data.empty:
-                    continue
-
-                cleanup_targets = cleanup_targets_by_freq.get(freq, {})
-                data = _filter_completed_period_rows(data, freq, cleanup_targets)
-                if data.empty:
                     continue
 
                 if symbol_upsert_rules is not None:
