@@ -307,6 +307,47 @@ def test_cli_update_future_symbols_all_shows_full_universe_hint():
     )
 
 
+def test_cli_update_future_minute_trade_date_passed_to_updater():
+    fake_updater = Mock()
+    fake_updater.update_futures_minute = AsyncMock(return_value=0)
+    fake_updater.last_futures_minute_summary = {
+        "total_symbols": 0,
+        "attempted_symbols": 0,
+        "inserted_symbols": 0,
+        "empty_symbols": 0,
+        "up_to_date_symbols": 0,
+        "failed_symbols": [],
+        "inserted_records": 0,
+    }
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--asset-class", "future",
+                "--dataset", "minute_1",
+                "--symbols", "all",
+                "--trade-date", "2024-04-30",
+            ],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.update_futures_minute.assert_awaited_once_with(
+        symbols=["all"],
+        trade_date="2024-04-30",
+        start_date=None,
+        end_date=ANY,
+        freq="1m",
+        force_update=False,
+        progress_callback=ANY,
+    )
+
+
 def test_cli_update_daily_basic():
     """测试每日基本面数据更新"""
     with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):

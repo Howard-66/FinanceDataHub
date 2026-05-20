@@ -127,6 +127,39 @@ def _iter_date_chunks(
         current = chunk_end + timedelta(days=1)
 
 
+def _normalize_futures_window(
+    trade_date: Optional[str],
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    """Normalize futures request dates to an overlap-filter window."""
+    if trade_date:
+        if start_date or end_date:
+            raise ValueError("trade_date cannot be used with start_date or end_date")
+        return trade_date, trade_date
+
+    if start_date and end_date:
+        return start_date, end_date
+    if start_date:
+        return start_date, start_date
+    if end_date:
+        return end_date, end_date
+    return None, None
+
+
+def _normalize_futures_query_dates(
+    trade_date: Optional[str],
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    """Normalize futures download query dates without changing incremental semantics."""
+    if trade_date:
+        if start_date or end_date:
+            raise ValueError("trade_date cannot be used with start_date or end_date")
+        return trade_date, trade_date
+    return start_date, end_date
+
+
 class DataUpdater:
     """数据更新器"""
 
@@ -2478,6 +2511,7 @@ class DataUpdater:
         symbols: Optional[List[str]],
         product_codes: Optional[List[str]],
         contract_types: List[str],
+        trade_date: Optional[str],
         start_date: Optional[str],
         end_date: Optional[str],
         force_update: bool,
@@ -2496,9 +2530,17 @@ class DataUpdater:
                 [str(code).strip().upper() for code in product_codes if str(code).strip()]
             )
 
-        active_only = default_active_only and not explicit_all and not force_update and not start_date
-        overlap_start = start_date if (explicit_all or force_update or start_date) else None
-        overlap_end = end_date
+        overlap_start, overlap_end = _normalize_futures_window(
+            trade_date,
+            start_date,
+            end_date,
+        )
+        active_only = (
+            default_active_only
+            and not force_update
+            and overlap_start is None
+            and overlap_end is None
+        )
 
         resolved: List[str] = []
         if normalized_products:
@@ -2568,6 +2610,7 @@ class DataUpdater:
             symbols=symbols if not explicit_all else ["all"],
             product_codes=inferred_products,
             contract_types=["main", "continuous"],
+            trade_date=None,
             start_date=start_date,
             end_date=end_date,
             force_update=force_update,
@@ -2635,6 +2678,7 @@ class DataUpdater:
             symbols=symbols if not explicit_all else ["all"],
             product_codes=product_codes,
             contract_types=["normal", "main", "continuous"],
+            trade_date=None,
             start_date=start_date,
             end_date=end_date,
             force_update=force_update,
@@ -2669,6 +2713,7 @@ class DataUpdater:
     async def update_futures_minute(
         self,
         symbols: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         freq: str = "1m",
@@ -2691,8 +2736,17 @@ class DataUpdater:
                 "skip provider download"
             )
             return 0
-        if not end_date:
-            end_date = datetime.now().strftime("%Y-%m-%d")
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date cannot be used with start_date or end_date")
+
+        request_start_date, request_end_date = _normalize_futures_query_dates(
+            trade_date,
+            start_date,
+            end_date,
+        )
+        if request_end_date is None:
+            request_end_date = datetime.now().strftime("%Y-%m-%d")
+
         explicit_all = _is_all_futures_selector(symbols)
         symbols = await self._resolve_futures_symbol_universe(
             symbols=symbols if not explicit_all else ["all"],
@@ -2700,6 +2754,7 @@ class DataUpdater:
             contract_types=["normal", "main", "continuous"]
             if explicit_all
             else ["main"],
+            trade_date=trade_date,
             start_date=start_date,
             end_date=end_date,
             force_update=force_update,
@@ -2738,9 +2793,9 @@ class DataUpdater:
                         "minute", symbol=symbol, frequency=freq
                     )
                     actual_start = self._incremental_start(
-                        latest, start_date, force_update
+                        latest, request_start_date, force_update
                     )
-                    if actual_start and end_date and actual_start > end_date:
+                    if actual_start and request_end_date and actual_start > request_end_date:
                         return {"symbol": symbol, "status": "up_to_date", "records": 0}
 
                     try:
@@ -2753,7 +2808,7 @@ class DataUpdater:
                                 method_name="get_futures_minute",
                                 symbol=symbol,
                                 start_date=actual_start,
-                                end_date=end_date,
+                                end_date=request_end_date,
                                 wait_for_circuit_breaker=True,
                             ),
                         )
@@ -2856,6 +2911,7 @@ class DataUpdater:
             symbols=symbols if not explicit_all else ["all"],
             product_codes=inferred_products,
             contract_types=["normal"],
+            trade_date=None,
             start_date=start_date,
             end_date=end_date,
             force_update=force_update,

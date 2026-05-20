@@ -10,6 +10,7 @@ from finance_data_hub.update.updater import (
     DataUpdater,
     _is_all_futures_selector,
     _iter_date_chunks,
+    _normalize_futures_window,
 )
 
 
@@ -27,6 +28,13 @@ def test_iter_date_chunks_uses_inclusive_ascending_windows():
     ]
 
 
+def test_normalize_futures_window_for_trade_date():
+    assert _normalize_futures_window("2024-04-30", None, None) == (
+        "2024-04-30",
+        "2024-04-30",
+    )
+
+
 def test_resolve_futures_symbol_universe_explicit_all_uses_contract_basic_overlap():
     async def _run():
         updater = DataUpdater(settings=Mock())
@@ -39,6 +47,7 @@ def test_resolve_futures_symbol_universe_explicit_all_uses_contract_basic_overla
             symbols=["all"],
             product_codes=None,
             contract_types=["normal", "main", "continuous"],
+            trade_date=None,
             start_date="2024-04-01",
             end_date="2024-04-30",
             force_update=False,
@@ -66,6 +75,7 @@ def test_resolve_futures_symbol_universe_default_incremental_uses_active_scope()
             symbols=None,
             product_codes=None,
             contract_types=["main"],
+            trade_date=None,
             start_date=None,
             end_date="2024-04-30",
             force_update=False,
@@ -75,8 +85,64 @@ def test_resolve_futures_symbol_universe_default_incremental_uses_active_scope()
         assert resolved == ["RB.SHF"]
         updater.data_ops.get_futures_contract_symbols.assert_awaited_once_with(
             contract_types=["main"],
+            active_only=False,
+            overlap_start="2024-04-30",
+            overlap_end="2024-04-30",
+        )
+
+    asyncio.run(_run())
+
+
+def test_resolve_futures_symbol_universe_explicit_all_default_incremental_uses_active_scope():
+    async def _run():
+        updater = DataUpdater(settings=Mock())
+        updater.data_ops = Mock()
+        updater.data_ops.get_futures_contract_symbols = AsyncMock(return_value=["RB.SHF"])
+
+        resolved = await updater._resolve_futures_symbol_universe(
+            symbols=["all"],
+            product_codes=None,
+            contract_types=["normal", "main", "continuous"],
+            trade_date=None,
+            start_date=None,
+            end_date=None,
+            force_update=False,
+            default_active_only=True,
+        )
+
+        assert resolved == ["RB.SHF"]
+        updater.data_ops.get_futures_contract_symbols.assert_awaited_once_with(
+            contract_types=["normal", "main", "continuous"],
             active_only=True,
             overlap_start=None,
+            overlap_end=None,
+        )
+
+    asyncio.run(_run())
+
+
+def test_resolve_futures_symbol_universe_trade_date_filters_same_day_overlap():
+    async def _run():
+        updater = DataUpdater(settings=Mock())
+        updater.data_ops = Mock()
+        updater.data_ops.get_futures_contract_symbols = AsyncMock(return_value=["RB2405.SHF"])
+
+        resolved = await updater._resolve_futures_symbol_universe(
+            symbols=["all"],
+            product_codes=None,
+            contract_types=["normal", "main", "continuous"],
+            trade_date="2024-04-30",
+            start_date=None,
+            end_date=None,
+            force_update=False,
+            default_active_only=True,
+        )
+
+        assert resolved == ["RB2405.SHF"]
+        updater.data_ops.get_futures_contract_symbols.assert_awaited_once_with(
+            contract_types=["normal", "main", "continuous"],
+            active_only=False,
+            overlap_start="2024-04-30",
             overlap_end="2024-04-30",
         )
 
@@ -93,6 +159,7 @@ def test_resolve_futures_symbol_universe_explicit_symbols_bypass_lookup():
             symbols=["RB2405.SHF", "RB.SHF"],
             product_codes=None,
             contract_types=["normal", "main"],
+            trade_date=None,
             start_date=None,
             end_date="2024-04-30",
             force_update=False,
@@ -259,6 +326,7 @@ def test_update_futures_minute_uses_bounded_parallel_downloads():
 
         inserted = await updater.update_futures_minute(
             symbols=["RB2405.SHF", "RB2406.SHF", "RB2407.SHF"],
+            trade_date=None,
             start_date="2024-04-30 09:30:00",
             end_date="2024-04-30 10:00:00",
             freq="1m",
@@ -296,6 +364,7 @@ def test_update_futures_minute_derived_frequency_skips_provider_download():
 
         inserted = await updater.update_futures_minute(
             symbols=["RB2405.SHF"],
+            trade_date=None,
             start_date="2024-04-30 09:30:00",
             end_date="2024-04-30 10:00:00",
             freq="15m",
@@ -325,6 +394,7 @@ def test_update_futures_minute_skips_symbols_without_download_when_up_to_date():
         progress = []
         inserted = await updater.update_futures_minute(
             symbols=["RB2405.SHF", "RB2406.SHF"],
+            trade_date=None,
             start_date=None,
             end_date="2024-04-30 10:00:00",
             freq="1m",
@@ -367,6 +437,7 @@ def test_update_futures_minute_skips_failed_symbol_and_continues():
 
         inserted = await updater.update_futures_minute(
             symbols=["RB2405.SHF", "BAD.SHF", "RB2406.SHF"],
+            trade_date=None,
             start_date="2024-04-30 09:30:00",
             end_date="2024-04-30 10:00:00",
             freq="1m",
@@ -386,6 +457,51 @@ def test_update_futures_minute_skips_failed_symbol_and_continues():
                 "error": "'NoneType' object has no attribute 'lower'",
             }
         ]
+
+    asyncio.run(_run())
+
+
+def test_update_futures_minute_trade_date_filters_contract_universe():
+    async def _run():
+        settings = Mock()
+        settings.data_source.futures_minute_max_workers = 2
+        updater = DataUpdater(settings=settings)
+        updater.data_ops = Mock()
+        updater.data_ops.get_futures_contract_symbols = AsyncMock(
+            return_value=["RB2405.SHF"]
+        )
+        updater.data_ops.get_latest_futures_date = AsyncMock(return_value=None)
+        updater.data_ops.insert_futures_minute_batch = AsyncMock(return_value=1)
+        updater.router = Mock(
+            route=Mock(
+                return_value=pd.DataFrame(
+                    {
+                        "time": ["2024-04-30 09:30:00"],
+                        "symbol": ["RB2405.SHF"],
+                        "frequency": ["1m"],
+                    }
+                )
+            )
+        )
+
+        inserted = await updater.update_futures_minute(
+            symbols=["all"],
+            trade_date="2024-04-30",
+            start_date=None,
+            end_date=None,
+            freq="1m",
+            force_update=False,
+        )
+
+        assert inserted == 1
+        updater.data_ops.get_futures_contract_symbols.assert_awaited_once_with(
+            contract_types=["normal", "main", "continuous"],
+            active_only=False,
+            overlap_start="2024-04-30",
+            overlap_end="2024-04-30",
+        )
+        assert updater.router.route.call_args.kwargs["start_date"] == "2024-04-30"
+        assert updater.router.route.call_args.kwargs["end_date"] == "2024-04-30"
 
     asyncio.run(_run())
 

@@ -544,6 +544,7 @@ async def _run_future_update(
                 elif data_type.startswith("minute"):
                     count = await updater.update_futures_minute(
                         symbols=symbol_list,
+                        trade_date=trade_date,
                         start_date=start_date,
                         end_date=end_date,
                         freq=freq_map.get(data_type, "1m"),
