@@ -1,4 +1,5 @@
 import pandas as pd
+import finance_data_hub.providers.akshare_provider as akshare_provider_module
 
 from finance_data_hub.providers.akshare_provider import AKShareProvider
 from finance_data_hub.providers.base import ProviderDataError
@@ -163,6 +164,96 @@ def test_akshare_inventory_all_products_does_not_pass_none_vars_list():
     assert "vars_list" not in calls[0]
 
 
+def test_akshare_inventory_incremental_falls_back_when_get_receipt_fails():
+    provider = AKShareProvider(config={"max_retry": 0})
+    provider.initialize()
+
+    def fake_call(func, *args, **kwargs):
+        if func.__name__ == "get_receipt":
+            raise ProviderDataError(
+                "AKShare call get_receipt failed: Expecting value: line 1 column 1 (char 0)",
+                provider_name=provider.name,
+            )
+        raise AssertionError(f"Unexpected function call: {func.__name__}")
+
+    provider._call_akshare = fake_call
+    provider._get_receipt_by_market = lambda **kwargs: pd.DataFrame(
+        {
+            "date": ["2024-04-30"],
+            "var": ["rb"],
+            "receipt": [123.0],
+        }
+    )
+
+    result = provider.get_futures_inventory(
+        start_date="2024-04-30",
+        end_date="2024-04-30",
+        products=["RB"],
+    )
+
+    assert len(result) == 1
+    assert result["product_code"].iloc[0] == "RB"
+    assert result["inventory"].iloc[0] == 123.0
+
+
+def test_akshare_inventory_market_fallback_skips_failed_exchange(monkeypatch):
+    provider = AKShareProvider(config={"max_retry": 0})
+    provider.initialize()
+
+    monkeypatch.setattr(
+        akshare_provider_module.futures_cons,
+        "contract_symbols",
+        ["RB", "CF"],
+    )
+    monkeypatch.setattr(
+        akshare_provider_module.futures_cons,
+        "market_exchange_symbols",
+        {"dce": ["RB"], "czce": ["CF"], "cffex": ["IF"]},
+    )
+
+    def dce_fetcher(**kwargs):
+        return pd.DataFrame()
+
+    def czce_fetcher(**kwargs):
+        return pd.DataFrame()
+
+    def fake_select_receipt_fetcher(market, trade_date):
+        return {
+            "dce": dce_fetcher,
+            "czce": czce_fetcher,
+        }.get(market)
+
+    def fake_call(func, *args, **kwargs):
+        if func.__name__ == "dce_fetcher":
+            raise ProviderDataError(
+                "AKShare call dce_fetcher failed: 412 Precondition Failed",
+                provider_name=provider.name,
+            )
+        if func.__name__ == "czce_fetcher":
+            return pd.DataFrame(
+                {
+                    "date": ["20240430"],
+                    "var": ["CF"],
+                    "receipt": [456.0],
+                }
+            )
+        raise AssertionError(f"Unexpected function call: {func.__name__}")
+
+    provider._select_receipt_fetcher = fake_select_receipt_fetcher
+    provider._call_akshare = fake_call
+
+    result = provider._get_receipt_by_market(
+        start_date="2024-04-30",
+        end_date="2024-04-30",
+        products=["RB", "CF"],
+    )
+    normalized = provider._normalize_receipt(result)
+
+    assert len(normalized) == 1
+    assert normalized["product_code"].iloc[0] == "CF"
+    assert normalized["inventory"].iloc[0] == 456.0
+
+
 def test_akshare_inventory_history_skips_unsupported_products():
     provider = AKShareProvider(config={"max_retry": 0})
     provider.initialize()
@@ -307,3 +398,32 @@ def test_akshare_inventory_history_skips_product_after_generic_provider_failure(
 
     assert len(result) == 1
     assert result["product_code"].iloc[0] == "RB"
+
+
+def test_akshare_hk_adj_factor_normalizes_qfq_factor_and_keeps_start_anchor():
+    provider = AKShareProvider(config={"max_retry": 0}, market="HK")
+    provider.initialize()
+    calls = []
+
+    def fake_call(func, *args, **kwargs):
+        calls.append(kwargs)
+        return pd.DataFrame(
+            {
+                "date": ["1900-01-01", "2023-05-19", "2024-05-17", "2025-05-16"],
+                "qfq_factor": [0.5, 0.75, 0.9, 1.0],
+            }
+        )
+
+    provider._call_akshare = fake_call
+
+    result = provider.get_adj_factor(
+        symbol="00700.HK",
+        start_date="2024-01-01",
+        end_date="2024-12-31",
+        market="HK",
+    )
+
+    assert calls == [{"symbol": "00700", "adjust": "qfq-factor"}]
+    assert list(result["time"].dt.strftime("%Y-%m-%d")) == ["2023-05-19", "2024-05-17"]
+    assert list(result["adj_factor"].round(6)) == [1.5, 1.8]
+    assert set(result["symbol"]) == {"00700.HK"}

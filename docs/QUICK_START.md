@@ -205,7 +205,7 @@ fdh-cli update --dataset adj_factor --market HK --trade-date 2024-11-18
 
 **注意：**
 - 港股当前不支持 `daily_basic`
-- 港股 `adj_factor` 通过 XtQuant 日线间接推导，不依赖 Tushare 权限
+- 港股 `adj_factor` 通过 Akshare `stock_hk_daily(..., adjust='qfq-factor')` 获取稀疏因子，再按本地港股 `daily` 交易日展开
 
 #### 4.1.1 港股技术指标预处理
 ```bash

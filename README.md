@@ -525,7 +525,7 @@ EOF
 - `basic`：港股股票列表，通过 Tushare `hk_basic` 获取并映射到统一主数据字段
 - `daily`：港股日线，保存原始未复权 K 线
 - `minute_1` / `minute_5` / `minute_60`：港股分钟线（XtQuant 原生支持 `1m` / `5m` / `1h`）
-- `adj_factor`：港股复权因子，由 XtQuant 日线推导
+- `adj_factor`：港股复权因子，基于 Akshare `stock_hk_daily(..., adjust='qfq-factor')` 归一化后生成
 
 港股 v1 当前不支持：
 - `daily_basic`
@@ -565,7 +565,7 @@ fdh-cli update --dataset minute_5 --market HK --symbols 00700.HK
 ```
 
 注意：
-- 港股 `daily` / `minute_*` / `adj_factor` 链路依赖 `XTQUANT_API_URL` 指向可用的 `xtquant_helper`；`basic` 改为走 Tushare `hk_basic`
+- 港股 `daily` / `minute_*` 链路依赖 `XTQUANT_API_URL` 指向可用的 `xtquant_helper`；`basic` 走 Tushare `hk_basic`；`adj_factor` 走 Akshare，但仍依赖本地 `daily` 数据作为交易日骨架
 - `--market ALL` 只对当前已支持多市场的数据集有意义，例如 `basic`、`daily`、`minute_*`、`adj_factor`
 - SDK 中 `get_daily_adjusted()` 会基于原始日线和 `adj_factor` 计算港股前复权、后复权
 

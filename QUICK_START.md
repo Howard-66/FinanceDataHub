@@ -189,7 +189,7 @@ fdh-cli update --dataset adj_factor --market HK --trade-date 2024-11-18
 ```
 
 说明：
-- 港股 `adj_factor` 由 XtQuant 的未复权日线与 `back_ratio/back` 日线推导
+- 港股 `adj_factor` 通过 Akshare `stock_hk_daily(..., adjust='qfq-factor')` 获取稀疏因子，再按本地港股 `daily` 交易日展开
 - 当前不支持港股 `daily_basic`
 
 ### 5.7 港股技术指标预处理

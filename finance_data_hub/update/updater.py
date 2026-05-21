@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import json
 import time
-import numpy as np
 import pandas as pd
 from loguru import logger
 
@@ -244,98 +243,89 @@ class DataUpdater:
         ]
 
     @staticmethod
-    def _derive_hk_adj_factor_from_local_daily(
-        raw_df: pd.DataFrame,
-        base_adj_factor: float = 1.0,
-        output_start_date: Optional[str] = None,
+    def _expand_hk_adj_factor_to_daily(
+        daily_df: pd.DataFrame,
+        sparse_adj_df: pd.DataFrame,
     ) -> pd.DataFrame:
-        """使用已落库的 HK 原始日线(preclose/close)递推复权因子。"""
-        if raw_df is None or raw_df.empty:
+        """Expand sparse HK factor-change rows to daily rows using local trading dates."""
+        if daily_df is None or daily_df.empty or sparse_adj_df is None or sparse_adj_df.empty:
             return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
 
-        if "preclose" not in raw_df.columns:
-            logger.warning("Local HK daily data has no preclose column; cannot derive adj_factor")
+        if "time" not in daily_df.columns or "time" not in sparse_adj_df.columns:
+            logger.warning("HK adj_factor expansion requires time columns on both inputs")
             return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
 
-        df = raw_df.sort_values("time").reset_index(drop=True).copy()
-        close = pd.to_numeric(df["close"], errors="coerce")
-        preclose = pd.to_numeric(df["preclose"], errors="coerce")
-        prev_close = close.shift(1)
+        calendar = daily_df[["symbol", "time"]].copy().sort_values("time").reset_index(
+            drop=True
+        )
+        factors = sparse_adj_df[["time", "adj_factor"]].copy().sort_values(
+            "time"
+        ).reset_index(drop=True)
 
-        ratio = preclose / prev_close
-        finite_ratio = ratio.replace([np.inf, -np.inf], pd.NA)
-        valid_jump = (
-            prev_close.notna()
-            & (prev_close > 0)
-            & preclose.notna()
-            & (preclose > 0)
-            & finite_ratio.notna()
-            & (finite_ratio > 0.5)
-            & (finite_ratio < 1.5)
+        calendar["trade_date"] = pd.to_datetime(calendar["time"], errors="coerce")
+        factors["trade_date"] = pd.to_datetime(factors["time"], errors="coerce")
+
+        for df in (calendar, factors):
+            if isinstance(df["trade_date"].dtype, pd.DatetimeTZDtype):
+                df["trade_date"] = (
+                    df["trade_date"].dt.tz_convert("Asia/Shanghai").dt.tz_localize(None)
+                )
+
+        calendar["trade_date"] = calendar["trade_date"].dt.normalize()
+        factors["trade_date"] = factors["trade_date"].dt.normalize()
+        factors["adj_factor"] = pd.to_numeric(factors["adj_factor"], errors="coerce")
+        factors = factors.dropna(subset=["trade_date", "adj_factor"])
+
+        if factors.empty:
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        merged = pd.merge_asof(
+            calendar.sort_values("trade_date"),
+            factors[["trade_date", "adj_factor"]].sort_values("trade_date"),
+            on="trade_date",
+            direction="backward",
+        )
+        merged["adj_factor"] = (
+            pd.to_numeric(merged["adj_factor"], errors="coerce").ffill().fillna(1.0)
         )
 
-        multipliers = pd.Series(1.0, index=df.index, dtype="float64")
-        multipliers.loc[valid_jump] = (
-            prev_close.loc[valid_jump].to_numpy()
-            / preclose.loc[valid_jump].to_numpy()
+        return (
+            merged[["symbol", "time", "adj_factor"]]
+            .drop_duplicates(subset=["symbol", "time"])
+            .sort_values("time")
+            .reset_index(drop=True)
         )
-        multipliers = multipliers.replace([np.inf, -np.inf], 1.0).fillna(1.0)
 
-        result = df[["symbol", "time"]].copy()
-        result["adj_factor"] = multipliers.cumprod() * float(base_adj_factor)
-
-        if output_start_date:
-            start_ts = pd.Timestamp(output_start_date).date()
-            local_time = pd.to_datetime(result["time"])
-            if isinstance(local_time.dtype, pd.DatetimeTZDtype):
-                local_dates = local_time.dt.tz_convert("Asia/Shanghai").dt.date
-            else:
-                local_dates = local_time.dt.tz_localize("Asia/Shanghai").dt.date
-            result = result[local_dates >= start_ts].copy()
-
-        return result.sort_values("time").reset_index(drop=True)
-
-    async def _get_hk_adj_factor_from_local_daily(
+    async def _get_hk_adj_factor_from_akshare(
         self,
         symbol: str,
         start_date: Optional[str],
         end_date: Optional[str],
     ) -> pd.DataFrame:
-        """基于本地 symbol_daily 数据生成 HK adj_factor，避免重复请求 XtQuant。"""
-        query_start_date = start_date
-        base_adj_factor = 1.0
-
-        if start_date:
-            latest_adj = await self.data_ops.get_latest_adj_factor_record(
-                symbol,
-                before_date=start_date,
-                market="HK",
-            )
-            if latest_adj and latest_adj.get("adj_factor") is not None:
-                base_adj_factor = float(latest_adj["adj_factor"])
-
-            anchor_bar = await self.data_ops.get_latest_symbol_daily_bar(
-                symbol,
-                before_date=start_date,
-                market="HK",
-            )
-            if anchor_bar and anchor_bar.get("time") is not None:
-                query_start_date = pd.Timestamp(anchor_bar["time"]).strftime("%Y-%m-%d")
-
-        raw_df = await self.data_ops.get_symbol_daily_for_adj_factor(
+        """Fetch HK sparse factors from AKShare and align them to local daily dates."""
+        daily_df = await self.data_ops.get_symbol_daily_for_adj_factor(
             symbol,
-            start_date=query_start_date,
+            start_date=start_date,
             end_date=end_date,
             market="HK",
         )
-        if raw_df.empty:
+        if daily_df.empty:
+            logger.warning(f"No local HK daily rows available for adj_factor expansion: {symbol}")
             return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
 
-        return self._derive_hk_adj_factor_from_local_daily(
-            raw_df,
-            base_adj_factor=base_adj_factor,
-            output_start_date=start_date,
+        sparse_adj_df = self.router.route(
+            asset_class="stock",
+            data_type="adj_factor",
+            method_name="get_adj_factor",
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            market="HK",
         )
+        if sparse_adj_df is None or sparse_adj_df.empty:
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        return self._expand_hk_adj_factor_to_daily(daily_df, sparse_adj_df)
 
     async def update_stock_basic(self, market: Optional[str] = None) -> int:
         """
@@ -946,7 +936,7 @@ class DataUpdater:
 
                 # 从路由器获取数据
                 if market_code == "HK":
-                    data = await self._get_hk_adj_factor_from_local_daily(
+                    data = await self._get_hk_adj_factor_from_akshare(
                         symbol,
                         start_date=symbol_start_date,
                         end_date=end_date,

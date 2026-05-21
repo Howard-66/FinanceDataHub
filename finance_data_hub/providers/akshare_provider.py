@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import akshare as ak
 import pandas as pd
 from loguru import logger
+from akshare.futures import cons as futures_cons
+from akshare.futures import receipt as futures_receipt
 
 from finance_data_hub.providers.base import BaseDataProvider, ProviderDataError
 from finance_data_hub.providers.registry import register_provider
 from finance_data_hub.providers.schema import (
+    AdjFactorSchema,
     DailyBasicSchema,
     DailyDataSchema,
     FuturesInventoryReceiptSchema,
@@ -22,6 +25,7 @@ from finance_data_hub.providers.schema import (
     convert_to_standard_columns,
     validate_dataframe,
 )
+from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
 from finance_data_hub.utils.futures import normalize_futures_exchange
 
 
@@ -59,6 +63,25 @@ def _inventory_symbol_candidates(product: str, symbol: str) -> List[str]:
 def _is_akshare_empty_inventory_error(error_msg: str) -> bool:
     """Return True for AKShare inventory responses that represent empty source data."""
     return "Length mismatch" in error_msg and "new values have 3 elements" in error_msg
+
+
+def _normalize_product_codes(products: Optional[List[str]]) -> Optional[List[str]]:
+    if not products:
+        return None
+    normalized: List[str] = []
+    for product in products:
+        code = str(product or "").strip().upper()
+        if code and code not in normalized:
+            normalized.append(code)
+    return normalized or None
+
+
+def _to_akshare_hk_symbol(symbol: str) -> str:
+    """Convert FinanceDataHub HK symbols like 00700.HK to AKShare's 00700 format."""
+    normalized = str(symbol or "").strip().upper()
+    if normalized.endswith(".HK"):
+        normalized = normalized[:-3]
+    return normalized.zfill(5)
 
 
 @register_provider("akshare")
@@ -116,6 +139,110 @@ class AKShareProvider(BaseDataProvider):
     ) -> pd.DataFrame:
         return pd.DataFrame(columns=DailyBasicSchema.get_required_columns())
 
+    def get_adj_factor(
+        self,
+        symbol: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        market: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch sparse HK adjustment factors from AKShare and normalize them to FDH semantics."""
+        market_code = normalize_market(
+            market,
+            default=infer_market_from_symbol(symbol, default=self.market),
+        )
+        if market_code != "HK":
+            raise ProviderDataError(
+                f"AKShare adj_factor currently only supports HK market, got {market_code}",
+                provider_name=self.name,
+            )
+        if not symbol:
+            raise ProviderDataError(
+                "AKShare HK adj_factor requires an explicit symbol",
+                provider_name=self.name,
+            )
+
+        if trade_date:
+            start_date = trade_date
+            end_date = trade_date
+
+        canonical_symbol = str(symbol).strip().upper()
+        ak_symbol = _to_akshare_hk_symbol(canonical_symbol)
+        raw_df = self._call_akshare(
+            ak.stock_hk_daily,
+            symbol=ak_symbol,
+            adjust="qfq-factor",
+        )
+
+        if raw_df is None or raw_df.empty:
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        factor_df = raw_df.copy()
+        factor_df.columns = [str(col).strip() for col in factor_df.columns]
+        factor_df = factor_df.rename(columns={"date": "time"})
+
+        if "time" not in factor_df.columns or "qfq_factor" not in factor_df.columns:
+            raise ProviderDataError(
+                f"Unexpected AKShare HK adj_factor columns: {list(raw_df.columns)}",
+                provider_name=self.name,
+            )
+
+        factor_df["time"] = pd.to_datetime(factor_df["time"], errors="coerce")
+        factor_df["qfq_factor"] = pd.to_numeric(
+            factor_df["qfq_factor"], errors="coerce"
+        )
+        factor_df = factor_df.dropna(subset=["time", "qfq_factor"])
+        factor_df = factor_df[factor_df["qfq_factor"] > 0]
+        factor_df = factor_df.sort_values("time").drop_duplicates(
+            subset=["time"], keep="last"
+        )
+
+        if factor_df.empty:
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        base_factor = float(factor_df["qfq_factor"].iloc[0])
+        if base_factor <= 0:
+            raise ProviderDataError(
+                f"Invalid AKShare base qfq_factor for {canonical_symbol}: {base_factor}",
+                provider_name=self.name,
+            )
+
+        result = pd.DataFrame(
+            {
+                "symbol": canonical_symbol,
+                "time": factor_df["time"],
+                # Rebase earliest factor to 1 so FDH keeps its cumulative adj_factor semantics.
+                "adj_factor": factor_df["qfq_factor"] / base_factor,
+            }
+        )
+
+        end_ts = pd.Timestamp(end_date).normalize() if end_date else None
+        if end_ts is not None:
+            result = result[result["time"] <= end_ts]
+
+        start_ts = pd.Timestamp(start_date).normalize() if start_date else None
+        if start_ts is not None:
+            anchor = result[result["time"] < start_ts].tail(1)
+            current = result[result["time"] >= start_ts]
+            result = pd.concat([anchor, current], ignore_index=True, sort=False)
+
+        result = result.drop_duplicates(subset=["symbol", "time"]).sort_values(
+            "time"
+        )
+        result = result.reset_index(drop=True)
+
+        if result.empty:
+            return pd.DataFrame(columns=["symbol", "time", "adj_factor"])
+
+        validated = result.rename(columns={"time": "trade_date"})
+        validated = validate_dataframe(
+            validated,
+            AdjFactorSchema,
+            provider_name=self.name,
+        )
+        return validated.rename(columns={"trade_date": "time"})
+
     async def get_latest_record(
         self, symbol: str, data_type: str, table_name: str
     ) -> Optional[pd.DataFrame]:
@@ -154,10 +281,17 @@ class AKShareProvider(BaseDataProvider):
             provider_name=self.name,
         )
 
-    def _call_akshare(self, func, *args, **kwargs) -> pd.DataFrame:
+    def _call_akshare(
+        self,
+        func,
+        *args,
+        max_retry: Optional[int] = None,
+        **kwargs,
+    ) -> pd.DataFrame:
         """Call an AKShare function with lightweight retries for transient HTTP issues."""
         last_error: Optional[Exception] = None
-        for attempt in range(self.max_retry + 1):
+        retry_limit = self.max_retry if max_retry is None else max(0, int(max_retry))
+        for attempt in range(retry_limit + 1):
             try:
                 return func(*args, **kwargs)
             except Exception as exc:
@@ -176,12 +310,12 @@ class AKShareProvider(BaseDataProvider):
                         f"AKShare call {func.__name__} empty inventory data: {exc}",
                         provider_name=self.name,
                     ) from exc
-                if attempt >= self.max_retry:
+                if attempt >= retry_limit:
                     break
                 wait_time = self.retry_delay * (attempt + 1)
                 logger.warning(
                     f"AKShare call {func.__name__} failed, retrying in {wait_time:.1f}s "
-                    f"({attempt + 1}/{self.max_retry}): {exc}"
+                    f"({attempt + 1}/{retry_limit}): {exc}"
                 )
                 time.sleep(wait_time)
         raise ProviderDataError(
@@ -348,6 +482,92 @@ class AKShareProvider(BaseDataProvider):
             provider_name=self.name,
         )
 
+    def _select_receipt_fetcher(
+        self,
+        market: str,
+        trade_date: datetime,
+    ) -> Optional[Callable[..., pd.DataFrame]]:
+        if market == "dce":
+            if trade_date.date() >= datetime(2009, 4, 7).date():
+                return futures_receipt.get_dce_receipt
+            return None
+        if market == "shfe":
+            trade_day = trade_date.date()
+            if datetime(2008, 10, 6).date() <= trade_day <= datetime(
+                2014, 5, 16
+            ).date():
+                return futures_receipt.get_shfe_receipt_1
+            if datetime(2014, 5, 16).date() <= trade_day <= datetime(
+                2025, 11, 17
+            ).date():
+                return futures_receipt.get_shfe_receipt_2
+            if trade_day > datetime(2025, 11, 17).date():
+                return futures_receipt.get_shfe_receipt_3
+            return None
+        if market == "gfex":
+            if trade_date.date() > datetime(2022, 12, 22).date():
+                return futures_receipt.get_gfex_receipt
+            return None
+        if market == "czce":
+            trade_day = trade_date.date()
+            if datetime(2008, 3, 3).date() <= trade_day <= datetime(
+                2010, 8, 24
+            ).date():
+                return futures_receipt.get_czce_receipt_1
+            if datetime(2010, 8, 24).date() < trade_day <= datetime(
+                2015, 11, 11
+            ).date():
+                return futures_receipt.get_czce_receipt_2
+            if trade_day > datetime(2015, 11, 11).date():
+                return futures_receipt.get_czce_receipt_3
+            return None
+        return None
+
+    def _get_receipt_by_market(
+        self,
+        start_date: str,
+        end_date: str,
+        products: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        """Fetch receipt data market-by-market so one blocked exchange does not abort all data."""
+        normalized_products = _normalize_product_codes(products)
+        product_list = normalized_products or list(futures_cons.contract_symbols)
+        frames: List[pd.DataFrame] = []
+        current = datetime.strptime(start_date, "%Y-%m-%d")
+        final = datetime.strptime(end_date, "%Y-%m-%d")
+
+        while current <= final:
+            trade_date = current.strftime("%Y%m%d")
+            for market, market_vars in futures_cons.market_exchange_symbols.items():
+                if market == "cffex":
+                    continue
+                get_vars = [var for var in product_list if var in market_vars]
+                if not get_vars:
+                    continue
+                fetcher = self._select_receipt_fetcher(market, current)
+                if fetcher is None:
+                    continue
+                try:
+                    df = self._call_akshare(
+                        fetcher,
+                        date=trade_date,
+                        vars_list=get_vars,
+                        max_retry=0,
+                    )
+                except ProviderDataError as exc:
+                    logger.warning(
+                        "AKShare receipt market fallback skipped "
+                        f"{market.upper()} on {trade_date}: {exc}"
+                    )
+                    continue
+                if df is not None and not df.empty:
+                    frames.append(df)
+            current += timedelta(days=1)
+
+        if not frames:
+            return pd.DataFrame(columns=FuturesInventoryReceiptSchema.get_required_columns())
+        return pd.concat(frames, ignore_index=True)
+
     def get_futures_inventory(
         self,
         start_date: Optional[str] = None,
@@ -408,7 +628,19 @@ class AKShareProvider(BaseDataProvider):
             }
             if products:
                 kwargs["vars_list"] = products
-            df = self._call_akshare(ak.get_receipt, **kwargs)
+            try:
+                df = self._call_akshare(ak.get_receipt, **kwargs)
+            except ProviderDataError as exc:
+                logger.warning(
+                    "AKShare get_receipt failed for "
+                    f"{current.strftime('%Y-%m-%d')} -> {window_end.strftime('%Y-%m-%d')}, "
+                    f"falling back to market-by-market receipt fetch: {exc}"
+                )
+                df = self._get_receipt_by_market(
+                    start_date=current.strftime("%Y-%m-%d"),
+                    end_date=window_end.strftime("%Y-%m-%d"),
+                    products=products,
+                )
             if df is not None and not df.empty:
                 frames.append(df)
             current = window_end + timedelta(days=1)

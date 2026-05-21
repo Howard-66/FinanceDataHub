@@ -35,7 +35,7 @@ def test_market_aware_routing_keeps_cn_and_hk_separate():
                     "HK": {
                         "basic": {"providers": ["tushare"]},
                         "daily": {"providers": ["xtquant"]},
-                        "adj_factor": {"providers": ["xtquant"]},
+                        "adj_factor": {"providers": ["akshare"]},
                         "minute": {
                             "1m": {"providers": ["xtquant"]},
                         },
@@ -62,7 +62,7 @@ def test_market_aware_routing_keeps_cn_and_hk_separate():
         "stock", "minute", freq="1m", market="HK"
     ) == ["xtquant"]
     assert config.get_providers_for_route("stock", "adj_factor", market="HK") == [
-        "xtquant"
+        "akshare"
     ]
 
 
@@ -329,17 +329,20 @@ def test_updater_single_symbol_adj_factor_failure_is_raised():
     updater = DataUpdater(settings=Mock())
     updater.router = Mock()
     updater.data_ops = Mock()
-    updater.data_ops.get_latest_adj_factor_record = AsyncMock(return_value=None)
-    updater.data_ops.get_latest_symbol_daily_bar = AsyncMock(return_value=None)
     updater.data_ops.get_symbol_daily_for_adj_factor = AsyncMock(
         return_value=pd.DataFrame(
             {
                 "time": pd.to_datetime(["2024-01-02"]),
                 "symbol": ["00700.HK"],
-                "close": [100.0],
-                "preclose": [0.0],
             }
         )
+    )
+    updater.router.route.return_value = pd.DataFrame(
+        {
+            "time": pd.to_datetime(["1900-01-01", "2024-01-02"]),
+            "symbol": ["00700.HK", "00700.HK"],
+            "adj_factor": [1.0, 1.2],
+        }
     )
     updater.data_ops.insert_adj_factor_batch = AsyncMock(
         side_effect=ValueError("bad adj factor row")
@@ -357,21 +360,24 @@ def test_updater_single_symbol_adj_factor_failure_is_raised():
         )
 
 
-def test_updater_hk_adj_factor_uses_local_daily_data_not_router():
+def test_updater_hk_adj_factor_expands_akshare_factors_to_local_daily():
     updater = DataUpdater(settings=Mock())
     updater.router = Mock()
     updater.data_ops = Mock()
-    updater.data_ops.get_latest_adj_factor_record = AsyncMock(return_value=None)
-    updater.data_ops.get_latest_symbol_daily_bar = AsyncMock(return_value=None)
     updater.data_ops.get_symbol_daily_for_adj_factor = AsyncMock(
         return_value=pd.DataFrame(
             {
                 "time": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
                 "symbol": ["00700.HK", "00700.HK", "00700.HK"],
-                "close": [100.0, 97.0, 98.0],
-                "preclose": [0.0, 95.0, 97.0],
             }
         )
+    )
+    updater.router.route.return_value = pd.DataFrame(
+        {
+            "time": pd.to_datetime(["1900-01-01", "2024-01-03"]),
+            "symbol": ["00700.HK", "00700.HK"],
+            "adj_factor": [1.0, 1.2],
+        }
     )
     updater.data_ops.insert_adj_factor_batch = AsyncMock(return_value=3)
 
@@ -386,31 +392,46 @@ def test_updater_hk_adj_factor_uses_local_daily_data_not_router():
     )
 
     assert count == 3
-    updater.router.route.assert_not_called()
+    updater.router.route.assert_called_once_with(
+        asset_class="stock",
+        data_type="adj_factor",
+        method_name="get_adj_factor",
+        symbol="00700.HK",
+        start_date="2024-01-02",
+        end_date="2024-01-04",
+        market="HK",
+    )
     updater.data_ops.get_symbol_daily_for_adj_factor.assert_awaited_once_with(
         "00700.HK",
         start_date="2024-01-02",
         end_date="2024-01-04",
         market="HK",
     )
+    inserted_df = updater.data_ops.insert_adj_factor_batch.await_args.args[0]
+    assert list(inserted_df["adj_factor"].round(6)) == [1.0, 1.2, 1.2]
 
 
-def test_updater_hk_adj_factor_incremental_derivation_uses_anchor_bar_and_base_factor():
+def test_updater_hk_adj_factor_expansion_uses_sparse_anchor_row():
     updater = DataUpdater(settings=Mock())
-    raw_df = pd.DataFrame(
+    daily_df = pd.DataFrame(
         {
             "time": pd.to_datetime(["2024-01-03", "2024-01-04", "2024-01-05"]),
             "symbol": ["00700.HK", "00700.HK", "00700.HK"],
-            "close": [97.0, 98.0, 99.0],
-            "preclose": [95.0, 97.0, 98.0],
+        }
+    )
+    sparse_df = pd.DataFrame(
+        {
+            "time": pd.to_datetime(["1900-01-01", "2024-01-04"]),
+            "symbol": ["00700.HK", "00700.HK"],
+            "adj_factor": [1.0, 1.25],
         }
     )
 
-    result = updater._derive_hk_adj_factor_from_local_daily(
-        raw_df,
-        base_adj_factor=1.0526315789,
-        output_start_date="2024-01-04",
-    )
+    result = updater._expand_hk_adj_factor_to_daily(daily_df, sparse_df)
 
-    assert list(result["time"].dt.strftime("%Y-%m-%d")) == ["2024-01-04", "2024-01-05"]
-    assert list(result["adj_factor"].round(6)) == [1.052632, 1.052632]
+    assert list(result["time"].dt.strftime("%Y-%m-%d")) == [
+        "2024-01-03",
+        "2024-01-04",
+        "2024-01-05",
+    ]
+    assert list(result["adj_factor"].round(6)) == [1.0, 1.25, 1.25]
