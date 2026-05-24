@@ -241,6 +241,47 @@ class TestTaskExecutor:
         assert "--dataset daily" in joined
         assert "--market HK" in joined
 
+    def test_build_download_command_includes_asset_class_and_dates(self):
+        """下载命令应透传 asset_class 与日期窗口参数。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        cmd = executor._build_download_command(
+            "index_daily",
+            {
+                "asset_class": "future",
+                "start_date": "2024-04-30",
+                "end_date": "2024-04-30",
+            },
+        )
+
+        joined = " ".join(cmd)
+        assert "--dataset index_daily" in joined
+        assert "--asset-class future" in joined
+        assert "--start-date 2024-04-30" in joined
+        assert "--end-date 2024-04-30" in joined
+
+    def test_build_download_command_resolves_latest_date_placeholders(self):
+        """下载命令应把 latest 占位展开为交易日日期。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        executor._get_latest_trade_date = lambda asset_class=None: "2024-04-30"
+
+        cmd = executor._build_download_command(
+            "inventory",
+            {
+                "asset_class": "future",
+                "start_date": "latest",
+                "end_date": "latest",
+            },
+        )
+
+        joined = " ".join(cmd)
+        assert "--asset-class future" in joined
+        assert "--start-date 2024-04-30" in joined
+        assert "--end-date 2024-04-30" in joined
+
     def test_build_preprocess_command_includes_market(self):
         """预处理命令应透传 market 参数。"""
         from finance_data_hub.scheduler.executor import TaskExecutor

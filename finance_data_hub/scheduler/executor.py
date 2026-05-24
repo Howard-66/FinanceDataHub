@@ -156,8 +156,17 @@ class TaskExecutor:
             # 回退到使用 python -m
             cmd = [self.python_path, "-m", "finance_data_hub.cli.main", "update"]
         
+        asset_class = params.get("asset_class")
+        normalized_asset_class = (
+            str(asset_class).strip().lower() if asset_class is not None else None
+        )
+
         # 添加 dataset 参数
         cmd.extend(["--dataset", dataset])
+
+        # 处理 asset_class 参数
+        if normalized_asset_class:
+            cmd.extend(["--asset-class", normalized_asset_class])
 
         # 处理 market 参数
         market = params.get("market")
@@ -165,13 +174,11 @@ class TaskExecutor:
             cmd.extend(["--market", str(market)])
         
         # 处理 trade_date 参数
-        trade_date = params.get("trade_date")
+        trade_date = self._resolve_date_param(
+            params.get("trade_date"), normalized_asset_class
+        )
         if trade_date:
-            if trade_date == "latest":
-                # 获取最新交易日
-                trade_date = self._get_latest_trade_date()
-            if trade_date:
-                cmd.extend(["--trade-date", trade_date])
+            cmd.extend(["--trade-date", trade_date])
         
         # 处理 symbols 参数
         symbols = params.get("symbols")
@@ -179,6 +186,20 @@ class TaskExecutor:
             if isinstance(symbols, list):
                 symbols = ",".join(symbols)
             cmd.extend(["--symbols", symbols])
+
+        # 处理 start_date 参数
+        start_date = self._resolve_date_param(
+            params.get("start_date"), normalized_asset_class
+        )
+        if start_date:
+            cmd.extend(["--start-date", start_date])
+
+        # 处理 end_date 参数
+        end_date = self._resolve_date_param(
+            params.get("end_date"), normalized_asset_class
+        )
+        if end_date:
+            cmd.extend(["--end-date", end_date])
         
         # 处理 force 参数
         if params.get("force"):
@@ -189,8 +210,26 @@ class TaskExecutor:
             cmd.append("--verbose")
         
         return cmd
-    
-    def _get_latest_trade_date(self) -> Optional[str]:
+
+    def _resolve_date_param(
+        self,
+        value: Optional[Any],
+        asset_class: Optional[str] = None,
+    ) -> Optional[str]:
+        """Resolve scheduler-friendly date placeholders for CLI parameters."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return str(value)
+
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        if normalized == "latest":
+            return self._get_latest_trade_date(asset_class=asset_class)
+        return value
+
+    def _get_latest_trade_date(self, asset_class: Optional[str] = None) -> Optional[str]:
         """获取最新交易日"""
         from datetime import timedelta
         
