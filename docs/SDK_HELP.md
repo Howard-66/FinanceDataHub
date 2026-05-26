@@ -52,5 +52,21 @@ await fdh.initialize()
 fina_data = await fdh.get_fina_indicator_async('600519.SH')
 fina_data
 
+# 查询逐字段补值后的日度估值
+filled_basic = await fdh.get_daily_basic_async(
+    ['600519.SH'],
+    '2024-01-01',
+    '2024-12-31',
+    filled=True,
+)
+filled_basic[
+    ['symbol', 'time', 'pe_ttm', 'pb', 'ps_ttm', 'peg', 'pe_ttm_source']
+].tail()
+
 await fdh.close()
 ```
+
+说明：
+- `filled=False` 是默认行为，返回 `daily_basic` 原始镜像
+- `filled=True` 会查询 `v_daily_basic_enriched`，对 `pe`、`pe_ttm`、`pb`、`ps`、`ps_ttm`、`peg` 逐字段补值
+- `dv_ratio`、`dv_ttm` 当前仍以 raw 为准，不做财报近似补值

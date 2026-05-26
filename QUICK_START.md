@@ -72,6 +72,12 @@ psql "$DATABASE_URL" -f sql/init/001_create_extensions.sql
 psql "$DATABASE_URL" -f sql/init/002_create_tables.sql
 psql "$DATABASE_URL" -f sql/init/003_create_hypertables.sql
 psql "$DATABASE_URL" -f sql/init/004_create_adj_factor.sql
+psql "$DATABASE_URL" -f sql/init/005_create_functions.sql
+psql "$DATABASE_URL" -f sql/init/006_create_continuous_aggregates.sql
+psql "$DATABASE_URL" -f sql/init/007_create_preprocess_tables.sql
+
+# 已有数据库升级到当前版本时，执行新增迁移
+psql "$DATABASE_URL" -f sql/migrations/025_add_daily_valuation_fill.sql
 ```
 
 ---
@@ -229,6 +235,7 @@ fdh-cli status --verbose
 
 # 查看帮助
 fdh-cli --help
+fdh-cli preprocess --help
 ```
 
 ---
@@ -261,6 +268,17 @@ fdh-cli update --dataset daily --trade-date 2024-11-18
 ```bash
 # 更新每日指标数据
 fdh-cli update --dataset daily_basic
+
+# 补齐 A 股估值缺失值所需的财报数据
+fdh-cli update --dataset income
+fdh-cli update --dataset balancesheet
+fdh-cli update --dataset fina_indicator
+
+# 生成派生估值层
+fdh-cli preprocess run --all --category valuation_fill
+
+# 基于 enriched daily_basic 重算估值分位
+fdh-cli preprocess run --all --category fundamental
 
 # 更新复权因子
 fdh-cli update --dataset adj_factor
@@ -300,6 +318,26 @@ fdh-cli update --dataset adj_factor --market HK
 
 # 4. 预处理全部港股技术指标
 fdh-cli preprocess run --all --category technical --market HK
+```
+
+### 场景 7: A 股估值缺失补值
+
+```bash
+# 1. 更新原始估值和财报数据
+fdh-cli update --dataset daily_basic
+fdh-cli update --dataset income
+fdh-cli update --dataset balancesheet
+fdh-cli update --dataset fina_indicator
+
+# 2. 生成估值补值层
+fdh-cli preprocess run --all --category valuation_fill
+
+# 3. 重算估值分位
+fdh-cli preprocess run --all --category fundamental
+
+# 4. 查看预处理状态
+fdh-cli preprocess info
+fdh-cli preprocess status
 ```
 
 ---

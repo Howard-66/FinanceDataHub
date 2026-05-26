@@ -259,6 +259,226 @@ class TestTechnicalIndicators:
         assert result["volume_confirmed"].isna().all()
 
 
+class TestValuationFillCalculator:
+    """估值缺失补值计算测试"""
+
+    def test_announcement_date_is_effective_same_day(self):
+        from finance_data_hub.preprocessing.fundamental import ValuationFillCalculator
+
+        daily = pd.DataFrame({
+            "time": pd.to_datetime(["2024-04-01", "2024-04-02"]),
+            "symbol": ["600519.SH", "600519.SH"],
+            "total_mv": [1050.0, 1050.0],
+            "total_share": [100.0, 100.0],
+            "close": [10.0, 10.0],
+        })
+        income = pd.DataFrame({
+            "ts_code": ["600519.SH", "600519.SH", "600519.SH"],
+            "end_date_time": pd.to_datetime(["2023-03-31", "2023-12-31", "2024-03-31"]),
+            "f_ann_date_time": pd.to_datetime(["2023-04-01", "2024-03-30", "2024-04-01"]),
+            "n_income_attr_p": [100000.0, 1000000.0, 150000.0],
+            "revenue": [450000.0, 4500000.0, 550000.0],
+            "total_revenue": [500000.0, 5000000.0, 600000.0],
+        })
+        balancesheet = pd.DataFrame({
+            "ts_code": ["600519.SH"],
+            "end_date_time": pd.to_datetime(["2024-03-31"]),
+            "f_ann_date_time": pd.to_datetime(["2024-04-01"]),
+            "total_hldr_eqy_exc_min_int": [2100000.0],
+        })
+        fina = pd.DataFrame({
+            "ts_code": ["600519.SH"],
+            "end_date_time": pd.to_datetime(["2024-03-31"]),
+            "ann_date_time": pd.to_datetime(["2024-04-01"]),
+            "netprofit_yoy": [50.0],
+            "bps": [5.0],
+        })
+
+        result = ValuationFillCalculator().calculate(daily, income, balancesheet, fina)
+
+        first = result[result["time"] == pd.Timestamp("2024-04-01")].iloc[0]
+        second = result[result["time"] == pd.Timestamp("2024-04-02")].iloc[0]
+
+        assert pytest.approx(first["pe_ttm"], rel=1e-6) == 10.0
+        assert pytest.approx(first["pb"], rel=1e-6) == 2.0
+        assert pytest.approx(first["peg"], rel=1e-6) == 0.2
+        assert pytest.approx(second["pe_ttm"], rel=1e-6) == 10.0
+        assert pytest.approx(second["pb"], rel=1e-6) == 2.0
+        assert pytest.approx(second["peg"], rel=1e-6) == 0.2
+        assert second["sources"]["pe_ttm"] == "derived_ttm_income.n_income_attr_p"
+        assert second["denominator_dates"]["pe_ttm"] == "2024-03-31"
+        assert second["sources"]["ps_ttm"] == "derived_ttm_income.revenue"
+        assert second["sources"]["pb"] == "derived_fina_indicator.bps"
+
+    def test_ps_uses_revenue_before_total_revenue(self):
+        from finance_data_hub.preprocessing.fundamental import ValuationFillCalculator
+
+        daily = pd.DataFrame({
+            "time": pd.to_datetime(["2024-04-02"]),
+            "symbol": ["600519.SH"],
+            "total_mv": [1050.0],
+            "total_share": [100.0],
+            "close": [10.0],
+        })
+        income = pd.DataFrame({
+            "ts_code": ["600519.SH", "600519.SH", "600519.SH"],
+            "end_date_time": pd.to_datetime(["2023-03-31", "2023-12-31", "2024-03-31"]),
+            "f_ann_date_time": pd.to_datetime(["2023-04-01", "2024-03-30", "2024-04-01"]),
+            "n_income_attr_p": [100000.0, 1000000.0, 150000.0],
+            "revenue": [450000.0, 4500000.0, 550000.0],
+            "total_revenue": [500000.0, 5000000.0, 600000.0],
+        })
+
+        result = ValuationFillCalculator().calculate(
+            daily,
+            income=income,
+            balancesheet=pd.DataFrame(),
+            fina_indicator=pd.DataFrame(),
+        )
+
+        row = result.iloc[0]
+        assert pytest.approx(row["ps_ttm"], rel=1e-6) == 2.2826086957
+        assert row["sources"]["ps_ttm"] == "derived_ttm_income.revenue"
+
+    def test_pe_ttm_and_ps_ttm_can_fallback_to_annual_when_ttm_window_incomplete(self):
+        from finance_data_hub.preprocessing.fundamental import ValuationFillCalculator
+
+        daily = pd.DataFrame({
+            "time": pd.to_datetime(["2024-04-02"]),
+            "symbol": ["600519.SH"],
+            "total_mv": [1050.0],
+            "total_share": [100.0],
+            "close": [10.0],
+        })
+        income = pd.DataFrame({
+            "ts_code": ["600519.SH", "600519.SH"],
+            "end_date_time": pd.to_datetime(["2023-12-31", "2024-03-31"]),
+            "f_ann_date_time": pd.to_datetime(["2024-03-30", "2024-04-01"]),
+            "n_income_attr_p": [1000000.0, 150000.0],
+            "revenue": [4500000.0, 550000.0],
+            "total_revenue": [5000000.0, 600000.0],
+        })
+
+        result = ValuationFillCalculator().calculate(
+            daily,
+            income=income,
+            balancesheet=pd.DataFrame(),
+            fina_indicator=pd.DataFrame(),
+        )
+
+        row = result.iloc[0]
+        assert pytest.approx(row["pe"], rel=1e-6) == 10.5
+        assert pytest.approx(row["pe_ttm"], rel=1e-6) == 10.5
+        assert pytest.approx(row["ps"], rel=1e-6) == 2.3333333333
+        assert pytest.approx(row["ps_ttm"], rel=1e-6) == 2.3333333333
+        assert row["sources"]["pe_ttm"] == "derived_from_lfy_pe_when_ttm_unavailable"
+        assert row["sources"]["ps_ttm"] == "derived_from_lfy_ps_when_ttm_unavailable"
+        assert row["denominator_dates"]["pe_ttm"] == "2023-12-31"
+        assert row["denominator_dates"]["ps_ttm"] == "2023-12-31"
+        assert (
+            row["quality_flags"]["pe_ttm"]
+            == "fallback_to_pe_due_to_incomplete_ttm_window"
+        )
+        assert (
+            row["quality_flags"]["ps_ttm"]
+            == "fallback_to_ps_due_to_incomplete_ttm_window"
+        )
+
+    def test_market_value_fallback_and_pb_bps_fallback(self):
+        from finance_data_hub.preprocessing.fundamental import ValuationFillCalculator
+
+        daily = pd.DataFrame({
+            "time": pd.to_datetime(["2024-04-02"]),
+            "symbol": ["600519.SH"],
+            "total_mv": [np.nan],
+            "total_share": [100.0],
+            "close": [10.0],
+        })
+        income = pd.DataFrame({
+            "ts_code": ["600519.SH"],
+            "end_date_time": pd.to_datetime(["2023-12-31"]),
+            "f_ann_date_time": pd.to_datetime(["2024-03-30"]),
+            "n_income_attr_p": [1000000.0],
+            "total_revenue": [5000000.0],
+        })
+        balancesheet = pd.DataFrame({
+            "ts_code": ["600519.SH"],
+            "end_date_time": pd.to_datetime(["2023-12-31"]),
+            "f_ann_date_time": pd.to_datetime(["2024-03-30"]),
+            "total_hldr_eqy_exc_min_int": [-1.0],
+        })
+        fina = pd.DataFrame({
+            "ts_code": ["600519.SH"],
+            "end_date_time": pd.to_datetime(["2023-12-31"]),
+            "ann_date_time": pd.to_datetime(["2024-03-30"]),
+            "netprofit_yoy": [-1.0],
+            "bps": [5.0],
+        })
+
+        result = ValuationFillCalculator().calculate(daily, income, balancesheet, fina)
+        row = result.iloc[0]
+
+        assert pytest.approx(row["pe"], rel=1e-6) == 10.0
+        assert pytest.approx(row["pb"], rel=1e-6) == 2.0
+        assert pd.isna(row["peg"])
+        assert row["sources"]["pb"] == "derived_fina_indicator.bps"
+        assert (
+            row["quality_flags"]["market_value_source"]
+            == "symbol_daily.close*daily_basic.total_share"
+        )
+
+    def test_peg_can_use_raw_pe_ttm_when_financial_pe_ttm_missing(self):
+        from finance_data_hub.preprocessing.fundamental import ValuationFillCalculator
+
+        daily = pd.DataFrame({
+            "time": pd.to_datetime(["2024-04-02"]),
+            "symbol": ["600519.SH"],
+            "pe_ttm": [20.0],
+            "total_mv": [np.nan],
+            "total_share": [np.nan],
+            "close": [10.0],
+        })
+        fina = pd.DataFrame({
+            "ts_code": ["600519.SH"],
+            "end_date_time": pd.to_datetime(["2024-03-31"]),
+            "ann_date_time": pd.to_datetime(["2024-04-01"]),
+            "netprofit_yoy": [10.0],
+            "bps": [np.nan],
+        })
+
+        result = ValuationFillCalculator().calculate(
+            daily,
+            income=pd.DataFrame(),
+            balancesheet=pd.DataFrame(),
+            fina_indicator=fina,
+        )
+
+        row = result.iloc[0]
+        assert pd.isna(row["pe_ttm"])
+        assert pytest.approx(row["peg"], rel=1e-6) == 2.0
+        assert row["sources"]["peg"] == "derived_from_raw_pe_ttm_and_netprofit_yoy"
+
+
+class TestPreprocessTimeFiltering:
+    """预处理增量时间过滤测试"""
+
+    def test_filter_dataframe_from_cutoff_handles_tz_aware_cutoff(self):
+        from finance_data_hub.cli.preprocess import _filter_dataframe_from_cutoff
+
+        df = pd.DataFrame({
+            "time": pd.to_datetime(["2026-05-19", "2026-05-20", "2026-05-21"]),
+            "symbol": ["688981.SH"] * 3,
+        })
+        cutoff = pd.Timestamp("2026-05-20 00:00:00", tz="UTC").to_pydatetime()
+
+        filtered = _filter_dataframe_from_cutoff(df, "time", cutoff)
+
+        assert list(filtered["time"]) == [
+            pd.Timestamp("2026-05-20"),
+            pd.Timestamp("2026-05-21"),
+        ]
+
+
 class TestIndicatorRegistry:
     """指标注册表测试"""
     

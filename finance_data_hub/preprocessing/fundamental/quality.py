@@ -52,6 +52,7 @@ import numpy as np
 from loguru import logger
 
 from .industry_config import IndustryConfigLoader, get_industry_config_loader
+from .ttm import calc_cumulative_to_ttm
 
 
 class FScoreCalculator:
@@ -564,68 +565,7 @@ class FScoreCalculator:
         Returns:
             TTM 值 Series
         """
-        if col not in df.columns or "end_date_time" not in df.columns:
-            return pd.Series([np.nan] * len(df), index=df.index)
-        
-        # 提取季度信息
-        end_dates = pd.to_datetime(df["end_date_time"])
-        months = end_dates.dt.month
-        years = end_dates.dt.year
-        values = pd.to_numeric(df[col], errors="coerce")
-        
-        # 构建查找表: (year, month) -> value
-        lookup_df = pd.DataFrame({
-            "year": years.values,
-            "month": months.values,
-            "val": values.values
-        }, index=df.index)
-        
-        # 提取所有 Q4 年报值，构建 year -> annual_value 映射
-        annual_mask = lookup_df["month"] == 12
-        annual_map = lookup_df.loc[annual_mask].drop_duplicates(
-            subset=["year"], keep="last"
-        ).set_index("year")["val"]
-        
-        # 构建 (year, month) -> value 映射用于查找上年同期
-        ym_map = lookup_df.dropna(subset=["val"]).drop_duplicates(
-            subset=["year", "month"], keep="last"
-        ).set_index(["year", "month"])["val"]
-        
-        # 向量化计算
-        result = pd.Series(np.nan, index=df.index, dtype=float)
-        
-        # Q4: TTM = 年报值本身
-        q4_mask = (months == 12) & values.notna()
-        result[q4_mask] = values[q4_mask]
-        
-        # Q1-Q3: TTM = 本期累计 + (上年年报 - 上年同期累计)
-        non_q4_mask = (months != 12) & values.notna()
-        if non_q4_mask.any():
-            prev_years = years[non_q4_mask] - 1
-            cur_months = months[non_q4_mask]
-            
-            # 批量查找上年年报值
-            prev_annual = prev_years.map(annual_map)
-            
-            # 批量查找上年同期累计值
-            prev_same_q_keys = list(zip(prev_years.values, cur_months.values))
-            prev_same_q = pd.Series(
-                [ym_map.get(k) for k in prev_same_q_keys],
-                index=prev_annual.index
-            )
-            
-            # 计算 TTM
-            valid = prev_annual.notna() & prev_same_q.notna()
-            if valid.any():
-                combined_mask = non_q4_mask & valid.reindex(result.index, fill_value=False)
-                ttm_vals = (
-                    values[combined_mask].values
-                    + prev_annual[valid].values
-                    - prev_same_q[valid].values
-                )
-                result.loc[combined_mask] = ttm_vals
-        
-        return result
+        return calc_cumulative_to_ttm(df, col)
     
     def _calc_quarterly_ttm(
         self,

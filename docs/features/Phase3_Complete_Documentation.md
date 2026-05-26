@@ -12,7 +12,7 @@
 |--------|------|------|
 | `get_symbol_daily(symbols, start_date, end_date)` | 获取日线 OHLCV 数据 | ✅ 已完成 |
 | `get_symbol_minute(symbols, start_date, end_date, frequency)` | 获取分钟级 OHLCV 数据 | ✅ 已完成 |
-| `get_daily_basic(symbols, start_date, end_date)` | 获取每日基本面指标数据 | ✅ 已完成 |
+| `get_daily_basic(symbols, start_date, end_date, market=None, filled=False)` | 获取每日基本面指标数据 | ✅ 已完成 |
 | `get_adj_factor(symbols, start_date, end_date)` | 获取复权因子数据（已修正支持多symbols） | ✅ 已完成 |
 | `get_asset_basic(symbols=None)` | 获取股票基本信息（非时间序列） | ✅ 已完成 |
 
@@ -22,7 +22,7 @@
 |----------|----------|------|------|
 | `get_daily()` | `get_daily_async()` | 日线数据查询 | ✅ 已完成 |
 | `get_minute()` | `get_minute_async()` | 分钟数据查询（支持1/5/15/30/60分钟） | ✅ 已完成 |
-| `get_daily_basic()` | `get_daily_basic_async()` | 每日基本面查询 | ✅ 已完成 |
+| `get_daily_basic()` | `get_daily_basic_async()` | 每日基本面查询，支持 `filled=True` 读取 enriched 估值 | ✅ 已完成 |
 | `get_adj_factor()` | `get_adj_factor_async()` | 复权因子查询 | ✅ 已完成 |
 | `get_basic()` | `get_basic_async()` | 股票基本信息查询 | ✅ 已完成 |
 
@@ -53,7 +53,7 @@
 |----------|----------|----------|------|
 | 日线数据 | `get_daily_async()` | `get_daily()` | OHLCV + 成交量 + 复权因子 |
 | 分钟数据 | `get_minute_async()` | `get_minute()` | 1/5/15/30/60分钟线 |
-| 每日基本面 | `get_daily_basic_async()` | `get_daily_basic()` | 估值、财务、流动性指标 |
+| 每日基本面 | `get_daily_basic_async()` | `get_daily_basic()` | 估值、财务、流动性指标；支持 `filled=True` 逐字段补值 |
 | 复权因子 | `get_adj_factor_async()` | `get_adj_factor()` | 前复权、后复权因子 |
 | 基本信息 | `get_basic_async()` | `get_basic()` | 股票基本信息（非时间序列） |
 
@@ -84,6 +84,12 @@ print(daily_data.head())
 # 其他异步方法示例
 minute = await fdh.get_minute_async(['600519.SH'], '2024-11-01', '2024-11-30', 'minute_5')
 basic = await fdh.get_daily_basic_async(['600519.SH'], '2024-01-01', '2024-12-31')
+filled_basic = await fdh.get_daily_basic_async(
+    ['600519.SH'],
+    '2024-01-01',
+    '2024-12-31',
+    filled=True,
+)
 adj = await fdh.get_adj_factor_async(['600519.SH'], '2020-01-01', '2024-12-31')
 info = await fdh.get_basic_async(['600519.SH', '000858.SZ'])
 ```
@@ -147,7 +153,7 @@ daily = fdh.get_daily(['600519.SH'], '2024-01-01', '2024-12-31')
 |----------|------|------|
 | 日线 | `get_daily()` | 包含 open, high, low, close, volume, amount, adj_factor |
 | 分钟 | `get_minute()` | 支持 minute_1, minute_5, minute_15, minute_30, minute_60 |
-| 每日基本面 | `get_daily_basic()` | 包含 pe, pb, turnover_rate 等指标 |
+| 每日基本面 | `get_daily_basic()` | 包含 pe, pb, turnover_rate 等指标；`filled=True` 时追加 `peg` 和来源字段 |
 | 复权因子 | `get_adj_factor()` | 前复权、后复权因子 |
 | 基本信息 | `get_basic()` | 非时间序列，股票基本信息 |
 

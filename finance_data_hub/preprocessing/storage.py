@@ -704,6 +704,116 @@ class FundamentalDataStorage:
         return pd.DataFrame(rows, columns=columns)
 
 
+class ValuationFillStorage:
+    """
+    Derived daily valuation fill storage.
+
+    This table stores internally derived valuation values separately from the
+    Tushare daily_basic mirror, so raw vendor data remains untouched.
+    """
+
+    TABLE_NAME = "processed_daily_valuation_fill"
+
+    VALUATION_COLUMNS = [
+        "pe", "pe_ttm", "pb", "ps", "ps_ttm", "peg", "dv_ratio", "dv_ttm"
+    ]
+    JSON_COLUMNS = ["sources", "denominator_dates", "quality_flags"]
+    META_COLUMNS = ["formula_version"]
+
+    def __init__(self, db_manager: Optional["DatabaseManager"] = None):
+        self.db_manager = db_manager
+
+    async def upsert(
+        self,
+        df: pd.DataFrame,
+        batch_size: int = 5000,
+    ) -> int:
+        if self.db_manager is None:
+            logger.warning("No db_manager configured")
+            return 0
+
+        if df.empty:
+            return 0
+
+        allowed_columns = (
+            ["time", "symbol"] +
+            self.VALUATION_COLUMNS +
+            self.JSON_COLUMNS +
+            self.META_COLUMNS
+        )
+        available_columns = [c for c in df.columns if c in allowed_columns]
+
+        if len(available_columns) <= 2:
+            logger.warning("No valid valuation fill columns found in DataFrame")
+            return 0
+
+        result = df[available_columns].copy()
+        result["processed_at"] = datetime.now()
+
+        if "time" in result.columns:
+            result["time"] = _series_to_pydatetime(pd.to_datetime(result["time"]))
+
+        for json_col in self.JSON_COLUMNS:
+            if json_col not in result.columns:
+                result[json_col] = "{}"
+            result[json_col] = result[json_col].apply(self._json_dumps_or_none)
+
+        if "formula_version" not in result.columns:
+            result["formula_version"] = "valuation_fill_v1"
+
+        columns = list(result.columns)
+        cols_str = ", ".join(columns)
+        placeholders = ", ".join([f"${i+1}" for i in range(len(columns))])
+        update_cols = [c for c in columns if c not in ["symbol", "time"]]
+        update_str = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_cols])
+
+        sql = f"""
+            INSERT INTO {self.TABLE_NAME} ({cols_str})
+            VALUES ({placeholders})
+            ON CONFLICT (symbol, time)
+            DO UPDATE SET {update_str}
+        """
+
+        values_list = ProcessedDataStorage._prepare_values_list(result, columns)
+        if not values_list:
+            return 0
+
+        total = 0
+        try:
+            engine = self.db_manager.get_engine()
+            async with engine.begin() as conn:
+                raw_conn = await conn.get_raw_connection()
+                asyncpg_conn = raw_conn.driver_connection
+
+                for i in range(0, len(values_list), batch_size):
+                    batch = values_list[i:i + batch_size]
+                    await asyncpg_conn.executemany(sql, batch)
+                    total += len(batch)
+
+            logger.info(f"Upserted {total} records to {self.TABLE_NAME}")
+            return total
+        except Exception as e:
+            logger.error(f"Valuation fill upsert failed: {e}")
+            raise
+
+    @staticmethod
+    def _json_dumps_or_none(value: Any) -> Optional[str]:
+        import json
+
+        if value is None:
+            return "{}"
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, str):
+            return value
+        try:
+            if pd.isna(value):
+                return "{}"
+        except (TypeError, ValueError):
+            pass
+        return json.dumps(value, ensure_ascii=False)
+
+
 class QuarterlyFundamentalDataStorage:
     """
     季度基本面指标存储管理器

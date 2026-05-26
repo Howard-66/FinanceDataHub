@@ -8,13 +8,14 @@
 - 行业估值：根据行业自动选择核心估值指标
 """
 
-from .valuation import ValuationPercentile
+from .valuation import ValuationFillCalculator, ValuationPercentile
 from .quality import FScoreCalculator
 from .industry_config import IndustryConfigLoader, get_industry_config_loader
 from .industry_valuation import IndustryValuationCalculator
 
 __all__ = [
     "ValuationPercentile",
+    "ValuationFillCalculator",
     "FScoreCalculator",
     "IndustryConfigLoader",
     "get_industry_config_loader",

@@ -263,6 +263,8 @@ class TaskExecutor:
 
         if category == "technical":
             return self._preprocess_technical(params)
+        elif category == "valuation_fill":
+            return self._preprocess_valuation_fill(params)
         elif category == "fundamental":
             return self._preprocess_fundamental(params)
         elif category == "quarterly_fundamental":
@@ -321,6 +323,33 @@ class TaskExecutor:
         output = result.stdout.strip() if result.stdout else ""
         if output:
             logger.info(f"Fundamental preprocess output:\n{output}")
+
+        records_processed = self._parse_preprocess_output(output)
+
+        return {
+            "records_processed": records_processed,
+            "symbols_count": 0
+        }
+
+    def _preprocess_valuation_fill(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """执行估值缺失补值预处理"""
+        cmd = self._build_preprocess_command("valuation_fill", params)
+        logger.info(f"Executing valuation fill preprocess command: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(self.project_root),
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr or result.stdout
+            raise RuntimeError(f"Valuation fill preprocess failed: {error_msg}")
+
+        output = result.stdout.strip() if result.stdout else ""
+        if output:
+            logger.info(f"Valuation fill preprocess output:\n{output}")
 
         records_processed = self._parse_preprocess_output(output)
 

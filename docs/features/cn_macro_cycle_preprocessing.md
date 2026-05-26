@@ -133,7 +133,7 @@
 fdh-cli preprocess run --category macro_cycle
 
 # 查看预处理状态
-fdh-cli preprocess show-status
+fdh-cli preprocess status
 ```
 
 ### SDK

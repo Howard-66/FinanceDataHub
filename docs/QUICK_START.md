@@ -119,6 +119,7 @@ fdh-cli --help
 fdh-cli init --help
 fdh-cli update --help
 fdh-cli status --help
+fdh-cli preprocess --help
 ```
 
 ### 更新数据
@@ -190,6 +191,31 @@ fdh-cli update --dataset minute_1 --symbols 600519.SH --verbose
 # 获取PE、PB等指标数据
 fdh-cli update --dataset daily_basic --symbols 600519.SH
 ```
+
+#### 4.0 A 股估值缺失补值预处理
+```bash
+# 前置: 原始估值和财报数据已更新
+fdh-cli update --dataset daily_basic
+fdh-cli update --dataset income
+fdh-cli update --dataset balancesheet
+fdh-cli update --dataset fina_indicator
+
+# 生成派生估值层
+fdh-cli preprocess run --all --category valuation_fill
+
+# 基于 enriched daily_basic 继续计算估值分位
+fdh-cli preprocess run --all --category fundamental
+
+# 查看预处理能力与状态
+fdh-cli preprocess info
+fdh-cli preprocess status
+```
+
+**说明：**
+- `valuation_fill` 仅适用于 `CN`
+- `daily_basic` 原始表不回写，补值结果落在 `processed_daily_valuation_fill`
+- SDK 查询默认仍返回 raw；传 `filled=True` 才会读取 `v_daily_basic_enriched`
+- `dv_ratio`、`dv_ttm` 当前不做财报近似补值
 
 #### 4.1 更新港股复权因子
 ```bash

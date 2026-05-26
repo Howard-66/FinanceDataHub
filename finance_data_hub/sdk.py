@@ -421,6 +421,7 @@ class FinanceDataHub:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         market: Optional[str] = None,
+        filled: bool = False,
     ) -> Optional[pd.DataFrame]:
         """
         获取每日基本面指标数据（同步方法）
@@ -432,6 +433,7 @@ class FinanceDataHub:
             start_date: 开始日期，格式 'YYYY-MM-DD'，None表示从最早日期开始
             end_date: 结束日期，格式 'YYYY-MM-DD'，None表示到最新日期
             market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
+            filled: 是否返回 v_daily_basic_enriched 中逐字段补值后的估值
 
         Returns:
             Optional[pd.DataFrame]: 每日基本面数据，包含 time, symbol, turnover_rate, volume_ratio, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share, free_share, total_mv, circ_mv 列
@@ -450,7 +452,7 @@ class FinanceDataHub:
             >>> print(data[['symbol', 'time', 'pe', 'pb']].head())
         """
         return asyncio.run(
-            self.get_daily_basic_async(symbols, start_date, end_date, market)
+            self.get_daily_basic_async(symbols, start_date, end_date, market, filled)
         )
 
     async def get_daily_basic_async(
@@ -459,6 +461,7 @@ class FinanceDataHub:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         market: Optional[str] = None,
+        filled: bool = False,
     ) -> Optional[pd.DataFrame]:
         """
         获取每日基本面指标数据（异步方法）
@@ -468,6 +471,7 @@ class FinanceDataHub:
             start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
             end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
             market: 宽市场代码（CN/HK/ALL），None 表示按 symbol 推断或不额外过滤
+            filled: 是否返回 v_daily_basic_enriched 中逐字段补值后的估值
 
         Returns:
             Optional[pd.DataFrame]: 每日基本面数据
@@ -493,9 +497,11 @@ class FinanceDataHub:
         # 处理空列表为None
         symbols_param = symbols if symbols else None
         if market is None:
-            return await self.ops.get_daily_basic(symbols_param, start_date, end_date)
+            return await self.ops.get_daily_basic(
+                symbols_param, start_date, end_date, filled=filled
+            )
         return await self.ops.get_daily_basic(
-            symbols_param, start_date, end_date, market=market
+            symbols_param, start_date, end_date, market=market, filled=filled
         )
 
     def get_adj_factor(

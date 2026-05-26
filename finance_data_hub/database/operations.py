@@ -891,6 +891,7 @@ class DataOperations:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         market: Optional[str] = None,
+        filled: bool = False,
     ) -> Optional[pd.DataFrame]:
         """
         获取每日基本面指标数据
@@ -900,6 +901,7 @@ class DataOperations:
             start_date: 开始日期 (YYYY-MM-DD)，None表示从最早开始
             end_date: 结束日期 (YYYY-MM-DD)，None表示到最新
             market: 宽市场代码（CN/HK/ALL）或交易所代码（SH/SZ/BJ/HK）
+            filled: 是否从 v_daily_basic_enriched 查询逐字段补值后的估值
 
         Returns:
             Optional[pd.DataFrame]: 每日基本面数据，包含 time, symbol, turnover_rate, volume_ratio, pe, pe_ttm, pb, ps, ps_ttm, dv_ratio, dv_ttm, total_share, float_share, free_share, total_mv, circ_mv 列
@@ -953,12 +955,25 @@ class DataOperations:
             return None
 
         where_clause = " AND ".join(conditions)
+        table_name = "v_daily_basic_enriched" if filled else "daily_basic"
+        source_columns = ""
+        if filled:
+            source_columns = """,
+                   d.peg,
+                   d.pe_source, d.pe_ttm_source, d.pb_source, d.ps_source,
+                   d.ps_ttm_source, d.peg_source,
+                   d.dv_ratio_source, d.dv_ttm_source,
+                   d.valuation_fill_sources,
+                   d.valuation_fill_denominator_dates,
+                   d.valuation_fill_quality_flags,
+                   d.valuation_fill_formula_version"""
 
         query = text(f"""
             SELECT d.time, d.symbol, d.turnover_rate, d.volume_ratio, d.pe, d.pe_ttm,
                    d.pb, d.ps, d.ps_ttm, d.dv_ratio, d.dv_ttm, d.total_share,
                    d.float_share, d.free_share, d.total_mv, d.circ_mv
-            FROM daily_basic d
+                   {source_columns}
+            FROM {table_name} d
             LEFT JOIN asset_basic b ON d.symbol = b.symbol
             WHERE {where_clause}
             ORDER BY d.symbol, d.time

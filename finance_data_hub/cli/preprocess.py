@@ -42,6 +42,7 @@ from ..preprocessing.storage import (
     FundamentalDataStorage,
     MacroCycleIndustryStorage,
     MacroCyclePhaseStorage,
+    ValuationFillStorage,
 )
 from ..preprocessing.technical.base import create_indicator
 from ..utils.market import exchanges_for_market, normalize_market
@@ -167,6 +168,31 @@ def _to_local_timestamp(value: Any) -> pd.Timestamp:
 def _to_local_date(value: Any) -> date:
     """将时间统一转换为 Asia/Shanghai 交易日日期。"""
     return _to_local_timestamp(value).date()
+
+
+def _to_local_naive_timestamp(value: Any) -> pd.Timestamp:
+    """将时间统一转换为 Asia/Shanghai 本地无时区时间。"""
+    return _to_local_timestamp(value).tz_localize(None)
+
+
+def _filter_dataframe_from_cutoff(
+    df: pd.DataFrame,
+    column: str,
+    cutoff: Any,
+) -> pd.DataFrame:
+    """
+    按本地无时区时间过滤 DataFrame，避免 tz-aware / tz-naive 比较报错。
+    """
+    if cutoff is None or df.empty or column not in df.columns:
+        return df
+
+    values = pd.to_datetime(df[column], errors="coerce")
+    if getattr(values.dt, "tz", None) is not None:
+        values = values.dt.tz_convert("Asia/Shanghai").dt.tz_localize(None)
+
+    cutoff_ts = _to_local_naive_timestamp(cutoff).normalize()
+    mask = values >= cutoff_ts
+    return df.loc[mask.fillna(False)].copy()
 
 
 def _get_period_end_date(value: Any, freq: str) -> date:
@@ -670,6 +696,231 @@ async def _get_all_stock_symbols_from_fina_indicator(
     result = await db_manager.execute_raw_sql(sql)
     rows = result.fetchall()
     return [row[0] for row in rows]
+
+
+async def _run_valuation_fill_preprocess(
+    db_manager: DatabaseManager,
+    symbols: Optional[List[str]] = None,
+    market: Optional[str] = "CN",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    batch_size: int = 100,
+    verbose: bool = False,
+    force: bool = False,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT_BATCHES,
+) -> Dict[str, Any]:
+    """
+    执行日度估值缺失补值预处理。
+
+    结果写入 processed_daily_valuation_fill，不覆盖 daily_basic 原始数据。
+    """
+    from ..preprocessing.fundamental.valuation import ValuationFillCalculator
+
+    market_code = normalize_market(market, default="CN")
+
+    if not symbols:
+        console.print("[cyan]获取有基本面数据的股票列表...[/cyan]")
+        symbols = await _get_all_stock_symbols_from_daily_basic(
+            db_manager, market=market_code
+        )
+        console.print(f"共 {len(symbols)} 只股票有基本面数据 ({market_code})")
+
+    data_start_date = start_date
+    upsert_cutoff = None
+    incremental_mode = False
+    WINDOW_BUFFER_DAYS = 120
+
+    if not force and not start_date:
+        try:
+            result = await db_manager.execute_raw_sql(
+                "SELECT MAX(time) FROM processed_daily_valuation_fill"
+            )
+            row = result.fetchone()
+            if row and row[0] is not None:
+                latest_time = pd.to_datetime(row[0])
+                data_start_date = (
+                    latest_time - timedelta(days=WINDOW_BUFFER_DAYS)
+                ).strftime("%Y-%m-%d")
+                upsert_cutoff = (latest_time - timedelta(days=5)).to_pydatetime()
+                incremental_mode = True
+                console.print(
+                    f"[green]智能增量模式[/green]: 补值已处理至 {latest_time.strftime('%Y-%m-%d')}"
+                )
+                console.print(f"  数据窗口: {data_start_date} → 今天")
+                console.print(
+                    f"  写入范围: {(latest_time - timedelta(days=5)).strftime('%Y-%m-%d')} → 今天"
+                )
+        except Exception as e:
+            if verbose:
+                console.print(f"[yellow]无法获取补值最新时间，使用全量模式: {e}[/yellow]")
+
+    if not incremental_mode and not start_date:
+        console.print("[yellow]估值补值全量处理模式[/yellow]")
+
+    calculator = ValuationFillCalculator()
+    storage = ValuationFillStorage(db_manager)
+    semaphore = asyncio.Semaphore(max_concurrent)
+    total_symbols = 0
+    total_records = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        mode_label = "增量" if incremental_mode else "全量"
+        task_id = progress.add_task(
+            f"[cyan]{mode_label}预处理估值缺失补值 (并发{max_concurrent})...",
+            total=len(symbols),
+        )
+
+        async def process_batch(batch_syms: List[str]) -> tuple:
+            async with semaphore:
+                placeholders = ", ".join(
+                    [f":sym_{j}" for j in range(len(batch_syms))]
+                )
+                params = {f"sym_{j}": sym for j, sym in enumerate(batch_syms)}
+
+                conditions = [f"d.symbol IN ({placeholders})"]
+                if data_start_date:
+                    conditions.append("d.time >= :start_date")
+                    params["start_date"] = pd.to_datetime(
+                        data_start_date
+                    ).to_pydatetime()
+                if end_date:
+                    conditions.append("d.time <= :end_date")
+                    params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
+                where_clause = " AND ".join(conditions)
+
+                daily_sql = f"""
+                    SELECT d.time, d.symbol,
+                           d.pe, d.pe_ttm, d.pb, d.ps, d.ps_ttm,
+                           d.dv_ratio, d.dv_ttm,
+                           d.total_mv, d.total_share, sd.close
+                    FROM daily_basic d
+                    LEFT JOIN symbol_daily sd
+                      ON sd.symbol = d.symbol AND sd.time::date = d.time::date
+                    WHERE {where_clause}
+                    ORDER BY d.symbol, d.time
+                """
+                income_sql = f"""
+                    SELECT ts_code, end_date_time, ann_date_time, f_ann_date_time,
+                           n_income_attr_p, revenue, total_revenue
+                    FROM income
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date_time
+                """
+                balance_sql = f"""
+                    SELECT ts_code, end_date_time, ann_date_time, f_ann_date_time,
+                           total_hldr_eqy_exc_min_int
+                    FROM balancesheet
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date_time
+                """
+                fina_sql = f"""
+                    SELECT ts_code, end_date_time, ann_date_time, netprofit_yoy, bps
+                    FROM fina_indicator
+                    WHERE ts_code IN ({placeholders})
+                    ORDER BY ts_code, end_date_time
+                """
+
+                daily_result, income_result, balance_result, fina_result = (
+                    await asyncio.gather(
+                        db_manager.execute_raw_sql(daily_sql, params),
+                        db_manager.execute_raw_sql(income_sql, params),
+                        db_manager.execute_raw_sql(balance_sql, params),
+                        db_manager.execute_raw_sql(fina_sql, params),
+                    )
+                )
+
+                daily_rows = daily_result.fetchall()
+                if not daily_rows:
+                    progress.advance(task_id, len(batch_syms))
+                    return 0, 0
+
+                daily_df = pd.DataFrame(
+                    daily_rows,
+                    columns=[
+                        "time", "symbol", "pe", "pe_ttm", "pb", "ps",
+                        "ps_ttm", "dv_ratio", "dv_ttm", "total_mv",
+                        "total_share", "close",
+                    ],
+                )
+                income_rows = income_result.fetchall()
+                income_df = pd.DataFrame(
+                    income_rows,
+                    columns=[
+                        "ts_code", "end_date_time", "ann_date_time",
+                        "f_ann_date_time", "n_income_attr_p", "revenue",
+                        "total_revenue",
+                    ],
+                ) if income_rows else pd.DataFrame()
+                balance_rows = balance_result.fetchall()
+                balance_df = pd.DataFrame(
+                    balance_rows,
+                    columns=[
+                        "ts_code", "end_date_time", "ann_date_time",
+                        "f_ann_date_time", "total_hldr_eqy_exc_min_int",
+                    ],
+                ) if balance_rows else pd.DataFrame()
+                fina_rows = fina_result.fetchall()
+                fina_df = pd.DataFrame(
+                    fina_rows,
+                    columns=[
+                        "ts_code", "end_date_time", "ann_date_time",
+                        "netprofit_yoy", "bps",
+                    ],
+                ) if fina_rows else pd.DataFrame()
+
+                fill_df = calculator.calculate(
+                    daily_basic=daily_df,
+                    income=income_df,
+                    balancesheet=balance_df,
+                    fina_indicator=fina_df,
+                )
+
+                if upsert_cutoff is not None and not fill_df.empty:
+                    fill_df = _filter_dataframe_from_cutoff(
+                        fill_df,
+                        "time",
+                        upsert_cutoff,
+                    )
+
+                batch_records = 0
+                if not fill_df.empty:
+                    batch_records = await storage.upsert(fill_df)
+
+                progress.advance(task_id, len(batch_syms))
+                return len(batch_syms), batch_records
+
+        batch_tasks = []
+        for i in range(0, len(symbols), batch_size):
+            batch_syms = symbols[i:i + batch_size]
+            if verbose:
+                progress.console.print(
+                    f"  批次 {i // batch_size + 1}: {len(batch_syms)} 只股票"
+                )
+            batch_tasks.append(process_batch(batch_syms))
+
+        results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"估值补值批次处理失败: {result}")
+                if verbose:
+                    progress.console.print(f"  [red]补值批次失败: {result}[/red]")
+                continue
+            batch_count, batch_records = result
+            total_symbols += batch_count
+            total_records += batch_records
+
+    return {
+        "symbols_processed": total_symbols,
+        "records_processed": total_records,
+    }
 
 
 async def _get_stock_data(
@@ -1249,7 +1500,7 @@ async def _run_fundamental_preprocess(
 
                 sql = f"""
                     SELECT time, symbol, pe_ttm, pb, ps_ttm, dv_ttm
-                    FROM daily_basic
+                    FROM v_daily_basic_enriched
                     WHERE {where_clause}
                     ORDER BY symbol, time
                 """
@@ -1293,7 +1544,7 @@ async def _run_fundamental_preprocess(
 
                 # 增量模式：仅 upsert 新数据
                 if upsert_cutoff is not None:
-                    df = df[df["time"] >= upsert_cutoff]
+                    df = _filter_dataframe_from_cutoff(df, "time", upsert_cutoff)
 
                 batch_records = 0
                 if not df.empty:
@@ -1550,7 +1801,11 @@ async def _run_quarterly_fundamental_preprocess(
                 
                 # 增量模式：仅 upsert 新季度数据
                 if upsert_cutoff is not None and "end_date_time" in fscore_df.columns:
-                    fscore_df = fscore_df[fscore_df["end_date_time"] >= upsert_cutoff]
+                    fscore_df = _filter_dataframe_from_cutoff(
+                        fscore_df,
+                        "end_date_time",
+                        upsert_cutoff,
+                    )
                 
                 if fscore_df.empty:
                     progress.advance(task, len(batch_symbols))
@@ -1904,7 +2159,7 @@ def run_preprocess(
         None,
         "--category",
         "-c",
-        help="预处理类别 (technical, fundamental, quarterly_fundamental, industry_valuation, macro_cycle, all)"
+        help="预处理类别 (technical, valuation_fill, fundamental, quarterly_fundamental, industry_valuation, macro_cycle, all)"
     ),
     symbols: Optional[str] = typer.Option(
         None,
@@ -2013,6 +2268,7 @@ def run_preprocess(
 
     if market_code != "CN" and category in {
         "fundamental",
+        "valuation_fill",
         "quarterly_fundamental",
         "quarterly",
         "industry_valuation",
@@ -2073,6 +2329,24 @@ def run_preprocess(
                 )
                 results["technical"] = result
                 console.print(f"\n[green]技术指标处理完成[/green]")
+                console.print(f"  处理股票: {result['symbols_processed']}")
+                console.print(f"  处理记录: {result['records_processed']}\n")
+
+            if category in ["valuation_fill", "all"]:
+                console.print("[bold cyan]== 估值缺失补值预处理 ==[/bold cyan]\n")
+                result = await _run_valuation_fill_preprocess(
+                    db_manager,
+                    symbols=symbol_list,
+                    market=market_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    batch_size=batch_size,
+                    verbose=verbose,
+                    force=force,
+                    max_concurrent=max_concurrent,
+                )
+                results["valuation_fill"] = result
+                console.print(f"\n[green]估值缺失补值处理完成[/green]")
                 console.print(f"  处理股票: {result['symbols_processed']}")
                 console.print(f"  处理记录: {result['records_processed']}\n")
             
@@ -2221,7 +2495,10 @@ def show_status(
             # 基本面指标表
             console.print("[bold]基本面指标表:[/bold]")
             
-            stats = await _get_table_stats(db_manager, FundamentalDataStorage.TABLE_NAME)
+            valuation_tables = [
+                ValuationFillStorage.TABLE_NAME,
+                FundamentalDataStorage.TABLE_NAME,
+            ]
             
             table2 = Table()
             table2.add_column("表名", style="cyan")
@@ -2230,21 +2507,24 @@ def show_status(
             table2.add_column("数据范围")
             table2.add_column("最后更新")
             
-            date_range = "-"
-            if stats["min_time"] and stats["max_time"]:
-                date_range = f"{stats['min_time'].strftime('%Y-%m-%d')} ~ {stats['max_time'].strftime('%Y-%m-%d')}"
-            
-            last_update = "-"
-            if stats["last_update"]:
-                last_update = stats["last_update"].strftime("%Y-%m-%d %H:%M")
-            
-            table2.add_row(
-                FundamentalDataStorage.TABLE_NAME,
-                f"{stats['record_count']:,}",
-                str(stats['symbol_count']),
-                date_range,
-                last_update,
-            )
+            for table_name in valuation_tables:
+                stats = await _get_table_stats(db_manager, table_name)
+
+                date_range = "-"
+                if stats["min_time"] and stats["max_time"]:
+                    date_range = f"{stats['min_time'].strftime('%Y-%m-%d')} ~ {stats['max_time'].strftime('%Y-%m-%d')}"
+
+                last_update = "-"
+                if stats["last_update"]:
+                    last_update = stats["last_update"].strftime("%Y-%m-%d %H:%M")
+
+                table2.add_row(
+                    table_name,
+                    f"{stats['record_count']:,}",
+                    str(stats['symbol_count']),
+                    date_range,
+                    last_update,
+                )
             
             console.print(table2)
             console.print()
@@ -2319,6 +2599,7 @@ def show_info():
     
     # 基本面指标
     console.print("[bold]支持的基本面指标:[/bold]")
+    console.print("  • 估值补值: PE/PB/PS/PEG 缺失值的财报派生补值")
     console.print("  • 估值分位: PE/PB/PS 的 5年/10年 历史分位")
     console.print("  • F-Score: Piotroski 财务质量评分 (0-9)")
     console.print("  • 中国宏观周期: raw_phase/stable_phase + 月度行业快照")
@@ -2342,6 +2623,7 @@ def show_info():
     console.print("[bold]预处理数据表:[/bold]")
     for (freq, adj), table_name in ProcessedDataStorage.TABLE_MAP.items():
         console.print(f"  • {table_name}: {freq} + {adj}")
+    console.print(f"  • {ValuationFillStorage.TABLE_NAME}: 日度估值缺失补值")
     console.print(f"  • {FundamentalDataStorage.TABLE_NAME}: 基本面指标")
     console.print(f"  • {MacroCyclePhaseStorage.TABLE_NAME}: 中国宏观周期主表")
     console.print(f"  • {MacroCycleIndustryStorage.TABLE_NAME}: 中国宏观周期行业快照")

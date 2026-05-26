@@ -388,6 +388,10 @@ psql "$DATABASE_URL" -f sql/init/003_create_hypertables.sql
 psql "$DATABASE_URL" -f sql/init/004_create_adj_factor.sql
 psql "$DATABASE_URL" -f sql/init/005_create_functions.sql
 psql "$DATABASE_URL" -f sql/init/006_create_continuous_aggregates.sql
+psql "$DATABASE_URL" -f sql/init/007_create_preprocess_tables.sql
+
+# 已有数据库升级到当前版本时，执行新增迁移
+psql "$DATABASE_URL" -f sql/migrations/025_add_daily_valuation_fill.sql
 
 # 5. 获取数据
 
@@ -439,6 +443,20 @@ fdh-cli update --dataset daily --market HK --trade-date 2024-11-18
 fdh-cli update --dataset adj_factor --market HK --trade-date 2024-11-18
 # 注意: index_daily 不支持 --trade-date 全指数单日批量模式
 
+# 估值缺失补值预处理（A股）
+# 前置: daily_basic + income + balancesheet + fina_indicator 已更新
+fdh-cli preprocess run --all --category valuation_fill
+
+# 基于 enriched daily_basic 继续计算估值分位
+fdh-cli preprocess run --all --category fundamental
+
+# 首次全量重建
+fdh-cli preprocess run --all --category valuation_fill --force
+
+# 查看预处理模块信息和状态
+fdh-cli preprocess info
+fdh-cli preprocess status
+
 # 向后兼容 - 仍支持 --frequency 参数
 fdh-cli update --frequency basic            # 股票基本信息
 fdh-cli update --frequency daily            # 日线数据（已废弃，请使用 --dataset）
@@ -480,6 +498,19 @@ print(f"周线指标: {len(weekly_metrics)} 条")
 weekly_adj = fdh.get_adj_factor_weekly(['600519.SH'], '2024-01-01', '2024-12-31')
 print(f"周线复权因子: {len(weekly_adj)} 条")
 
+# 获取逐字段补值后的每日估值
+filled_basic = fdh.get_daily_basic(
+    ['600519.SH'],
+    '2024-01-01',
+    '2024-12-31',
+    filled=True,
+)
+print(
+    filled_basic[
+        ['symbol', 'time', 'pe_ttm', 'pb', 'ps_ttm', 'peg', 'pe_ttm_source']
+    ].tail()
+)
+
 # 获取月线复权因子
 monthly_adj = fdh.get_adj_factor_monthly(['600519.SH'], '2020-01-01', '2024-12-31')
 print(f"月线复权因子: {len(monthly_adj)} 条")
@@ -518,6 +549,34 @@ EOF
 | `minute_5` | 5分钟数据 | `fdh-cli update --dataset minute_5 --symbols 600519.SH` |
 | `adj_factor` | 复权因子 | `fdh-cli update --dataset adj_factor` |
 | `index_daily` | 指数日线行情 | `fdh-cli update --dataset index_daily --symbols 000300.SH` |
+
+### A 股估值缺失补值
+
+`daily_basic` 保持为 Tushare 原始镜像，补值结果写入独立表
+`processed_daily_valuation_fill`，并通过 `v_daily_basic_enriched` 逐字段合并。
+
+典型流程：
+
+```bash
+# 1. 更新原始估值和财报数据
+fdh-cli update --dataset daily_basic
+fdh-cli update --dataset income
+fdh-cli update --dataset balancesheet
+fdh-cli update --dataset fina_indicator
+
+# 2. 生成派生估值层
+fdh-cli preprocess run --all --category valuation_fill
+
+# 3. 在 enriched 输入上重算估值分位
+fdh-cli preprocess run --all --category fundamental
+```
+
+口径说明：
+- `pe_ttm`、`pb`、`ps_ttm`、`peg` 支持财报派生补值
+- `pe`、`ps` 使用最新已公告年报口径补值，并通过 `*_source` 标记来源
+- 当 TTM 数据窗口不完整、无法可靠计算 `pe_ttm` / `ps_ttm` 时，会回退使用年报口径的 `pe` / `ps`，并通过 `*_source` 与 `quality_flags` 标记为 fallback
+- `dv_ratio`、`dv_ttm` 当前不做财报近似补值，仍以 raw 为准
+- SDK 默认返回 raw；传 `filled=True` 才会读取 `v_daily_basic_enriched`
 
 ### 港股 CLI 指南
 
@@ -690,8 +749,9 @@ tests/
 - [快速开始](./QUICK_START.md) - 完整使用示例、故障排除、Python API和开发指南
 
 **阶段交付文档**:
-- [Phase 2 最终交付报告](./FINAL_SUMMARY.md) - Phase 2 完整交付文档，包含Bug修复记录、功能验证清单、代码亮点等详细技术信息
-- [Phase 3 完整文档](./Phase3_Complete_Documentation.md) - Phase 3 数据访问与查询层完整实施文档，包含API文档、使用指南、性能指标和技术架构
+- [Phase 2 最终交付报告](./docs/FINAL_SUMMARY.md) - Phase 2 完整交付文档，包含Bug修复记录、功能验证清单、代码亮点等详细技术信息
+- [Phase 3 完整文档](./docs/features/Phase3_Complete_Documentation.md) - Phase 3 数据访问与查询层完整实施文档，包含API文档、使用指南、性能指标和技术架构
+- [A 股日度估值缺失补值](./docs/features/daily_valuation_fill.md) - 补值口径、CLI 工作流、SDK `filled=True` 查询方式
 
 **技术文档**:
 - [CLAUDE.md](./CLAUDE.md) - AI开发助手指南和项目规范
@@ -706,14 +766,14 @@ Phase 3 已全部完成！SDK 现在提供了完整的金融数据查询功能�
 **1. DataOperations 查询方法（5个）**
 - ✅ `get_symbol_daily()` - 日线 OHLCV 数据查询
 - ✅ `get_symbol_minute()` - 分钟级 OHLCV 数据查询（支持1/5/15/30/60分钟）
-- ✅ `get_daily_basic()` - 每日基本面指标查询
+- ✅ `get_daily_basic()` - 每日基本面指标查询，支持 `filled=True` 读取补值视图
 - ✅ `get_adj_factor()` - 复权因子查询
 - ✅ `get_asset_basic()` - 股票基本信息查询
 
 **2. SDK 查询接口（10个方法对 = 5对同步/异步）**
 - ✅ `get_daily()` / `get_daily_async()` - 日线数据
 - ✅ `get_minute()` / `get_minute_async()` - 分钟数据
-- ✅ `get_daily_basic()` / `get_daily_basic_async()` - 每日基本面
+- ✅ `get_daily_basic()` / `get_daily_basic_async()` - 每日基本面，可选逐字段补值
 - ✅ `get_adj_factor()` / `get_adj_factor_async()` - 复权因子
 - ✅ `get_basic()` / `get_basic_async()` - 股票基本信息
 
@@ -737,7 +797,7 @@ Phase 3 已全部完成！SDK 现在提供了完整的金融数据查询功能�
 |----------|----------|----------|------|
 | 日线数据 | `get_daily_async()` | `get_daily()` | OHLCV + 成交量 + 复权因子 |
 | 分钟数据 | `get_minute_async()` | `get_minute()` | 1/5/15/30/60分钟线 |
-| 每日基本面 | `get_daily_basic_async()` | `get_daily_basic()` | 估值、财务、流动性指标 |
+| 每日基本面 | `get_daily_basic_async()` | `get_daily_basic()` | 估值、财务、流动性指标；支持 `filled=True` |
 | 复权因子 | `get_adj_factor_async()` | `get_adj_factor()` | 前复权、后复权因子 |
 | 基本信息 | `get_basic_async()` | `get_basic()` | 股票基本信息（非时间序列） |
 | 周线数据 | `get_weekly_async()` | `get_weekly()` | 周线 OHLCV 聚合 |
@@ -845,8 +905,9 @@ daily_data = asyncio.run(get_data())
 #### 📝 完整文档
 
 详细的使用指南、API 文档和实施报告请参考：
-- [Phase 3 完整文档](./Phase3_Complete_Documentation.md) - 包含完整的实施细节、使用示例、性能指标和技术架构
+- [Phase 3 完整文档](./docs/features/Phase3_Complete_Documentation.md) - 包含完整的实施细节、使用示例、性能指标和技术架构
 - [定时下载与数据预处理设计](./docs/features/SchedulerPreprocessing.md) - 调度器、预处理类别与运行方式
+- [A 股日度估值缺失补值](./docs/features/daily_valuation_fill.md) - 补值口径、CLI 工作流、SDK `filled=True` 查询方式
 - [中国宏观周期预处理](./docs/features/cn_macro_cycle_preprocessing.md) - 月度宏观阶段与行业快照设计、CLI、SDK、调度配置
 - [ValueInvesting 宏观周期接入指南](./docs/guides/valueinvesting_macro_cycle_integration_guide.md) - 智能选股与 qlib 特征补充的下游接入建议
 

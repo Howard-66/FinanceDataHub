@@ -299,6 +299,21 @@ jobs:
     depends_on: [hk_daily_update, hk_adj_factor_update]
 
   # 基本面指标预处理 - 每日运行
+  valuation_fill_preprocess:
+    enabled: true
+    type: preprocess
+    category: valuation_fill
+    schedule:
+      type: cron
+      hour: 17
+      minute: 40
+      day_of_week: "mon-fri"
+    params:
+      all: true
+      market: CN
+    depends_on: [daily_basic_update, financial_update]
+
+  # 基本面指标预处理 - 每日运行
   fundamental_preprocess:
     enabled: true
     type: preprocess
@@ -311,7 +326,7 @@ jobs:
     params:
       all: true
       market: CN
-    depends_on: [daily_basic_update, financial_update]
+    depends_on: [valuation_fill_preprocess]
 
   # 行业差异化估值预处理 - 每日运行
   industry_valuation_preprocess:
@@ -349,6 +364,7 @@ jobs:
 - 港股建议拆分为独立任务，例如 `hk_daily_update`、`hk_adj_factor_update`、`hk_technical_preprocess`
 - `fdh-cli preprocess run --all --category technical --market HK` 会自动按港股股票池取 symbol，不需要手动传列表
 - 当前非 `CN` 市场仅支持 `technical` 预处理
+- A 股估值链路建议按 `valuation_fill -> fundamental -> industry_valuation` 顺序串联
 
 #### 1.3 CLI 命令扩展
 
@@ -1402,11 +1418,14 @@ class FinanceDataHub:
 fdh-cli update --dataset daily --force
 fdh-cli update --dataset daily_basic --force
 fdh-cli update --dataset adj_factor --force
+fdh-cli update --dataset income --force
+fdh-cli update --dataset balancesheet --force
 fdh-cli update --dataset fina_indicator --force
 # ... 其他 dataset
 
 # 首次预处理
 fdh-cli preprocess run --category technical --all
+fdh-cli preprocess run --category valuation_fill --all
 fdh-cli preprocess run --category fundamental --all
 fdh-cli preprocess run --category quarterly_fundamental --all
 fdh-cli preprocess run --category industry_valuation --all
