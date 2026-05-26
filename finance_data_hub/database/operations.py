@@ -10,7 +10,18 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import (
+    Column,
+    DateTime,
+    MetaData,
+    Numeric,
+    String,
+    Table,
+    func,
+    literal_column,
+    text,
+)
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from finance_data_hub.database.manager import DatabaseManager
 from finance_data_hub.utils.market import (
@@ -35,6 +46,15 @@ FUTURES_MINUTE_AGGREGATE_TABLES = {
     "30m": "minute_30m",
     "60m": "minute_60m",
 }
+
+ADJ_FACTOR_TABLE = Table(
+    "adj_factor",
+    MetaData(),
+    Column("symbol", String(20), primary_key=True),
+    Column("time", DateTime(timezone=True), primary_key=True),
+    Column("adj_factor", Numeric(20, 10), nullable=False),
+    Column("updated_at", DateTime(timezone=True)),
+)
 
 
 def _normalize_futures_minute_frequency(frequency: str) -> str:
@@ -1072,18 +1092,6 @@ class DataOperations:
         if data.empty:
             return 0
 
-        insert_sql = """
-            INSERT INTO adj_factor (
-                symbol, time, adj_factor
-            )
-            VALUES (
-                :symbol, :time, :adj_factor
-            )
-            ON CONFLICT (symbol, time) DO UPDATE SET
-                adj_factor = EXCLUDED.adj_factor,
-                updated_at = NOW()
-        """
-
         total_inserted = 0
 
         for i in range(0, len(data), batch_size):
@@ -1102,13 +1110,30 @@ class DataOperations:
                             value, data_type="adj_factor", market=record_market
                         )
 
+            insert_stmt = postgresql_insert(ADJ_FACTOR_TABLE).values(records)
+            upsert_stmt = (
+                insert_stmt.on_conflict_do_update(
+                    index_elements=["symbol", "time"],
+                    set_={
+                        "adj_factor": insert_stmt.excluded.adj_factor,
+                        "updated_at": func.now(),
+                    },
+                    where=ADJ_FACTOR_TABLE.c.adj_factor.is_distinct_from(
+                        insert_stmt.excluded.adj_factor
+                    ),
+                )
+                .returning(literal_column("1"))
+            )
+
             async with self.db_manager._engine.begin() as conn:
-                result = await conn.execute(text(insert_sql), records)
-                total_inserted += result.rowcount
+                result = await conn.execute(upsert_stmt)
+                changed_count = len(result.fetchall())
+                total_inserted += changed_count
 
             logger.info(
                 f"Inserted batch {i // batch_size + 1}: "
-                f"{len(batch)} records (total: {total_inserted})"
+                f"{changed_count}/{len(batch)} changed records "
+                f"(total: {total_inserted})"
             )
 
         logger.info(f"Total inserted {total_inserted} adj_factor records")

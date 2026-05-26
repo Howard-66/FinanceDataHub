@@ -921,16 +921,384 @@ daily_data = asyncio.run(get_data())
 | 复权因子 | < 200ms (2个股票，5年) | ✅ 符合 |
 | 股票基本信息 | < 100ms (10个股票) | ✅ 符合 |
 
-### 下一步 - Phase 4 (规划中)
+### 📦 Phase 4: 调度与预处理模块 - 进行中 🔄
+
+Phase 4 核心能力已完成，仍在持续补充端到端集成测试与下游接入文档。
+
+#### ✅ 已完成功能
+
+**4.1 调度模块** ✅
+- ✅ 设计 `schedules.yml` 配置格式
+- ✅ 实现 `scheduler/` 模块（models, engine, executor, manager）
+- ✅ 实现 CLI `fdh-cli schedule` 命令
+
+**4.2 预处理模块** ✅
+- ✅ 复权处理（qfq/hfq）
+- ✅ 周期重采样（weekly/monthly）
+- ✅ 技术指标（MA/EMA/MACD/RSI/ATR）
+- ✅ 基本面指标（估值分位/F-Score）
+- ✅ 行业差异化估值（`processed_industry_valuation`）
+- ✅ 中国宏观周期（`processed_cn_macro_cycle_phase` / `processed_cn_macro_cycle_industry`）
+- ✅ 预处理数据表 SQL
+
+**4.3 SDK 扩展** ✅
+- ✅ `get_daily_adjusted()` - 复权数据获取
+- ✅ `get_processed_daily/weekly/monthly()` - 预处理数据获取
+- ✅ `get_processed_valuation_pct()` - 估值分位指标
+- ✅ `get_quarterly_fundamental()` / `get_fundamental_combined()` - 季度基本面 / 合并基本面
+- ✅ `get_industry_valuation()` - 行业差异化估值
+- ✅ `get_cn_macro_cycle()` / `get_cn_macro_cycle_industries()` - 宏观周期
+- ✅ `calculate_indicators()` - 实时指标计算
+
+**4.4 CLI 扩展** ✅
+- ✅ `fdh-cli preprocess run` - 执行预处理
+- ✅ `fdh-cli preprocess status` - 查看状态
+- ✅ `fdh-cli preprocess info` - 显示模块信息
+
+**4.5 季度基本面指标分表存储** ✅
+- ✅ F-Score 计算器（9 项 Piotroski 指标）
+- ✅ `processed_fundamental_quality` 独立预处理表（季频与日频分开）
+- ✅ `roe_yearly` 字段支持年化 ROE 计算
+- ✅ 数据迁移脚本 `008_create_quarterly_fundamental.sql`、`009_add_roe_yearly.sql`
+
+**4.6 待完成**
+- 🔲 端到端集成测试补充
+- 🔲 下游接入文档与示例完善
+
+---
+
+## 📐 数据标准化约定
+
+### 列名统一
+- 标准列: `time`, `symbol`, `open`, `high`, `low`, `close`, `volume`, `amount`, `adj_factor`
+- 时间格式: ISO 8601 或 Pandas Timestamp
+- 数值类型: 浮点数（价格、成交量）和整数（股票代码）
+
+### 时间存储规范
+
+所有数据统一使用 `TIMESTAMPTZ`（带时区的 timestamp）存储，时区统一为 `Asia/Shanghai` (UTC+8)：
+
+| 数据类型 | 时间列 | 格式示例 | 说明 |
+|---------|-------|---------|------|
+| 日线数据 | `time` | `2024-01-02 15:00:00.000 +0800` | 交易日收盘时间 15:00 |
+| 分钟数据 | `time` | `2024-01-02 10:30:00.000 +0800` | 实际交易时间 |
+| 周线数据 | `time` | `2024-01-05 15:00:00.000 +0800` | 周五收盘时间 |
+| 月线数据 | `time` | `2024-01-31 15:00:00.000 +0800` | 月末交易日收盘时间 |
+| 季度财报 | `end_date_time` | `2024-03-31 15:00:00.000 +0800` | 季度末收盘时间 |
+| 宏观数据 | `time` | `2024-03-31 15:00:00.000 +0800` | 季度末/月末收盘时间 |
+
+**重要说明**:
+1. **时区统一**: 所有数据统一使用 `Asia/Shanghai` 时区存储（即使未来支持港股/美股数据也将遵循）
+2. **收盘时间标记**: 日频及以上数据统一标记为对应市场的收盘时间（中国大陆 15:00，港股 16:00）
+3. **查询返回**: SDK 返回 DataFrame 中 `time` 列为 `datetime64[ns, Asia/Shanghai]` 类型
+4. **日期参数**: SDK 接受 `YYYY-MM-DD` 字符串格式，内部自动转换为带时区时间戳
+
+### Symbol 格式
+- 格式: `<code>.<exchange>`
+- 示例: `600519.SH`（贵州茅台沪市）、`000858.SZ`（五粮液深市）、`00700.HK`（腾讯港股）
+
+---
+
+## 📊 SDK 完整数据类型支持
+
+下表列出 SDK 提供的全部查询方法（同步 / 异步配对）。
+
+| 数据类型 | 方法 | 参数说明 |
+|----------|------|---------|
+| 日线 | `get_daily()` / `get_daily_async()` | symbols, start_date, end_date |
+| 分钟 | `get_minute()` / `get_minute_async()` | symbols, start_date, end_date, frequency |
+| 每日基本面 | `get_daily_basic()` / `get_daily_basic_async()` | symbols, start_date, end_date, filled |
+| 复权因子 | `get_adj_factor()` / `get_adj_factor_async()` | symbols, start_date, end_date |
+| 复权日线 | `get_daily_adjusted()` / `get_daily_adjusted_async()` | symbols, start_date, end_date, adjust (qfq/hfq/none) |
+| 基本信息 | `get_basic()` / `get_basic_async()` | symbols（None 表示所有） |
+| 周线 | `get_weekly()` / `get_weekly_async()` | symbols, start_date, end_date |
+| 月线 | `get_monthly()` / `get_monthly_async()` | symbols, start_date, end_date |
+| GDP | `get_cn_gdp()` / `get_cn_gdp_async()` | start_date, end_date（季度末日期） |
+| PPI | `get_cn_ppi()` / `get_cn_ppi_async()` | start_date, end_date（月份末日期） |
+| 货币供应量 | `get_cn_m()` / `get_cn_m_async()` | start_date, end_date（月份末日期） |
+| PMI | `get_cn_pmi()` / `get_cn_pmi_async()` | start_date, end_date（月份末日期） |
+| 指数日线行情 | `get_index_daily()` / `get_index_daily_async()` | ts_code, start_date, end_date |
+| 指数每日指标 | `get_index_dailybasic()` / `get_index_dailybasic_async()` | ts_code, start_date, end_date |
+| 财务指标 | `get_fina_indicator()` / `get_fina_indicator_async()` | ts_code, start_date, end_date（报告期） |
+| 现金流量表 | `get_cashflow()` / `get_cashflow_async()` | ts_code, start_date, end_date（报告期） |
+| 资产负债表 | `get_balancesheet()` / `get_balancesheet_async()` | ts_code, start_date, end_date（报告期） |
+| 利润表 | `get_income()` / `get_income_async()` | ts_code, start_date, end_date（报告期） |
+| 申万行业分类 | `get_sw_industry_classify()` / `get_sw_industry_classify_async()` | level (L1/L2/L3) |
+| 申万行业成分股 | `get_sw_industry_members()` / `get_sw_industry_members_async()` | l1_code/l2_code/l3_code/ts_code |
+| 申万行业日线行情 | `get_sw_daily()` / `get_sw_daily_async()` | ts_code, start_date, end_date |
+| 交易日历 | `get_trade_cal()` / `get_trade_cal_async()` | exchange, start_date, end_date, is_open |
+| 指数成分权重 | `get_index_weight()` / `get_index_weight_async()` | index_code, start_date, end_date, trade_date |
+| 预处理日线 | `get_processed_daily()` / `get_processed_daily_async()` | symbols, start_date, end_date, indicators |
+| 预处理周线 | `get_processed_weekly()` / `get_processed_weekly_async()` | symbols, start_date, end_date, indicators |
+| 预处理月线 | `get_processed_monthly()` / `get_processed_monthly_async()` | symbols, start_date, end_date, indicators |
+| 估值分位 | `get_processed_valuation_pct()` / `get_processed_valuation_pct_async()` | symbols, start_date, end_date, indicators |
+| 季度基本面 | `get_quarterly_fundamental()` / `get_quarterly_fundamental_async()` | symbols, start_date, end_date |
+| 合并基本面 | `get_fundamental_combined()` / `get_fundamental_combined_async()` | symbols, start_date, end_date, include_fscore |
+| 行业差异化估值 | `get_industry_valuation()` / `get_industry_valuation_async()` | symbols, l2_names, start_date, end_date, include_exempted |
+| 中国宏观周期 | `get_cn_macro_cycle()` / `get_cn_macro_cycle_async()` | start_date, end_date, phase_mode (`stable/raw`) |
+| 宏观行业快照 | `get_cn_macro_cycle_industries()` / `get_cn_macro_cycle_industries_async()` | start_date, end_date, preferred_only, phase_mode |
+
+**频率选项**（用于 `get_minute`）: `minute_1`, `minute_5`, `minute_15`, `minute_30`, `minute_60`
+
+### 复权数据与实时技术指标计算
+
+```python
+from finance_data_hub import FinanceDataHub
+from finance_data_hub.config import get_settings
+
+fdh = FinanceDataHub(get_settings())
+
+# 前复权 / 后复权 / 不复权
+qfq = await fdh.get_daily_adjusted_async(['600519.SH'], '2024-01-01', '2024-12-31', adjust='qfq')
+hfq = await fdh.get_daily_adjusted_async(['600519.SH'], '2020-01-01', '2024-12-31', adjust='hfq')
+raw = await fdh.get_daily_adjusted_async(['600519.SH'], '2024-01-01', '2024-12-31', adjust='none')
+
+# 实时计算技术指标（支持 ma_*, ema_*, macd, rsi_*, atr_*）
+daily = fdh.get_daily(['600519.SH'], '2024-01-01', '2024-12-31')
+with_ind = fdh.calculate_indicators(
+    daily,
+    indicators=['ma_20', 'ma_60', 'macd', 'rsi_14', 'atr_14'],
+    adjust='qfq',
+)
+```
+
+### 预处理流水线（PreprocessPipeline）
+
+```python
+from finance_data_hub.preprocessing import PreprocessPipeline, AdjustType, ResampleFreq
+
+pipeline = PreprocessPipeline()
+result = (
+    pipeline
+    .set_data(raw_data)
+    .adjust(AdjustType.QFQ)
+    .add_indicator("ma_20")
+    .add_indicator("macd")
+    .add_indicator("rsi_14")
+    .run()
+)
+
+# 多频率运行（日 / 周 / 月）
+pipeline = PreprocessPipeline()
+pipeline.set_data(raw_data)
+pipeline.adjust(AdjustType.QFQ)
+pipeline.add_indicators(["ma_20", "macd", "rsi_14"])
+pipeline.resample(ResampleFreq.WEEKLY)
+pipeline.resample(ResampleFreq.MONTHLY)
+results = pipeline.run_with_resample()
+```
+
+### 数据新鲜度检查
+
+```python
+freshness = await fdh.check_data_freshness(symbols=['600519.SH'], dataset='daily')
+print(freshness['available_providers'], freshness['recommendation'])
+```
+
+---
+
+## 🛠️ CLI 完整命令参考
+
+### 数据更新（更多数据集）
+
+```bash
+# 宏观经济数据
+fdh-cli update --dataset gdp [--force] [--start-date 2020-03-31 --end-date 2024-12-31]
+fdh-cli update --dataset ppi [--force] [--start-date 2020-01-31 --end-date 2024-12-31]
+fdh-cli update --dataset m   [--force] [--start-date 2020-01-31 --end-date 2024-12-31]
+fdh-cli update --dataset pmi [--force] [--start-date 2020-01-31 --end-date 2024-12-31]
+
+# 指数行情 / 指标 / 成分权重
+fdh-cli update --dataset index_daily       [--symbols 000300.SH] [--start-date ... --end-date ...]
+fdh-cli update --dataset index_dailybasic  [--symbols 000001.SH] [--trade-date 2024-11-27]
+fdh-cli update --dataset index_weight      [--symbols 000300.SH,000905.SH] [--trade-date 2024-06-30]
+
+# 财务三大报表 / 财务指标（按股票）
+fdh-cli update --dataset fina_indicator --symbols 600519.SH,000858.SZ
+fdh-cli update --dataset cashflow        --symbols 600519.SH --start-date 2020-03-31 --end-date 2024-12-31
+fdh-cli update --dataset balancesheet    --symbols 600519.SH
+fdh-cli update --dataset income          --symbols 600519.SH
+
+# 申万行业（分类 / 成分股 / 日线）
+fdh-cli update --dataset sw_industry_classify
+fdh-cli update --dataset sw_industry_member
+fdh-cli update --dataset sw_daily [--symbols 801780.SI,801790.SI] [--trade-date 2024-06-28]
+
+# 交易日历（7 个交易所）
+fdh-cli update --dataset trade_cal [--symbols SSE,SZSE] [--start-date 2024-01-01 --end-date 2024-12-31]
+```
+
+### 调度命令（schedule）
+
+```bash
+# 列出 / 执行 / 启动 / 停止 / 状态
+fdh-cli schedule list
+fdh-cli schedule run --job daily_update
+fdh-cli schedule run --job macro_cycle_preprocess
+fdh-cli schedule start
+fdh-cli schedule stop
+fdh-cli schedule status
+```
+
+### 预处理命令（preprocess）
+
+```bash
+# 模块信息 / 状态
+fdh-cli preprocess info
+fdh-cli preprocess status
+
+# 执行预处理
+fdh-cli preprocess run [OPTIONS]
+```
+
+**预处理类别（`--category`）**:
+- `technical`: 技术指标（MA, MACD, RSI, ATR）
+- `fundamental`: 日频基本面指标（估值分位）
+- `quarterly_fundamental`: 季度基本面指标（F-Score、roe_5y_avg、ni_cfo_corr_3y 等）
+- `industry_valuation`: 行业差异化估值（按 `industry_config.json` 自动选择 PE/PB/PS/PEG）
+- `macro_cycle`: 中国宏观周期（月度主表 + 申万三级行业快照）
+- `all`: 全部类别
+
+**关键选项**:
+
+| 选项 | 说明 |
+|------|------|
+| `--all, -a` | 处理全部股票 |
+| `--symbols, -s` | 股票代码列表（逗号分隔） |
+| `--market` | 市场（`CN` / `HK` / `ALL`，默认 `CN`） |
+| `--freq, -f` | 频率（`daily,weekly,monthly`） |
+| `--adjust` | 复权类型（`qfq` / `hfq` / `none`） |
+| `--start-date` / `--end-date` | 日期范围 |
+| `--force` | 强制全量重算 |
+| `--batch-size, -b` | 批处理大小 |
+| `--max-concurrent, -C` | 最大 I/O 并发批次数 |
+| `--num-workers, -w` | 进程池工作进程数（CPU 并发，0=自动） |
+| `--verbose, -v` | 详细日志 |
+
+**支持的技术指标**: `ma_5/10/20/60/120/250`, `macd`（dif/dea/hist）, `rsi_6/14`, `atr_14`
+
+**预处理数据表**:
+
+| 表名 | 频率 | 说明 |
+|------|------|------|
+| `processed_daily_qfq` / `processed_weekly_qfq` / `processed_monthly_qfq` | 日 / 周 / 月 | 前复权 OHLCV + 技术指标 |
+| `processed_valuation_pct` | 日频 | 估值分位等日频基本面指标 |
+| `processed_fundamental_quality` | 季频 | F-Score 及财务质量指标 |
+| `processed_industry_valuation` | 日频 | 行业差异化估值指标 |
+| `processed_cn_macro_cycle_phase` | 月频 | 宏观周期主表（raw/stable + 信用脉冲 + 生效月） |
+| `processed_cn_macro_cycle_industry` | 月频 | 宏观周期行业快照（申万三级） |
+
+**典型用法**:
+
+```bash
+# 首次全量预处理
+fdh-cli preprocess run --all --category all --force
+
+# 日常增量更新（智能检测复权变动）
+fdh-cli preprocess run --all --category technical
+
+# 港股技术指标
+fdh-cli preprocess run --all --category technical --market HK
+fdh-cli preprocess run --category technical --market HK --symbols 00700.HK,00005.HK
+
+# 季度基本面 / 行业差异化估值 / 宏观周期
+fdh-cli preprocess run --all --category quarterly_fundamental
+fdh-cli preprocess run --all --category industry_valuation
+fdh-cli preprocess run --category macro_cycle
+
+# 高性能并发
+fdh-cli preprocess run --all --category technical --max-concurrent 10 --num-workers 8
+```
+
+**注意事项**:
+- 默认 `--market CN`；非 `CN` 市场仅支持 `technical`
+- `macro_cycle` 不按股票粒度运行，`--symbols` 会被忽略；依赖 `cn_m`、`cn_ppi`、`cn_pmi`、`cn_gdp`、`sw_industry_member`
+- 技术指标需要足够历史数据（如 MA250 至少 250 天）
+- 基本面指标依赖 `daily_basic` 表中的 PE/PB/PS
+
+### 数据预处理 SDK 查询示例
+
+```python
+# 预处理日 / 周 / 月线（含技术指标）
+daily = await fdh.get_processed_daily_async(
+    symbols=['600519.SH'], start_date='2024-01-01', end_date='2024-12-31',
+    indicators=['ma_20', 'macd_dif', 'rsi_14', 'atr_14'],
+)
+weekly  = await fdh.get_processed_weekly_async(['600519.SH'], '2024-01-01', '2024-12-31')
+monthly = await fdh.get_processed_monthly_async(['600519.SH'], '2024-01-01', '2024-12-31')
+
+# 估值分位 + F-Score
+val = await fdh.get_processed_valuation_pct_async(
+    ['600519.SH'], '2024-01-01', '2024-12-31',
+    indicators=['pe_ttm_pct_1250d', 'pb_pct_1250d', 'peg', 'f_score'],
+)
+
+# 季度基本面（F-Score 等）
+q = await fdh.get_quarterly_fundamental_async(['600519.SH'], '2020-01-01', '2024-12-31')
+
+# 合并基本面（日度估值 + 季度 F-Score）
+combined = await fdh.get_fundamental_combined_async(
+    ['600519.SH'], '2024-01-01', '2024-12-31', include_fscore=True,
+)
+
+# 行业差异化估值（自动选择 PE/PB/PS/PEG）
+iv = await fdh.get_industry_valuation_async(start_date='2024-01-01', end_date='2024-12-31')
+
+# 中国宏观周期（默认推荐 stable）
+macro = await fdh.get_cn_macro_cycle_async(start_date='2020-01-01', phase_mode='stable')
+industries = await fdh.get_cn_macro_cycle_industries_async(preferred_only=True, phase_mode='stable')
+```
+
+### 配置管理
+
+```bash
+fdh-cli config show     # 查看当前配置
+fdh-cli config test     # 测试配置（数据库 / Tushare / Redis 连接）
+```
+
+### 数据库清理
+
+```bash
+# 完全清理（删除所有表 / 视图 / 函数 / 连续聚合，需确认）
+fdh-cli cleanup --mode all
+fdh-cli cleanup --mode all --yes        # 跳过确认
+fdh-cli cleanup --mode data_only        # 只清空数据，保留表结构
+fdh-cli cleanup --mode aggregates       # 只删除连续聚合视图
+fdh-cli cleanup --mode all --verbose    # 显示详细信息
+```
+
+**⚠️ 注意**: 数据库清理操作不可逆，请谨慎使用。
+
+---
+
+## 重要设计决策
+
+1. **智能路由**: 通过 `sources.yml` 配置驱动数据源选择，支持故障转移
+2. **冷热分离**: PostgreSQL 作为源数据存储，Parquet+DuckDB 作为分析存储
+3. **微服务架构**: XTQuant 作为独立微服务，通过 HTTP API 集成
+4. **事件驱动**: Redis Pub/Sub 作为实时数据流总线
+5. **配置即代码**: 使用 Pydantic 实现类型安全的配置管理
+
+---
+
+## XTQuant 集成注意事项
+
+- XTQuant 仅支持 Windows 且依赖 QMT
+- 通过 HTTP API 客户端模式集成：`XTQuantProvider` → `xtquant_helper` 微服务
+- `xtquant_helper` 必须提供：
+  1. REST API 用于批量数据请求
+  2. WebSocket 接口用于实时行情推送
+- 微服务地址在 `sources.yml` 中配置
+
+---
+
+### 下一步 - Phase 5 (规划中)
 
 - 🔲 **完整ETL** - PostgreSQL → Parquet + DuckDB
-  - 数据提取器
-  - 转换器
-  - Parquet写入器
-  - DuckDB 查询优化
+  - 数据提取器、转换器、Parquet 写入器、DuckDB 查询优化
 
-- 🔲 **流式处理** - WebSocket实时数据
-  - 实时数据订阅
-  - Redis Pub/Sub 集成
-  - 归档服务
-  - 实时行情看板
+- 🔲 **流式处理** - WebSocket 实时数据
+  - 实时数据订阅、Redis Pub/Sub 集成、归档服务、实时行情看板
+
+- 🔲 **测试与部署**
+  - 端到端集成测试、Dockerfile 优化、性能测试

@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from finance_data_hub.database.operations import (
+    DataOperations,
     _is_non_finite_number,
     _normalize_datetime_for_db,
 )
@@ -20,6 +21,43 @@ from finance_data_hub.providers.xtquant import XTQuantProvider
 from finance_data_hub.providers.schema import DailyDataSchema
 from finance_data_hub.router.smart_router import RoutingConfig
 from finance_data_hub.update.updater import DataUpdater
+
+
+class _FakeExecuteResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeConnection:
+    def __init__(self, rows):
+        self._rows = rows
+        self.statement = None
+
+    async def execute(self, statement):
+        self.statement = statement
+        return _FakeExecuteResult(self._rows)
+
+
+class _FakeBegin:
+    def __init__(self, connection):
+        self._connection = connection
+
+    async def __aenter__(self):
+        return self._connection
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
+class _FakeEngine:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def begin(self):
+        return _FakeBegin(self._connection)
 
 
 def test_market_aware_routing_keeps_cn_and_hk_separate():
@@ -220,6 +258,47 @@ def test_non_finite_number_helper_flags_inf():
     assert _is_non_finite_number(float("inf")) is True
     assert _is_non_finite_number(float("-inf")) is True
     assert _is_non_finite_number(1.23) is False
+
+
+def test_insert_adj_factor_batch_counts_returned_changed_rows():
+    connection = _FakeConnection(rows=[(1,), (1,)])
+    db_manager = Mock(_engine=_FakeEngine(connection))
+    ops = DataOperations(db_manager)
+    data = pd.DataFrame(
+        {
+            "time": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+            "symbol": ["00700.HK", "00700.HK"],
+            "adj_factor": [1.0, 1.2],
+        }
+    )
+
+    count = asyncio.run(ops.insert_adj_factor_batch(data))
+
+    assert count == 2
+
+
+def test_insert_adj_factor_batch_skips_unchanged_conflicts():
+    from sqlalchemy.dialects import postgresql
+
+    connection = _FakeConnection(rows=[])
+    db_manager = Mock(_engine=_FakeEngine(connection))
+    ops = DataOperations(db_manager)
+    data = pd.DataFrame(
+        {
+            "time": pd.to_datetime(["2024-01-02"]),
+            "symbol": ["00700.HK"],
+            "adj_factor": [1.0],
+        }
+    )
+
+    count = asyncio.run(ops.insert_adj_factor_batch(data))
+    compiled_sql = str(
+        connection.statement.compile(dialect=postgresql.dialect())
+    ).lower()
+
+    assert count == 0
+    assert "is distinct from" in compiled_sql
+    assert "returning" in compiled_sql
 
 
 def test_preprocess_market_scope_clause_supports_cn_and_hk():
