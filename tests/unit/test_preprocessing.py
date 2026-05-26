@@ -5,6 +5,7 @@
 import pytest
 import pandas as pd
 import numpy as np
+import asyncio
 from datetime import datetime, timedelta
 
 
@@ -477,6 +478,113 @@ class TestPreprocessTimeFiltering:
             pd.Timestamp("2026-05-20"),
             pd.Timestamp("2026-05-21"),
         ]
+
+    def test_valuation_fill_runtime_config_uses_conservative_defaults_for_full_run(self):
+        from finance_data_hub.cli.preprocess import _get_valuation_fill_runtime_config
+
+        config = _get_valuation_fill_runtime_config(
+            symbol_count=5527,
+            batch_size=100,
+            max_concurrent=4,
+            incremental_mode=False,
+            start_date=None,
+        )
+
+        assert config["batch_size"] == 20
+        assert config["max_concurrent"] == 2
+        assert "batch_size 100 -> 20" in config["notes"]
+
+    def test_valuation_fill_runtime_config_keeps_incremental_settings(self):
+        from finance_data_hub.cli.preprocess import _get_valuation_fill_runtime_config
+
+        config = _get_valuation_fill_runtime_config(
+            symbol_count=5527,
+            batch_size=100,
+            max_concurrent=4,
+            incremental_mode=True,
+            start_date=None,
+        )
+
+        assert config["batch_size"] == 100
+        assert config["max_concurrent"] == 4
+        assert config["notes"] == []
+
+    def test_valuation_fill_full_run_upserts_per_symbol(self, monkeypatch):
+        from finance_data_hub.cli import preprocess as preprocess_module
+
+        class FakeResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        class FakeDbManager:
+            async def execute_raw_sql(self, sql, params=None):
+                if "FROM daily_basic d" in sql:
+                    return FakeResult([
+                        (
+                            pd.Timestamp("2024-04-01"), "000001.SZ",
+                            np.nan, np.nan, np.nan, np.nan, np.nan,
+                            np.nan, np.nan, 1000.0, 100.0, 10.0,
+                        ),
+                        (
+                            pd.Timestamp("2024-04-01"), "000002.SZ",
+                            np.nan, np.nan, np.nan, np.nan, np.nan,
+                            np.nan, np.nan, 2000.0, 200.0, 10.0,
+                        ),
+                    ])
+                return FakeResult([])
+
+        upsert_symbols = []
+
+        class FakeStorage:
+            def __init__(self, db_manager):
+                self.db_manager = db_manager
+
+            async def upsert(self, df):
+                upsert_symbols.append(df["symbol"].tolist())
+                return len(df)
+
+        class FakeCalculator:
+            def calculate(self, daily_basic, income, balancesheet, fina_indicator):
+                symbol = daily_basic["symbol"].iloc[0]
+                return pd.DataFrame({
+                    "time": daily_basic["time"].tolist(),
+                    "symbol": [symbol],
+                    "pe": [1.0],
+                    "pe_ttm": [1.0],
+                    "pb": [1.0],
+                    "ps": [1.0],
+                    "ps_ttm": [1.0],
+                    "peg": [1.0],
+                    "dv_ratio": [np.nan],
+                    "dv_ttm": [np.nan],
+                    "sources": [{}],
+                    "denominator_dates": [{}],
+                    "quality_flags": [{}],
+                    "formula_version": ["valuation_fill_v1"],
+                })
+
+        monkeypatch.setattr(preprocess_module, "ValuationFillStorage", FakeStorage)
+        monkeypatch.setattr(
+            "finance_data_hub.preprocessing.fundamental.valuation.ValuationFillCalculator",
+            FakeCalculator,
+        )
+
+        result = asyncio.run(
+            preprocess_module._run_valuation_fill_preprocess(
+                db_manager=FakeDbManager(),
+                symbols=["000001.SZ", "000002.SZ"],
+                force=True,
+                batch_size=20,
+                max_concurrent=1,
+            )
+        )
+
+        assert result["symbols_processed"] == 2
+        assert result["records_processed"] == 2
+        assert upsert_symbols == [["000001.SZ"], ["000002.SZ"]]
 
 
 class TestIndicatorRegistry:

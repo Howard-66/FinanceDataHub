@@ -195,6 +195,40 @@ def _filter_dataframe_from_cutoff(
     return df.loc[mask.fillna(False)].copy()
 
 
+def _get_valuation_fill_runtime_config(
+    symbol_count: int,
+    batch_size: int,
+    max_concurrent: int,
+    incremental_mode: bool,
+    start_date: Optional[str],
+) -> Dict[str, Any]:
+    """
+    为估值补值任务选择更稳妥的运行参数。
+
+    全量模式下，单批股票会拉取较长历史窗口；默认的 `batch_size=100`
+    和 `max_concurrent=4` 容易导致首批数据量过大，进度长时间停在 0%。
+    这里仅对默认参数做保守收敛，避免覆盖用户显式传入的更小设置。
+    """
+    effective_batch_size = batch_size
+    effective_max_concurrent = max_concurrent
+    notes: List[str] = []
+
+    full_history_mode = (not incremental_mode) and (start_date is None)
+    if full_history_mode and symbol_count >= 500:
+        if batch_size == 100:
+            effective_batch_size = 20
+            notes.append("batch_size 100 -> 20")
+        if max_concurrent == DEFAULT_MAX_CONCURRENT_BATCHES:
+            effective_max_concurrent = 2
+            notes.append(f"max_concurrent {DEFAULT_MAX_CONCURRENT_BATCHES} -> 2")
+
+    return {
+        "batch_size": effective_batch_size,
+        "max_concurrent": effective_max_concurrent,
+        "notes": notes,
+    }
+
+
 def _get_period_end_date(value: Any, freq: str) -> date:
     """
     获取指定时间所属周期的结束日期（按交易日所在本地日期计算）。
@@ -757,9 +791,24 @@ async def _run_valuation_fill_preprocess(
     if not incremental_mode and not start_date:
         console.print("[yellow]估值补值全量处理模式[/yellow]")
 
+    runtime_config = _get_valuation_fill_runtime_config(
+        symbol_count=len(symbols),
+        batch_size=batch_size,
+        max_concurrent=max_concurrent,
+        incremental_mode=incremental_mode,
+        start_date=start_date,
+    )
+    effective_batch_size = runtime_config["batch_size"]
+    effective_max_concurrent = runtime_config["max_concurrent"]
+    if runtime_config["notes"]:
+        console.print(
+            "[yellow]全量估值补值采用保守批次参数[/yellow]: "
+            + ", ".join(runtime_config["notes"])
+        )
+
     calculator = ValuationFillCalculator()
     storage = ValuationFillStorage(db_manager)
-    semaphore = asyncio.Semaphore(max_concurrent)
+    semaphore = asyncio.Semaphore(effective_max_concurrent)
     total_symbols = 0
     total_records = 0
 
@@ -773,7 +822,7 @@ async def _run_valuation_fill_preprocess(
     ) as progress:
         mode_label = "增量" if incremental_mode else "全量"
         task_id = progress.add_task(
-            f"[cyan]{mode_label}预处理估值缺失补值 (并发{max_concurrent})...",
+            f"[cyan]{mode_label}预处理估值缺失补值 (并发{effective_max_concurrent}, 批次{effective_batch_size})...",
             total=len(symbols),
         )
 
@@ -802,29 +851,25 @@ async def _run_valuation_fill_preprocess(
                            d.total_mv, d.total_share, sd.close
                     FROM daily_basic d
                     LEFT JOIN symbol_daily sd
-                      ON sd.symbol = d.symbol AND sd.time::date = d.time::date
+                      ON sd.symbol = d.symbol AND sd.time = d.time
                     WHERE {where_clause}
-                    ORDER BY d.symbol, d.time
                 """
                 income_sql = f"""
                     SELECT ts_code, end_date_time, ann_date_time, f_ann_date_time,
                            n_income_attr_p, revenue, total_revenue
                     FROM income
                     WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date_time
                 """
                 balance_sql = f"""
                     SELECT ts_code, end_date_time, ann_date_time, f_ann_date_time,
                            total_hldr_eqy_exc_min_int
                     FROM balancesheet
                     WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date_time
                 """
                 fina_sql = f"""
                     SELECT ts_code, end_date_time, ann_date_time, netprofit_yoy, bps
                     FROM fina_indicator
                     WHERE ts_code IN ({placeholders})
-                    ORDER BY ts_code, end_date_time
                 """
 
                 daily_result, income_result, balance_result, fina_result = (
@@ -875,33 +920,55 @@ async def _run_valuation_fill_preprocess(
                     ],
                 ) if fina_rows else pd.DataFrame()
 
-                fill_df = calculator.calculate(
-                    daily_basic=daily_df,
-                    income=income_df,
-                    balancesheet=balance_df,
-                    fina_indicator=fina_df,
-                )
-
-                if upsert_cutoff is not None and not fill_df.empty:
-                    fill_df = _filter_dataframe_from_cutoff(
-                        fill_df,
-                        "time",
-                        upsert_cutoff,
-                    )
+                income_groups = {
+                    key: frame.copy()
+                    for key, frame in income_df.groupby("ts_code", sort=False)
+                } if not income_df.empty else {}
+                balance_groups = {
+                    key: frame.copy()
+                    for key, frame in balance_df.groupby("ts_code", sort=False)
+                } if not balance_df.empty else {}
+                fina_groups = {
+                    key: frame.copy()
+                    for key, frame in fina_df.groupby("ts_code", sort=False)
+                } if not fina_df.empty else {}
 
                 batch_records = 0
-                if not fill_df.empty:
-                    batch_records = await storage.upsert(fill_df)
+                batch_symbols = 0
 
-                progress.advance(task_id, len(batch_syms))
+                for symbol, symbol_daily_df in daily_df.groupby("symbol", sort=False):
+                    fill_df = calculator.calculate(
+                        daily_basic=symbol_daily_df.copy(),
+                        income=income_groups.get(symbol, pd.DataFrame()),
+                        balancesheet=balance_groups.get(symbol, pd.DataFrame()),
+                        fina_indicator=fina_groups.get(symbol, pd.DataFrame()),
+                    )
+
+                    if upsert_cutoff is not None and not fill_df.empty:
+                        fill_df = _filter_dataframe_from_cutoff(
+                            fill_df,
+                            "time",
+                            upsert_cutoff,
+                        )
+
+                    if not fill_df.empty:
+                        batch_records += await storage.upsert(fill_df)
+
+                    batch_symbols += 1
+                    progress.advance(task_id, 1)
+
+                skipped_symbols = max(len(batch_syms) - batch_symbols, 0)
+                if skipped_symbols:
+                    progress.advance(task_id, skipped_symbols)
+
                 return len(batch_syms), batch_records
 
         batch_tasks = []
-        for i in range(0, len(symbols), batch_size):
-            batch_syms = symbols[i:i + batch_size]
+        for i in range(0, len(symbols), effective_batch_size):
+            batch_syms = symbols[i:i + effective_batch_size]
             if verbose:
                 progress.console.print(
-                    f"  批次 {i // batch_size + 1}: {len(batch_syms)} 只股票"
+                    f"  批次 {i // effective_batch_size + 1}: {len(batch_syms)} 只股票"
                 )
             batch_tasks.append(process_batch(batch_syms))
 
