@@ -290,164 +290,222 @@ jobs:
   # 期货主力/连续合约映射 - 每个交易日收盘后更新
   # 显式指定 trade_date，避免仅按当前活跃池增量时漏掉当日有效合约
   # 调度时间放在夜盘开启前，确保上一交易日（含前一夜盘）已完整收盘
-  # futures_mapping_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: mapping
-  #   schedule:
-  #     type: cron
-  #     hour: 23
-  #     minute: 10
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     trade_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 600
+  futures_mapping_update:
+    enabled: true
+    type: download
+    dataset: mapping
+    schedule:
+      type: cron
+      hour: 16
+      minute: 20
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
 
   # 期货日线行情 - 每个交易日收盘后更新
-  # futures_daily_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: daily
-  #   schedule:
-  #     type: cron
-  #     hour: 23
-  #     minute: 15
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     trade_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 600
+  futures_daily_update:
+    enabled: true
+    type: download
+    dataset: daily
+    schedule:
+      type: cron
+      hour: 16
+      minute: 30
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
 
   # 期货结算参数 - 每个交易日收盘后更新
-  # futures_settle_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: settle
-  #   schedule:
-  #     type: cron
-  #     hour: 23
-  #     minute: 20
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     trade_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 600
+  futures_settle_update:
+    enabled: true
+    type: download
+    dataset: settle
+    schedule:
+      type: cron
+      hour: 16
+      minute: 40
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
 
   # 期货分钟线 - 每个交易日收盘后更新 1m/5m 原始数据
-  # 显式指定 trade_date + symbols=all，按当日有效合约池展开并避免全历史合约扫描
-  # futures_minute_1m_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: minute_1
-  #   schedule:
-  #     type: cron
-  #     hour: 23
-  #     minute: 50
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     symbols: all
-  #     trade_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 300
-  # futures_minute_5m_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: minute_5
-  #   schedule:
-  #     type: cron
-  #     hour: 23
-  #     minute: 55
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     symbols: all
-  #     trade_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 300
+  # 夜盘会落在上一工作日，使用 latest-1bd 到 latest 覆盖完整当日交易日窗口
+  futures_minute_1m_update:
+    enabled: true
+    type: download
+    dataset: minute_1
+    schedule:
+      type: cron
+      hour: 16
+      minute: 55
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      symbols: all
+      start_date: "latest-1bd"
+      end_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_5m_update:
+    enabled: true
+    type: download
+    dataset: minute_5
+    schedule:
+      type: cron
+      hour: 17
+      minute: 5
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      symbols: all
+      start_date: "latest-1bd"
+      end_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 期货分钟线高周期聚合刷新 - 15m/30m/60m 从 5m 原始数据派生
+  futures_minute_15m_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_15m
+    schedule:
+      type: cron
+      hour: 17
+      minute: 15
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest-1bd"
+      end_date: "latest+1d"
+    depends_on: [futures_minute_5m_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_30m_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_30m
+    schedule:
+      type: cron
+      hour: 17
+      minute: 20
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest-1bd"
+      end_date: "latest+1d"
+    depends_on: [futures_minute_5m_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_60m_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_60m
+    schedule:
+      type: cron
+      hour: 17
+      minute: 25
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest-1bd"
+      end_date: "latest+1d"
+    depends_on: [futures_minute_5m_update]
+    retry:
+      max_retries: 3
+      delay: 300
 
   # 期货现货价格与基差 - 每个交易日收盘后更新
-  # futures_spot_basis_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: spot_basis
-  #   schedule:
-  #     type: cron
-  #     hour: 18
-  #     minute: 50
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     trade_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 600
+  futures_spot_basis_update:
+    enabled: true
+    type: download
+    dataset: spot_basis
+    schedule:
+      type: cron
+      hour: 18
+      minute: 50
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
 
   # 期货注册仓单 - 每个交易日收盘后更新
   # inventory 不支持 trade_date，全市场更新时显式收敛到单日窗口，避免首次运行扫描全历史
-  # futures_inventory_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: inventory
-  #   schedule:
-  #     type: cron
-  #     hour: 19
-  #     minute: 0
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     start_date: "latest"
-  #     end_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 600
+  futures_inventory_update:
+    enabled: true
+    type: download
+    dataset: inventory
+    schedule:
+      type: cron
+      hour: 19
+      minute: 0
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest"
+      end_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
 
   # 期货指数日线 - 每个交易日收盘后更新
   # index_daily 不支持 trade_date，需显式指定 start/end-date 才能把任务收敛到单交易日
-  # futures_index_daily_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: index_daily
-  #   schedule:
-  #     type: cron
-  #     hour: 19
-  #     minute: 10
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     start_date: "latest"
-  #     end_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 600
+  futures_index_daily_update:
+    enabled: true
+    type: download
+    dataset: index_daily
+    schedule:
+      type: cron
+      hour: 19
+      minute: 10
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest"
+      end_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
 
   # 期限结构指标 - 每个交易日收盘后按最新交易日重算
-  # futures_term_metrics_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: term_metrics
-  #   schedule:
-  #     type: cron
-  #     hour: 19
-  #     minute: 20
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     start_date: "latest"
-  #     end_date: "latest"
-  #   depends_on: [futures_daily_update]
-  #   retry:
-  #     max_retries: 2
-  #     delay: 300
+  futures_term_metrics_update:
+    enabled: true
+    type: download
+    dataset: term_metrics
+    schedule:
+      type: cron
+      hour: 19
+      minute: 20
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest"
+      end_date: "latest"
+    depends_on: [futures_daily_update]
+    retry:
+      max_retries: 2
+      delay: 300
 
   # ========== 预处理任务 ==========
 

@@ -8,8 +8,9 @@
 
 import subprocess
 import sys
+import re
 from typing import Optional, List, Dict, Any, Union
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from loguru import logger
 
@@ -70,6 +71,8 @@ class TaskExecutor:
                 result = self._execute_download(job_id, job_config, **kwargs)
             elif job_config.type == JobType.PREPROCESS:
                 result = self._execute_preprocess(job_id, job_config, **kwargs)
+            elif job_config.type == JobType.AGGREGATE:
+                result = self._execute_aggregate(job_id, job_config, **kwargs)
             else:
                 raise ValueError(f"Unknown job type: {job_config.type}")
             
@@ -140,6 +143,80 @@ class TaskExecutor:
             "records_processed": total_records,
             "symbols_count": total_symbols
         }
+
+    def _execute_aggregate(
+        self,
+        job_id: str,
+        job_config: JobConfig,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """执行连续聚合刷新任务。"""
+        tables = job_config.get_datasets()
+        params = {**job_config.params, **kwargs}
+
+        for table in tables:
+            cmd = self._build_aggregate_command(table, params)
+            logger.info(f"Executing aggregate refresh command: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.project_root),
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr or result.stdout
+                raise RuntimeError(f"Aggregate refresh failed for {table}: {error_msg}")
+
+            output = result.stdout.strip() if result.stdout else ""
+            if output:
+                logger.info(f"Aggregate refresh output for {table}:\n{output}")
+
+        return {
+            "records_processed": 0,
+            "symbols_count": 0
+        }
+
+    def _build_aggregate_command(
+        self,
+        table: str,
+        params: Dict[str, Any]
+    ) -> List[str]:
+        """构建连续聚合刷新命令。"""
+        venv_fdh_cli = self.project_root / ".venv" / "bin" / "fdh-cli"
+        if venv_fdh_cli.exists():
+            cmd = [str(venv_fdh_cli), "refresh-aggregates"]
+        else:
+            cmd = [
+                self.python_path,
+                "-m",
+                "finance_data_hub.cli.main",
+                "refresh-aggregates",
+            ]
+
+        cmd.extend(["--table", table])
+
+        asset_class = params.get("asset_class")
+        normalized_asset_class = (
+            str(asset_class).strip().lower() if asset_class is not None else None
+        )
+        start_date = self._resolve_date_param(
+            params.get("start_date"), normalized_asset_class
+        )
+        if start_date:
+            cmd.extend(["--start", start_date])
+
+        end_date = self._resolve_date_param(
+            params.get("end_date"), normalized_asset_class
+        )
+        if end_date:
+            cmd.extend(["--end", end_date])
+
+        if params.get("verbose"):
+            cmd.append("--verbose")
+
+        return cmd
     
     def _build_download_command(
         self,
@@ -225,14 +302,29 @@ class TaskExecutor:
         normalized = value.strip().lower()
         if not normalized:
             return None
-        if normalized == "latest":
-            return self._get_latest_trade_date(asset_class=asset_class)
+        latest_match = re.fullmatch(r"latest(?:([+-])(\d+)(bd|d))?", normalized)
+        if latest_match:
+            latest = self._get_latest_trade_date(asset_class=asset_class)
+            if latest is None:
+                return None
+            resolved = datetime.strptime(latest, "%Y-%m-%d").date()
+            sign, days, unit = latest_match.groups()
+            if days:
+                offset = int(days)
+                if unit == "bd":
+                    step = -1 if sign == "-" else 1
+                    for _ in range(offset):
+                        resolved += timedelta(days=step)
+                        while resolved.weekday() >= 5:
+                            resolved += timedelta(days=step)
+                else:
+                    delta = timedelta(days=offset)
+                    resolved = resolved - delta if sign == "-" else resolved + delta
+            return resolved.strftime("%Y-%m-%d")
         return value
 
     def _get_latest_trade_date(self, asset_class: Optional[str] = None) -> Optional[str]:
         """获取最新交易日"""
-        from datetime import timedelta
-        
         today = date.today()
         # 简单判断：周六周日不是交易日
         weekday = today.weekday()

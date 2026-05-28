@@ -83,6 +83,27 @@ class TestJobConfig:
         assert config.type == JobType.PREPROCESS
         assert config.category == "technical"
         assert "freq" in config.params
+
+    def test_aggregate_job_config(self):
+        """测试连续聚合刷新任务配置"""
+        from finance_data_hub.scheduler.models import (
+            JobConfig, JobType, RetryConfig
+        )
+
+        config = JobConfig(
+            enabled=True,
+            type=JobType.AGGREGATE,
+            dataset="futures.minute_15m",
+            schedule={
+                "type": "cron",
+                "hour": 17,
+                "minute": 15,
+            },
+            retry=RetryConfig()
+        )
+
+        assert config.type == JobType.AGGREGATE
+        assert config.get_datasets() == ["futures.minute_15m"]
     
     def test_get_schedule_config(self):
         """测试获取调度配置对象"""
@@ -190,6 +211,15 @@ jobs:
         assert "test_job" in config.jobs
         assert config.jobs["test_job"].type.value == "download"
 
+    def test_load_repository_schedule_config(self):
+        """仓库内置 schedules.yml 应保持可解析。"""
+        from finance_data_hub.scheduler.models import ScheduleConfig
+
+        config = ScheduleConfig.from_yaml("schedules.yml")
+
+        assert "futures_minute_5m_update" in config.jobs
+        assert config.jobs["futures_minute_15m_refresh"].type.value == "aggregate"
+
 
 class TestTaskExecutor:
     """任务执行器测试"""
@@ -281,6 +311,62 @@ class TestTaskExecutor:
         assert "--asset-class future" in joined
         assert "--start-date 2024-04-30" in joined
         assert "--end-date 2024-04-30" in joined
+
+    def test_build_download_command_resolves_relative_latest_date_placeholders(self):
+        """下载命令应支持 latest +/- Nd 与工作日日期占位。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        executor._get_latest_trade_date = lambda asset_class=None: "2024-04-30"
+
+        cmd = executor._build_download_command(
+            "minute_5",
+            {
+                "asset_class": "future",
+                "start_date": "latest-1bd",
+                "end_date": "latest+1d",
+            },
+        )
+
+        joined = " ".join(cmd)
+        assert "--start-date 2024-04-29" in joined
+        assert "--end-date 2024-05-01" in joined
+
+        executor._get_latest_trade_date = lambda asset_class=None: "2024-05-06"
+        cmd = executor._build_download_command(
+            "minute_5",
+            {
+                "asset_class": "future",
+                "start_date": "latest-1bd",
+                "end_date": "latest",
+            },
+        )
+
+        joined = " ".join(cmd)
+        assert "--start-date 2024-05-03" in joined
+        assert "--end-date 2024-05-06" in joined
+
+    def test_build_aggregate_command(self):
+        """连续聚合刷新命令应透传表名与日期窗口。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        executor._get_latest_trade_date = lambda asset_class=None: "2024-04-30"
+
+        cmd = executor._build_aggregate_command(
+            "futures.minute_15m",
+            {
+                "asset_class": "future",
+                "start_date": "latest-1bd",
+                "end_date": "latest+1d",
+            },
+        )
+
+        joined = " ".join(cmd)
+        assert "refresh-aggregates" in joined
+        assert "--table futures.minute_15m" in joined
+        assert "--start 2024-04-29" in joined
+        assert "--end 2024-05-01" in joined
 
     def test_build_preprocess_command_includes_market(self):
         """预处理命令应透传 market 参数。"""

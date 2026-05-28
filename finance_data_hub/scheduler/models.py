@@ -21,6 +21,7 @@ class JobType(str, Enum):
     """任务类型枚举"""
     DOWNLOAD = "download"
     PREPROCESS = "preprocess"
+    AGGREGATE = "aggregate"
 
 
 class RetryConfig(BaseModel):

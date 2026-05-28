@@ -2974,7 +2974,7 @@ def refresh_aggregates(
         ...,
         "--table",
         "-t",
-        help="要刷新的连续聚合表名 (symbol_weekly, symbol_monthly, daily_basic_weekly, daily_basic_monthly, adj_factor_weekly, adj_factor_monthly)"
+        help="要刷新的连续聚合表名 (symbol_weekly, symbol_monthly, daily_basic_weekly, daily_basic_monthly, adj_factor_weekly, adj_factor_monthly, futures.minute_15m, futures.minute_30m, futures.minute_60m)"
     ),
     start_date: Optional[str] = typer.Option(
         None,
