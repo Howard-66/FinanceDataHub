@@ -3,8 +3,8 @@
 
 使用真实的 Tushare + PostgreSQL/TimescaleDB 链路，验证：
 1. 真实期货日线/结算数据可写入 futures schema
-2. preprocess_futures_term_data 能生成 term_structure / term_spread / roll_yield
-3. 三张衍生表之间的关键字段保持一致
+2. preprocess_futures_term_metrics 能生成 term_metrics
+3. 期限结构、跨期价差和展期收益率字段保持一致
 """
 
 import asyncio
@@ -46,60 +46,42 @@ def test_futures_term_preprocess_real_chain():
         await updater.initialize()
         try:
             async with db_manager._engine.begin() as conn:
-                for table in ("term_structure", "term_spread", "roll_yield"):
-                    await conn.execute(
-                        text(
-                            f"""
-                            DELETE FROM futures.{table}
-                            WHERE product_code = 'RB'
-                              AND time::date = DATE '2024-04-30'
-                            """
-                        )
+                await conn.execute(
+                    text(
+                        """
+                        DELETE FROM futures.term_metrics
+                        WHERE product_code = 'RB'
+                          AND time::date = DATE '2024-04-30'
+                        """
                     )
+                )
 
             assert await ops.insert_futures_daily_batch(rb_daily) >= 2
             assert await ops.insert_futures_settle_batch(rb_settle) >= 2
 
-            counts = await updater.preprocess_futures_term_data(
+            count = await updater.preprocess_futures_term_metrics(
                 product_codes=["RB"],
                 start_date="2024-04-30",
                 end_date="2024-04-30",
             )
-            assert counts["term_structure"] >= 1
-            assert counts["term_spread"] >= 1
-            assert counts["roll_yield"] >= 1
+            assert count >= 1
 
-            term = await ops.get_futures_term_structure(["RB"], "2024-04-30", "2024-04-30")
-            spread = await ops.get_futures_term_spread(["RB"], "2024-04-30", "2024-04-30")
-            roll = await ops.get_futures_roll_yield(["RB"], "2024-04-30", "2024-04-30")
+            metrics = await ops.get_futures_term_metrics(["RB"], "2024-04-30", "2024-04-30")
 
-            assert term is not None and len(term) == 1
-            assert spread is not None and len(spread) == 1
-            assert roll is not None and len(roll) == 1
+            assert metrics is not None and len(metrics) == 1
 
-            term_row = term.iloc[0]
-            spread_row = spread.iloc[0]
-            roll_row = roll.iloc[0]
+            row = metrics.iloc[0]
 
-            assert term_row["product_code"] == "RB"
-            assert term_row["exchange"] == "SHFE"
-            assert term_row["primary_contract"]
-            assert term_row["secondary_contract"]
-            assert int(term_row["candidate_count"]) >= 2
-
-            assert spread_row["product_code"] == "RB"
-            assert spread_row["primary_contract"] == term_row["primary_contract"]
-            assert spread_row["secondary_contract"] == term_row["secondary_contract"]
-            assert spread_row["spread"] == pytest.approx(
-                spread_row["primary_contract_close"] - spread_row["secondary_contract_close"]
+            assert row["product_code"] == "RB"
+            assert row["exchange"] == "SHFE"
+            assert row["primary_contract"]
+            assert row["secondary_contract"]
+            assert int(row["candidate_count"]) >= 2
+            assert row["spread"] == pytest.approx(
+                row["primary_contract_close"] - row["secondary_contract_close"]
             )
-
-            assert roll_row["product_code"] == "RB"
-            assert roll_row["primary_contract"] == spread_row["primary_contract"]
-            assert roll_row["secondary_contract"] == spread_row["secondary_contract"]
-            assert roll_row["spread"] == pytest.approx(spread_row["spread"])
-            assert int(roll_row["days_between_expiry"]) > 0
-            assert roll_row["annualized_roll_yield"] is not None
+            assert int(row["days_between_expiry"]) > 0
+            assert row["annualized_roll_yield"] is not None
         finally:
             await updater.close()
             await db_manager.close()

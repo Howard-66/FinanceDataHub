@@ -2491,65 +2491,25 @@ class FinanceDataHub:
         """获取期货注册仓单（异步方法）。"""
         return await self.ops.get_futures_inventory(product_codes, start_date, end_date)
 
-    def get_futures_term_structure(
+    def get_futures_term_metrics(
         self,
         product_codes: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
-        """获取期货期限结构（同步方法）。"""
+        """获取期货期限结构快照与派生指标（同步方法）。"""
         return asyncio.run(
-            self.get_futures_term_structure_async(product_codes, start_date, end_date)
+            self.get_futures_term_metrics_async(product_codes, start_date, end_date)
         )
 
-    async def get_futures_term_structure_async(
+    async def get_futures_term_metrics_async(
         self,
         product_codes: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
-        """获取期货期限结构（异步方法）。"""
-        return await self.ops.get_futures_term_structure(product_codes, start_date, end_date)
-
-    def get_futures_term_spread(
-        self,
-        product_codes: Optional[List[str]] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ) -> Optional[pd.DataFrame]:
-        """获取期货跨期价差（同步方法）。"""
-        return asyncio.run(
-            self.get_futures_term_spread_async(product_codes, start_date, end_date)
-        )
-
-    async def get_futures_term_spread_async(
-        self,
-        product_codes: Optional[List[str]] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ) -> Optional[pd.DataFrame]:
-        """获取期货跨期价差（异步方法）。"""
-        return await self.ops.get_futures_term_spread(product_codes, start_date, end_date)
-
-    def get_futures_roll_yield(
-        self,
-        product_codes: Optional[List[str]] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ) -> Optional[pd.DataFrame]:
-        """获取期货展期收益率（同步方法）。"""
-        return asyncio.run(
-            self.get_futures_roll_yield_async(product_codes, start_date, end_date)
-        )
-
-    async def get_futures_roll_yield_async(
-        self,
-        product_codes: Optional[List[str]] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ) -> Optional[pd.DataFrame]:
-        """获取期货展期收益率（异步方法）。"""
-        return await self.ops.get_futures_roll_yield(product_codes, start_date, end_date)
+        """获取期货期限结构快照与派生指标（异步方法）。"""
+        return await self.ops.get_futures_term_metrics(product_codes, start_date, end_date)
 
     # ============================================================================
     # 资源管理

@@ -35,6 +35,7 @@ from finance_data_hub.utils.market import infer_market_from_symbol, normalize_ma
 from finance_data_hub.utils.futures import (
     extract_futures_product_code,
     get_futures_exchange_from_symbol,
+    is_xtquant_downloadable_futures_symbol,
     normalize_tushare_futures_symbol,
     to_xtquant_futures_symbol,
 )
@@ -45,6 +46,10 @@ SUPPORTED_XTQUANT_MINUTE_FREQS = {
     "1m": "1m",
     "5m": "5m",
     "60m": "1h",
+}
+SUPPORTED_XTQUANT_FUTURES_MINUTE_FREQS = {
+    "1m": "1m",
+    "5m": "5m",
 }
 
 
@@ -803,6 +808,11 @@ class XTQuantProvider(BaseDataProvider):
         all_data = []
         for raw_symbol in symbols:
             canonical_symbol = normalize_tushare_futures_symbol(raw_symbol)
+            if not is_xtquant_downloadable_futures_symbol(canonical_symbol):
+                raise ProviderDataError(
+                    f"Unsupported XTQuant futures symbol: {raw_symbol}",
+                    provider_name=self.name,
+                )
             xt_symbol = to_xtquant_futures_symbol(canonical_symbol)
             if not xt_symbol:
                 raise ProviderDataError(
@@ -863,10 +873,10 @@ class XTQuantProvider(BaseDataProvider):
                 provider_name=self.name,
             )
 
-        xt_freq = SUPPORTED_XTQUANT_MINUTE_FREQS.get(freq)
+        xt_freq = SUPPORTED_XTQUANT_FUTURES_MINUTE_FREQS.get(freq)
         if not xt_freq:
             raise ProviderDataError(
-                f"XTQuant futures minute only supports {', '.join(SUPPORTED_XTQUANT_MINUTE_FREQS)}; got {freq}",
+                f"XTQuant futures minute only supports {', '.join(SUPPORTED_XTQUANT_FUTURES_MINUTE_FREQS)}; got {freq}",
                 provider_name=self.name,
             )
         start_time = self._format_minute_date(start_date)
@@ -877,7 +887,17 @@ class XTQuantProvider(BaseDataProvider):
         all_data = []
         for raw_symbol in symbols:
             canonical_symbol = normalize_tushare_futures_symbol(raw_symbol)
+            if not is_xtquant_downloadable_futures_symbol(canonical_symbol):
+                raise ProviderDataError(
+                    f"Unsupported XTQuant futures symbol: {raw_symbol}",
+                    provider_name=self.name,
+                )
             xt_symbol = to_xtquant_futures_symbol(canonical_symbol)
+            if not xt_symbol:
+                raise ProviderDataError(
+                    f"Invalid XTQuant futures symbol: {raw_symbol}",
+                    provider_name=self.name,
+                )
             self._call_api(
                 "/download_history_data",
                 {

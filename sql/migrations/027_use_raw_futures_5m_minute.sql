@@ -1,35 +1,69 @@
--- 期货分钟线：1m/5m 原始表与高周期连续聚合
+-- 期货分钟线：5m 改为 XTQuant 原始下载表，15m/30m/60m 从 5m 连续聚合派生。
 
-CREATE TABLE IF NOT EXISTS futures.minute_1m (
-    time TIMESTAMPTZ NOT NULL,
-    symbol VARCHAR(32) NOT NULL,
-    product_code VARCHAR(16),
-    exchange VARCHAR(16),
-    open DECIMAL(20,6),
-    high DECIMAL(20,6),
-    low DECIMAL(20,6),
-    close DECIMAL(20,6),
-    volume BIGINT,
-    amount DECIMAL(30,6),
-    open_interest DECIMAL(30,6),
-    source VARCHAR(32),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (symbol, time)
-);
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'futures'
+          AND c.relname = 'minute_5m'
+          AND c.relkind = 'm'
+    ) THEN
+        PERFORM remove_continuous_aggregate_policy('futures.minute_5m', if_exists => TRUE);
+    END IF;
+END $$;
 
-SELECT create_hypertable(
-    'futures.minute_1m',
-    'time',
-    if_not_exists => TRUE,
-    chunk_time_interval => INTERVAL '1 week'
-);
+SELECT remove_continuous_aggregate_policy('futures.minute_15m', if_exists => TRUE);
+SELECT remove_continuous_aggregate_policy('futures.minute_30m', if_exists => TRUE);
+SELECT remove_continuous_aggregate_policy('futures.minute_60m', if_exists => TRUE);
 
-CREATE INDEX IF NOT EXISTS idx_futures_minute_1m_symbol_time
-ON futures.minute_1m(symbol, time DESC);
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'futures'
+          AND c.relname = 'minute_60m'
+          AND c.relkind = 'm'
+    ) THEN
+        EXECUTE 'DROP MATERIALIZED VIEW futures.minute_60m';
+    END IF;
 
-CREATE INDEX IF NOT EXISTS idx_futures_minute_1m_product_time
-ON futures.minute_1m(product_code, time DESC);
+    IF EXISTS (
+        SELECT 1
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'futures'
+          AND c.relname = 'minute_30m'
+          AND c.relkind = 'm'
+    ) THEN
+        EXECUTE 'DROP MATERIALIZED VIEW futures.minute_30m';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'futures'
+          AND c.relname = 'minute_15m'
+          AND c.relkind = 'm'
+    ) THEN
+        EXECUTE 'DROP MATERIALIZED VIEW futures.minute_15m';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'futures'
+          AND c.relname = 'minute_5m'
+          AND c.relkind = 'm'
+    ) THEN
+        EXECUTE 'DROP MATERIALIZED VIEW futures.minute_5m';
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS futures.minute_5m (
     time TIMESTAMPTZ NOT NULL,
@@ -62,30 +96,6 @@ ON futures.minute_5m(symbol, time DESC);
 CREATE INDEX IF NOT EXISTS idx_futures_minute_5m_product_time
 ON futures.minute_5m(product_code, time DESC);
 
--- 兼容旧表：如果 futures.minute 中已有 1m 数据，初始化时回填到新原始表。
-INSERT INTO futures.minute_1m (
-    time, symbol, product_code, exchange, open, high, low, close,
-    volume, amount, open_interest, source, created_at, updated_at
-)
-SELECT
-    time, symbol, product_code, exchange, open, high, low, close,
-    volume, amount, open_interest, source, created_at, updated_at
-FROM futures.minute
-WHERE frequency = '1m'
-ON CONFLICT (symbol, time) DO UPDATE SET
-    product_code = EXCLUDED.product_code,
-    exchange = EXCLUDED.exchange,
-    open = EXCLUDED.open,
-    high = EXCLUDED.high,
-    low = EXCLUDED.low,
-    close = EXCLUDED.close,
-    volume = EXCLUDED.volume,
-    amount = EXCLUDED.amount,
-    open_interest = EXCLUDED.open_interest,
-    source = EXCLUDED.source,
-    updated_at = NOW();
-
--- 兼容旧表：如果 futures.minute 中已有 5m 数据，初始化时回填到新原始表。
 INSERT INTO futures.minute_5m (
     time, symbol, product_code, exchange, open, high, low, close,
     volume, amount, open_interest, source, created_at, updated_at
@@ -199,7 +209,6 @@ SELECT add_continuous_aggregate_policy(
     if_not_exists => TRUE
 );
 
-COMMENT ON TABLE futures.minute_1m IS '期货 1 分钟原始行情表';
 COMMENT ON TABLE futures.minute_5m IS '期货 5 分钟原始行情表';
 COMMENT ON MATERIALIZED VIEW futures.minute_15m IS '期货 15 分钟行情连续聚合';
 COMMENT ON MATERIALIZED VIEW futures.minute_30m IS '期货 30 分钟行情连续聚合';

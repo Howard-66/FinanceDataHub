@@ -27,6 +27,10 @@ FUTURES_EXCHANGES: dict[str, FuturesExchangeMapping] = {
     "GFEX": FuturesExchangeMapping("GFEX", "GFE", "GF", "广期所"),
 }
 
+# Product codes whose literal main-contract symbol ends with "L". Continuous
+# symbols for these products add one more trailing "L" (for example LL.DCE).
+FUTURES_PRODUCT_CODES_ENDING_L = {"AL", "L", "TL"}
+
 _EXCHANGE_ALIAS_TO_CANONICAL: dict[str, str] = {}
 for mapping in FUTURES_EXCHANGES.values():
     for alias in (mapping.canonical, mapping.tushare, mapping.xtquant, mapping.name):
@@ -75,23 +79,46 @@ def extract_futures_product_code(symbol: Optional[str]) -> Optional[str]:
     if not symbol:
         return None
     code = str(symbol).strip().split(".", 1)[0].upper()
-    match = re.match(r"^([A-Z]+)", code)
+    match = re.match(r"^([A-Z]+(?:_[A-Z]+)?)", code)
     if not match:
         return None
     product = match.group(1)
-    if product.endswith("L") and not re.search(r"\d", code):
+    if (
+        product.endswith("L")
+        and product not in FUTURES_PRODUCT_CODES_ENDING_L
+        and not re.search(r"\d", code)
+    ):
         product = product[:-1]
     return product or None
 
 
-def get_futures_contract_type(symbol: Optional[str]) -> str:
+def get_futures_contract_type(
+    symbol: Optional[str],
+    product_code: Optional[str] = None,
+) -> str:
     """Infer whether a symbol is a normal, main, or continuous contract."""
     if not symbol:
         return "normal"
     code = str(symbol).strip().split(".", 1)[0].upper()
-    if code.endswith("L0") or (code.endswith("L") and not re.search(r"\d", code)):
+    product = str(product_code).strip().upper() if product_code else None
+    if product and "." in product:
+        product = product.split(".", 1)[0]
+    if code.endswith("L0"):
         return "continuous"
-    if code.endswith("00") or not re.search(r"\d", code):
+    if code.endswith("00"):
+        return "main"
+    if not re.search(r"\d", code):
+        if product:
+            if code == f"{product}L":
+                return "continuous"
+            if code == product:
+                return "main"
+        if (
+            code.endswith("L")
+            and code not in FUTURES_PRODUCT_CODES_ENDING_L
+            and len(code) > 1
+        ):
+            return "continuous"
         return "main"
     return "normal"
 
@@ -146,6 +173,16 @@ def to_xtquant_futures_symbol(
         code_lower = f"{product_code.lower()}00"
 
     return f"{code_lower}.{xt_exchange}"
+
+
+def is_xtquant_downloadable_futures_symbol(symbol: Optional[str]) -> bool:
+    """Return whether a futures symbol can be downloaded through XTQuant kline APIs."""
+    if not symbol:
+        return False
+    code = str(symbol).strip().split(".", 1)[0].upper()
+    if "_" in code:
+        return False
+    return bool(to_xtquant_futures_symbol(symbol))
 
 
 def extract_delivery_month(symbol: Optional[str]) -> Optional[int]:

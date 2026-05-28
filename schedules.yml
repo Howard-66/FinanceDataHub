@@ -340,9 +340,9 @@ jobs:
   #     max_retries: 3
   #     delay: 600
 
-  # 期货分钟线 - 每个交易日收盘后更新 1m 原始数据
+  # 期货分钟线 - 每个交易日收盘后更新 1m/5m 原始数据
   # 显式指定 trade_date + symbols=all，按当日有效合约池展开并避免全历史合约扫描
-  # futures_minute_update:
+  # futures_minute_1m_update:
   #   enabled: true
   #   type: download
   #   dataset: minute_1
@@ -350,6 +350,22 @@ jobs:
   #     type: cron
   #     hour: 23
   #     minute: 50
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     asset_class: future
+  #     symbols: all
+  #     trade_date: "latest"
+  #   retry:
+  #     max_retries: 3
+  #     delay: 300
+  # futures_minute_5m_update:
+  #   enabled: true
+  #   type: download
+  #   dataset: minute_5
+  #   schedule:
+  #     type: cron
+  #     hour: 23
+  #     minute: 55
   #     day_of_week: "mon-fri"
   #   params:
   #     asset_class: future
@@ -414,53 +430,15 @@ jobs:
   #     max_retries: 3
   #     delay: 600
 
-  # 期限结构 - 每个交易日收盘后按最新交易日重算
-  # futures_term_structure_update:
+  # 期限结构指标 - 每个交易日收盘后按最新交易日重算
+  # futures_term_metrics_update:
   #   enabled: true
   #   type: download
-  #   dataset: term_structure
+  #   dataset: term_metrics
   #   schedule:
   #     type: cron
   #     hour: 19
   #     minute: 20
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     start_date: "latest"
-  #     end_date: "latest"
-  #   depends_on: [futures_daily_update]
-  #   retry:
-  #     max_retries: 2
-  #     delay: 300
-
-  # 跨期价差 - 每个交易日收盘后按最新交易日重算
-  # futures_term_spread_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: term_spread
-  #   schedule:
-  #     type: cron
-  #     hour: 19
-  #     minute: 25
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     start_date: "latest"
-  #     end_date: "latest"
-  #   depends_on: [futures_daily_update]
-  #   retry:
-  #     max_retries: 2
-  #     delay: 300
-
-  # 展期收益率 - 每个交易日收盘后按最新交易日重算
-  # futures_roll_yield_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: roll_yield
-  #   schedule:
-  #     type: cron
-  #     hour: 19
-  #     minute: 30
   #     day_of_week: "mon-fri"
   #   params:
   #     asset_class: future

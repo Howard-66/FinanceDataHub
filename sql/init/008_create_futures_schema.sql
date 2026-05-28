@@ -228,14 +228,20 @@ SELECT create_hypertable(
     chunk_time_interval => INTERVAL '5 years'
 );
 
--- 期限结构
-CREATE TABLE IF NOT EXISTS futures.term_structure (
+-- 期限结构快照与派生指标
+CREATE TABLE IF NOT EXISTS futures.term_metrics (
     time TIMESTAMPTZ NOT NULL,
     product_code VARCHAR(16) NOT NULL,
     exchange VARCHAR(16),
     flag DECIMAL(10,4),
     primary_contract VARCHAR(32),
+    primary_contract_close DECIMAL(20,6),
     secondary_contract VARCHAR(32),
+    secondary_contract_close DECIMAL(20,6),
+    spread DECIMAL(20,6),
+    days_to_primary_expiry INTEGER,
+    days_between_expiry INTEGER,
+    annualized_roll_yield DECIMAL(20,10),
     candidate_count INTEGER,
     source VARCHAR(32) DEFAULT 'preprocess',
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -244,54 +250,7 @@ CREATE TABLE IF NOT EXISTS futures.term_structure (
 );
 
 SELECT create_hypertable(
-    'futures.term_structure',
-    'time',
-    if_not_exists => TRUE,
-    chunk_time_interval => INTERVAL '5 years'
-);
-
--- 跨期价差
-CREATE TABLE IF NOT EXISTS futures.term_spread (
-    time TIMESTAMPTZ NOT NULL,
-    product_code VARCHAR(16) NOT NULL,
-    exchange VARCHAR(16),
-    primary_contract VARCHAR(32),
-    primary_contract_close DECIMAL(20,6),
-    secondary_contract VARCHAR(32),
-    secondary_contract_close DECIMAL(20,6),
-    spread DECIMAL(20,6),
-    source VARCHAR(32) DEFAULT 'preprocess',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (product_code, time)
-);
-
-SELECT create_hypertable(
-    'futures.term_spread',
-    'time',
-    if_not_exists => TRUE,
-    chunk_time_interval => INTERVAL '5 years'
-);
-
--- 展期收益率
-CREATE TABLE IF NOT EXISTS futures.roll_yield (
-    time TIMESTAMPTZ NOT NULL,
-    product_code VARCHAR(16) NOT NULL,
-    exchange VARCHAR(16),
-    primary_contract VARCHAR(32),
-    secondary_contract VARCHAR(32),
-    spread DECIMAL(20,6),
-    days_to_primary_expiry INTEGER,
-    days_between_expiry INTEGER,
-    annualized_roll_yield DECIMAL(20,10),
-    source VARCHAR(32) DEFAULT 'preprocess',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (product_code, time)
-);
-
-SELECT create_hypertable(
-    'futures.roll_yield',
+    'futures.term_metrics',
     'time',
     if_not_exists => TRUE,
     chunk_time_interval => INTERVAL '5 years'

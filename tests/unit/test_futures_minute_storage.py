@@ -16,31 +16,38 @@ def test_normalize_futures_minute_frequency_aliases():
     assert _normalize_futures_minute_frequency("1h") == "60m"
 
 
-def test_insert_futures_minute_batch_writes_only_1m_raw_rows():
+def test_insert_futures_minute_batch_writes_1m_and_5m_raw_rows():
     async def _run():
         ops = DataOperations(Mock())
-        ops._insert_futures_dataframe = AsyncMock(return_value=1)
+        ops._insert_futures_dataframe = AsyncMock(side_effect=[1, 1])
 
         data = pd.DataFrame(
             {
-                "time": ["2024-04-30 09:30:00", "2024-04-30 09:35:00"],
-                "symbol": ["RB2405.SHF", "RB2405.SHF"],
-                "frequency": ["1m", "5m"],
-                "open": [100.0, 101.0],
+                "time": [
+                    "2024-04-30 09:30:00",
+                    "2024-04-30 09:35:00",
+                    "2024-04-30 09:45:00",
+                ],
+                "symbol": ["RB2405.SHF", "RB2405.SHF", "RB2405.SHF"],
+                "frequency": ["1m", "5m", "15m"],
+                "open": [100.0, 101.0, 102.0],
             }
         )
 
         inserted = await ops.insert_futures_minute_batch(data)
 
-        assert inserted == 1
-        ops._insert_futures_dataframe.assert_awaited_once()
-        args = ops._insert_futures_dataframe.await_args.args
-        assert args[0] == "minute_1m"
-        written = args[1]
-        assert len(written) == 1
-        assert written["frequency"].iloc[0] == "1m"
-        assert "frequency" not in args[2]
-        assert args[3] == ["symbol", "time"]
+        assert inserted == 2
+        assert ops._insert_futures_dataframe.await_count == 2
+        first_args = ops._insert_futures_dataframe.await_args_list[0].args
+        second_args = ops._insert_futures_dataframe.await_args_list[1].args
+        assert first_args[0] == "minute_1m"
+        assert second_args[0] == "minute_5m"
+        assert len(first_args[1]) == 1
+        assert len(second_args[1]) == 1
+        assert "frequency" not in first_args[2]
+        assert "frequency" not in second_args[2]
+        assert first_args[3] == ["symbol", "time"]
+        assert second_args[3] == ["symbol", "time"]
 
     import asyncio
 

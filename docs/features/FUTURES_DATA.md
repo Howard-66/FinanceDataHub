@@ -97,7 +97,7 @@ SQL 初始化文件：
 - Hypertable：`contract_mapping`
 - Hypertable：`daily`
 - Hypertable：`minute_1m`（1 分钟原始数据）
-- Continuous Aggregate：`minute_5m`
+- Hypertable：`minute_5m`（5 分钟原始数据，直接从 XTQuant `period='5m'` 获取）
 - Continuous Aggregate：`minute_15m`
 - Continuous Aggregate：`minute_30m`
 - Continuous Aggregate：`minute_60m`
@@ -106,9 +106,7 @@ SQL 初始化文件：
 - Hypertable：`index_daily`
 - Hypertable：`spot_basis`
 - Hypertable：`inventory_receipt`
-- Hypertable：`term_structure`
-- Hypertable：`term_spread`
-- Hypertable：`roll_yield`
+- Hypertable：`term_metrics`
 
 交易日历继续复用 `public.trade_cal`，并已支持 `GFEX` 增量写入。
 
@@ -149,7 +147,7 @@ SQL 初始化文件：
 
 - 通过现有 `xtquant_helper` HTTP API
 - 使用 `/download_history_data` 和 `/get_local_data`
-- CLI/SDK 内部原始下载只写入 `1m`。`5m`、`15m`、`30m`、`60m` 由 TimescaleDB continuous aggregate 从 `minute_1m` 派生
+- CLI/SDK 内部原始下载写入 `1m` 和 `5m`。`5m` 直接通过 XTQuant `period='5m'` 获取；`15m`、`30m`、`60m` 由 TimescaleDB continuous aggregate 从 `minute_5m` 派生
 
 ### AKShare
 
@@ -175,9 +173,7 @@ SQL 初始化文件：
 
 已实现输出：
 
-- `term_structure`
-- `term_spread`
-- `roll_yield`
+- `term_metrics`：期限结构、跨期价差和展期收益率的统一快照表
 
 数据来源：
 
@@ -204,7 +200,7 @@ fdh-cli update --asset-class future --dataset daily --symbols all --start-date 2
 fdh-cli update --asset-class future --dataset mapping --symbols RB.SHF --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset daily --symbols RB2405.SHF --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset minute_1 --symbols rb2405.SF --start-date 2024-04-30 09:30:00 --end-date 2024-04-30 10:00:00
-fdh-cli refresh-aggregates futures.minute_5m --start 2024-04-30 --end 2024-05-01
+fdh-cli update --asset-class future --dataset minute_5 --symbols rb2405.SF --start-date 2024-04-30 09:30:00 --end-date 2024-04-30 10:00:00
 fdh-cli refresh-aggregates futures.minute_15m --start 2024-04-30 --end 2024-05-01
 fdh-cli refresh-aggregates futures.minute_30m --start 2024-04-30 --end 2024-05-01
 fdh-cli refresh-aggregates futures.minute_60m --start 2024-04-30 --end 2024-05-01
@@ -212,7 +208,7 @@ fdh-cli update --asset-class future --dataset settle --symbols RB2405.SHF --star
 fdh-cli update --asset-class future --dataset index_daily --symbols NHCI.NH --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset spot_basis --symbols RB --trade-date 2024-04-30
 fdh-cli update --asset-class future --dataset inventory --symbols RB --start-date 2024-04-30 --end-date 2024-04-30
-fdh-cli update --asset-class future --dataset term_structure --symbols RB --start-date 2024-04-30 --end-date 2024-04-30
+fdh-cli update --asset-class future --dataset term_metrics --symbols RB --start-date 2024-04-30 --end-date 2024-04-30
 ```
 
 说明：
@@ -229,7 +225,7 @@ fdh-cli update --asset-class future --dataset term_structure --symbols RB --star
 - `settle`：普通合约
 - `mapping`：主力合约 + 连续合约
 - `minute`：显式 `all` 时展开普通合约 + 主力合约 + 连续合约；不指定 `--symbols` 时默认仅更新当前主力合约
-- `spot_basis` / `inventory` / `term_structure` / `term_spread` / `roll_yield`：表示全部品种
+- `spot_basis` / `inventory` / `term_metrics`：表示全部品种
 
 合约池获取与增量判断：
 
@@ -249,9 +245,7 @@ fdh-cli update --asset-class future --dataset term_structure --symbols RB --star
 - `get_futures_minute`
 - `get_futures_spot_basis`
 - `get_futures_inventory`
-- `get_futures_term_structure`
-- `get_futures_term_spread`
-- `get_futures_roll_yield`
+- `get_futures_term_metrics`
 
 示例：
 
@@ -278,7 +272,7 @@ inventory = fdh.get_futures_inventory(product_codes=["RB"], start_date="2024-04-
 - `futures` schema 全部 11 张表已存在
 - 10 张时间序列表已注册为 hypertable
 - 通过 `DataOperations` 完成真实写入、upsert、查询和清理
-- `term_structure/term_spread/roll_yield` 已通过真实样本生成成功
+- `term_metrics` 已通过真实样本生成成功
 - `contract_basic` 真实合约分布已确认：`normal=3493`，`main=19`，`continuous=21`
 - `--symbols all` 的真实 contract pool 展开已验证：
   - `daily` 在 `2024-04-01 ~ 2024-04-30` 时间窗内展开 `271` 个合约
@@ -292,9 +286,7 @@ inventory = fdh.get_futures_inventory(product_codes=["RB"], start_date="2024-04-
   - 日线样本：`SHFE` 当日整批拉取后筛出 `RB`，共 14 条
   - 结算参数样本：当日整批拉取后筛出 `RB`，共 12 条
 - 预处理结果已真实写入数据库：
-  - `term_structure`：1 条
-  - `term_spread`：1 条
-  - `roll_yield`：1 条
+  - `term_metrics`：1 条
 - 当次真实结果中，主/次合约为 `RB2410.SHF` / `RB2501.SHF`，价差为 `2.0`
 - 已新增可重复执行的集成测试：
   [test_futures_term_preprocess_integration.py](/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/tests/integration/test_futures_term_preprocess_integration.py:1)

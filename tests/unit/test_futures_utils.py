@@ -28,6 +28,10 @@ def test_futures_symbol_conversion():
     assert normalize_tushare_futures_symbol("znL0.SF") == "ZNL.SHF"
     assert to_xtquant_futures_symbol("ZN.SHF") == "zn00.SF"
     assert to_xtquant_futures_symbol("ZNL.SHF") == "znL0.SF"
+    assert to_xtquant_futures_symbol("L.DCE") == "l00.DF"
+    assert to_xtquant_futures_symbol("LL.DCE") == "lL0.DF"
+    assert to_xtquant_futures_symbol("AL.SHF") == "al00.SF"
+    assert to_xtquant_futures_symbol("ALL.SHF") == "alL0.SF"
 
 
 def test_xtquant_symbol_conversion_handles_invalid_main_symbol():
@@ -37,9 +41,19 @@ def test_xtquant_symbol_conversion_handles_invalid_main_symbol():
 def test_futures_contract_metadata_parsing():
     assert extract_futures_product_code("RB2405.SHF") == "RB"
     assert extract_futures_product_code("RBL.SHF") == "RB"
+    assert extract_futures_product_code("L.DCE") == "L"
+    assert extract_futures_product_code("LL.DCE") == "L"
+    assert extract_futures_product_code("L_F.DCE") == "L_F"
+    assert extract_futures_product_code("L_FL.DCE") == "L_F"
     assert get_futures_contract_type("RB2405.SHF") == "normal"
     assert get_futures_contract_type("RB.SHF") == "main"
     assert get_futures_contract_type("RBL.SHF") == "continuous"
+    assert get_futures_contract_type("L.DCE") == "main"
+    assert get_futures_contract_type("LL.DCE") == "continuous"
+    assert get_futures_contract_type("AL.SHF") == "main"
+    assert get_futures_contract_type("ALL.SHF") == "continuous"
+    assert get_futures_contract_type("L_F.DCE", product_code="L_F") == "main"
+    assert get_futures_contract_type("L_FL.DCE", product_code="L_F") == "continuous"
     assert extract_delivery_month("RB2405.SHF") == 5
     assert extract_delivery_year("RB2405.SHF") == 2024
     assert delivery_month_start("RB2405.SHF") == date(2024, 5, 1)

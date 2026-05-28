@@ -1157,52 +1157,23 @@ FuturesInventoryReceiptSchema = DataFrameSchema(
 )
 
 
-FuturesTermStructureSchema = DataFrameSchema(
-    name="futures_term_structure",
-    description="期货期限结构",
+FuturesTermMetricsSchema = DataFrameSchema(
+    name="futures_term_metrics",
+    description="期货期限结构快照与派生指标",
     columns=[
         ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
         ColumnSchema("product_code", "object", False, "品种代码"),
         ColumnSchema("exchange", "object", True, "交易所代码"),
         ColumnSchema("flag", "float64", True, "期限结构信号"),
         ColumnSchema("primary_contract", "object", True, "主力合约"),
-        ColumnSchema("secondary_contract", "object", True, "次主力合约"),
-        ColumnSchema("candidate_count", "int64", True, "候选合约数量"),
-        ColumnSchema("source", "object", True, "数据源"),
-    ],
-)
-
-
-FuturesTermSpreadSchema = DataFrameSchema(
-    name="futures_term_spread",
-    description="期货跨期价差",
-    columns=[
-        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
-        ColumnSchema("product_code", "object", False, "品种代码"),
-        ColumnSchema("exchange", "object", True, "交易所代码"),
-        ColumnSchema("primary_contract", "object", True, "主力合约"),
         ColumnSchema("primary_contract_close", "float64", True, "主力合约收盘价"),
         ColumnSchema("secondary_contract", "object", True, "次主力合约"),
         ColumnSchema("secondary_contract_close", "float64", True, "次主力合约收盘价"),
         ColumnSchema("spread", "float64", True, "价差"),
-        ColumnSchema("source", "object", True, "数据源"),
-    ],
-)
-
-
-FuturesRollYieldSchema = DataFrameSchema(
-    name="futures_roll_yield",
-    description="期货展期收益率",
-    columns=[
-        ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
-        ColumnSchema("product_code", "object", False, "品种代码"),
-        ColumnSchema("exchange", "object", True, "交易所代码"),
-        ColumnSchema("primary_contract", "object", True, "主力合约"),
-        ColumnSchema("secondary_contract", "object", True, "次主力合约"),
-        ColumnSchema("spread", "float64", True, "价差"),
         ColumnSchema("days_to_primary_expiry", "int64", True, "距离主力到期天数"),
         ColumnSchema("days_between_expiry", "int64", True, "合约到期日差"),
         ColumnSchema("annualized_roll_yield", "float64", True, "年化展期收益率"),
+        ColumnSchema("candidate_count", "int64", True, "候选合约数量"),
         ColumnSchema("source", "object", True, "数据源"),
     ],
 )

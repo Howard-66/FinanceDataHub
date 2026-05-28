@@ -6,7 +6,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional, Dict, Any, Union, Iterator, Tuple
+from typing import List, Optional, Dict, Any, Union, Iterator, Tuple, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
@@ -16,7 +16,10 @@ from loguru import logger
 
 from finance_data_hub.router.smart_router import SmartRouter
 from finance_data_hub.database.manager import DatabaseManager
-from finance_data_hub.database.operations import DataOperations
+from finance_data_hub.database.operations import (
+    DataOperations,
+    _normalize_futures_minute_frequency,
+)
 from finance_data_hub.config import Settings
 from finance_data_hub.providers.tushare import (
     SUPPORTED_INDEX_CODES,
@@ -26,11 +29,12 @@ from finance_data_hub.providers.tushare import (
     SUPPORTED_FUTURES_INDEX_CODES,
 )
 from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
-from finance_data_hub.utils.futures import extract_futures_product_code
+from finance_data_hub.utils.futures import is_xtquant_downloadable_futures_symbol
 
 FUTURES_SPOT_BASIS_HISTORY_START = "2011-01-04"
 FUTURES_SPOT_BASIS_CHUNK_DAYS = 31
 FUTURES_INVENTORY_SUPPORTED_EXCHANGES = {"DCE", "CZCE", "SHFE", "GFEX"}
+FUTURES_TERM_INSERT_BATCH_SIZE = 1000
 
 
 def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
@@ -2720,9 +2724,10 @@ class DataUpdater:
             "failed_symbols": [],
             "inserted_records": 0,
         }
-        if freq != "1m":
+        freq = _normalize_futures_minute_frequency(freq)
+        if freq not in {"1m", "5m"}:
             logger.info(
-                f"Futures minute {freq} is derived from 1m continuous aggregates; "
+                f"Futures minute {freq} is derived from 5m continuous aggregates; "
                 "skip provider download"
             )
             return 0
@@ -2752,6 +2757,28 @@ class DataUpdater:
         )
         if not symbols:
             logger.warning("No futures symbols found for minute update")
+            return 0
+        unsupported_symbols = [
+            symbol
+            for symbol in symbols
+            if not is_xtquant_downloadable_futures_symbol(symbol)
+        ]
+        if unsupported_symbols:
+            sample = ", ".join(unsupported_symbols[:10])
+            suffix = "..." if len(unsupported_symbols) > 10 else ""
+            logger.warning(
+                f"Skipping {len(unsupported_symbols)} XTQuant-unsupported futures "
+                f"symbols before minute download: {sample}{suffix}"
+            )
+            symbols = [
+                symbol
+                for symbol in symbols
+                if is_xtquant_downloadable_futures_symbol(symbol)
+            ]
+        if not symbols:
+            logger.warning(
+                "No XTQuant-downloadable futures symbols found for minute update"
+            )
             return 0
         self.last_futures_minute_summary["total_symbols"] = len(symbols)
 
@@ -3110,13 +3137,14 @@ class DataUpdater:
                 logger.warning(f"Failed to load futures dominant months from {path}: {exc}")
         return {}
 
-    async def preprocess_futures_term_data(
+    async def preprocess_futures_term_metrics(
         self,
         product_codes: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-    ) -> Dict[str, int]:
-        """合成期货期限结构、跨期价差和展期收益率。"""
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """合成期货期限结构快照与派生指标。"""
         if _is_all_futures_selector(product_codes):
             product_codes = None
         raw = await self.data_ops.get_futures_daily_for_preprocess(
@@ -3125,23 +3153,49 @@ class DataUpdater:
             end_date=end_date,
         )
         if raw.empty:
-            return {"term_structure": 0, "term_spread": 0, "roll_yield": 0}
+            if progress_callback:
+                progress_callback(1, 1)
+            return 0
 
         dominant_months = self._load_futures_dominant_months()
-        term_rows = []
-        spread_rows = []
-        roll_rows = []
+        metrics_rows = []
+        total_inserted = 0
+
+        async def flush_metrics_rows() -> None:
+            nonlocal metrics_rows, total_inserted
+            if not metrics_rows:
+                return
+            total_inserted += await self.data_ops.insert_futures_term_metrics_batch(
+                pd.DataFrame(metrics_rows)
+            )
+            metrics_rows = []
 
         raw["price"] = pd.to_numeric(raw["settle"], errors="coerce").fillna(
             pd.to_numeric(raw["close"], errors="coerce")
         )
         raw["open_interest"] = pd.to_numeric(raw["open_interest"], errors="coerce")
 
-        for (product, trade_time), group in raw.groupby(["product_code", "time"]):
+        grouped = raw.groupby(["product_code", "time"])
+        total_groups = grouped.ngroups
+        if progress_callback:
+            progress_callback(0, total_groups)
+        progress_interval = max(total_groups // 1000, 1)
+        completed_groups = 0
+
+        for completed_groups, ((product, trade_time), group) in enumerate(
+            grouped,
+            start=1,
+        ):
             months = dominant_months.get(str(product).upper()) or list(range(1, 13))
             eligible = group[group["delivery_month"].isin(months)].copy()
             eligible = eligible.dropna(subset=["price"])
             if eligible.empty:
+                if progress_callback and (
+                    completed_groups == 1
+                    or completed_groups % progress_interval == 0
+                    or completed_groups == total_groups
+                ):
+                    progress_callback(completed_groups, total_groups)
                 continue
 
             curve = eligible.sort_values(["delivery_month_start", "symbol"]).reset_index(
@@ -3151,6 +3205,12 @@ class DataUpdater:
                 primary_pos = curve["open_interest"].idxmax()
                 curve = curve.iloc[int(primary_pos) :].reset_index(drop=True)
             if curve.empty:
+                if progress_callback and (
+                    completed_groups == 1
+                    or completed_groups % progress_interval == 0
+                    or completed_groups == total_groups
+                ):
+                    progress_callback(completed_groups, total_groups)
                 continue
 
             prices = curve["price"].astype(float)
@@ -3171,82 +3231,72 @@ class DataUpdater:
 
             primary = curve.iloc[0]
             secondary = curve.iloc[1] if len(curve) > 1 else None
-
-            term_rows.append(
-                {
-                    "time": trade_time,
-                    "product_code": product,
-                    "exchange": primary.get("exchange"),
-                    "flag": flag,
-                    "primary_contract": primary.get("symbol"),
-                    "secondary_contract": secondary.get("symbol") if secondary is not None else None,
-                    "candidate_count": len(curve),
-                    "source": "preprocess",
-                }
-            )
-
-            if secondary is None:
-                continue
-
             primary_price = float(primary["price"])
-            secondary_price = float(secondary["price"])
-            spread = primary_price - secondary_price
-            spread_rows.append(
-                {
-                    "time": trade_time,
-                    "product_code": product,
-                    "exchange": primary.get("exchange"),
-                    "primary_contract": primary.get("symbol"),
-                    "primary_contract_close": primary_price,
-                    "secondary_contract": secondary.get("symbol"),
-                    "secondary_contract_close": secondary_price,
-                    "spread": spread,
-                    "source": "preprocess",
-                }
-            )
 
-            primary_expiry = primary.get("last_ddate") or primary.get("delivery_month_start")
-            secondary_expiry = secondary.get("last_ddate") or secondary.get("delivery_month_start")
+            secondary_price = None
+            spread = None
+            days_to_primary = None
+            days_between = None
+            annualized = None
+            if secondary is not None:
+                secondary_price = float(secondary["price"])
+                spread = primary_price - secondary_price
+                primary_expiry = primary.get("last_ddate") or primary.get(
+                    "delivery_month_start"
+                )
+                secondary_expiry = secondary.get("last_ddate") or secondary.get(
+                    "delivery_month_start"
+                )
+            else:
+                primary_expiry = None
+                secondary_expiry = None
+
             if pd.notna(primary_expiry) and pd.notna(secondary_expiry) and primary_price:
                 primary_expiry = pd.Timestamp(primary_expiry)
                 secondary_expiry = pd.Timestamp(secondary_expiry)
                 trade_ts = pd.Timestamp(trade_time)
                 days_to_primary = max((primary_expiry.date() - trade_ts.date()).days, 0)
                 days_between = (secondary_expiry.date() - primary_expiry.date()).days
-                annualized = None
                 if days_between > 0:
                     annualized = ((secondary_price - primary_price) / primary_price) * (
                         365 / days_between
                     )
-                roll_rows.append(
-                    {
-                        "time": trade_time,
-                        "product_code": product,
-                        "exchange": primary.get("exchange"),
-                        "primary_contract": primary.get("symbol"),
-                        "secondary_contract": secondary.get("symbol"),
-                        "spread": spread,
-                        "days_to_primary_expiry": days_to_primary,
-                        "days_between_expiry": days_between,
-                        "annualized_roll_yield": annualized,
-                        "source": "preprocess",
-                    }
-                )
 
-        term_count = await self.data_ops.insert_futures_term_structure_batch(
-            pd.DataFrame(term_rows)
-        )
-        spread_count = await self.data_ops.insert_futures_term_spread_batch(
-            pd.DataFrame(spread_rows)
-        )
-        roll_count = await self.data_ops.insert_futures_roll_yield_batch(
-            pd.DataFrame(roll_rows)
-        )
-        return {
-            "term_structure": term_count,
-            "term_spread": spread_count,
-            "roll_yield": roll_count,
-        }
+            metrics_rows.append(
+                {
+                    "time": trade_time,
+                    "product_code": product,
+                    "exchange": primary.get("exchange"),
+                    "flag": flag,
+                    "primary_contract": primary.get("symbol"),
+                    "primary_contract_close": primary_price,
+                    "secondary_contract": secondary.get("symbol")
+                    if secondary is not None
+                    else None,
+                    "secondary_contract_close": secondary_price,
+                    "spread": spread,
+                    "days_to_primary_expiry": days_to_primary,
+                    "days_between_expiry": days_between,
+                    "annualized_roll_yield": annualized,
+                    "candidate_count": len(curve),
+                    "source": "preprocess",
+                }
+            )
+
+            if len(metrics_rows) >= FUTURES_TERM_INSERT_BATCH_SIZE:
+                await flush_metrics_rows()
+
+            if progress_callback and (
+                completed_groups == 1
+                or completed_groups % progress_interval == 0
+                or completed_groups == total_groups
+            ):
+                progress_callback(completed_groups, total_groups)
+
+        await flush_metrics_rows()
+        if progress_callback:
+            progress_callback(total_groups, total_groups)
+        return total_inserted
 
     async def close(self) -> None:
         """关闭资源"""

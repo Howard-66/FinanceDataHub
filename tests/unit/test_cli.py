@@ -348,6 +348,35 @@ def test_cli_update_future_minute_trade_date_passed_to_updater():
     )
 
 
+def test_cli_update_future_term_metrics_passes_progress_callback():
+    fake_updater = Mock()
+    fake_updater.preprocess_futures_term_metrics = AsyncMock(return_value=1)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--asset-class", "future",
+                "--dataset", "term_metrics",
+                "--symbols", "all",
+                "--force",
+            ],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.preprocess_futures_term_metrics.assert_awaited_once_with(
+        product_codes=["all"],
+        start_date=None,
+        end_date=ANY,
+        progress_callback=ANY,
+    )
+
+
 def test_cli_update_daily_basic():
     """测试每日基本面数据更新"""
     with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):

@@ -6,7 +6,7 @@
 
 from datetime import datetime
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 from loguru import logger
@@ -5388,6 +5388,9 @@ class DataOperations:
         time_columns: Optional[set[str]] = None,
         date_columns: Optional[set[str]] = None,
         time_data_type: str = "daily",
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        progress_start: int = 0,
+        progress_total: Optional[int] = None,
     ) -> int:
         """Generic schema-qualified upsert helper for futures tables."""
         if data.empty:
@@ -5419,6 +5422,8 @@ class DataOperations:
         """
 
         total_inserted = 0
+        total_batches = (len(data) + batch_size - 1) // batch_size
+        callback_total = progress_total or progress_start + total_batches
         for i in range(0, len(data), batch_size):
             batch = data.iloc[i : i + batch_size]
             records = batch[insert_columns].to_dict("records")
@@ -5439,6 +5444,8 @@ class DataOperations:
             async with self.db_manager._engine.begin() as conn:
                 await conn.execute(text(insert_sql), records)
             total_inserted += len(records)
+            if progress_callback:
+                progress_callback(progress_start + (i // batch_size) + 1, callback_total)
 
         logger.info(f"Total upserted {total_inserted} records to futures.{table}")
         return total_inserted
@@ -5524,35 +5531,62 @@ class DataOperations:
             normalized_frequency = data["frequency"].map(
                 _normalize_futures_minute_frequency
             )
-            non_1m = normalized_frequency != "1m"
-            if non_1m.any():
+        else:
+            normalized_frequency = pd.Series("1m", index=data.index)
+
+        raw_frequency_tables = {
+            "1m": "minute_1m",
+            "5m": "minute_5m",
+        }
+        supported_frequency = normalized_frequency.isin(raw_frequency_tables)
+        if (~supported_frequency).any():
+            skipped = normalized_frequency[~supported_frequency]
+            derived_count = int(skipped.isin({"15m", "30m", "60m"}).sum())
+            unsupported_count = int((~skipped.isin({"15m", "30m", "60m"})).sum())
+            if derived_count:
                 logger.warning(
-                    f"Skipping {int(non_1m.sum())} non-1m futures minute rows; "
-                    "5m/15m/30m/60m are derived by continuous aggregates"
+                    f"Skipping {derived_count} derived futures minute rows; "
+                    "15m/30m/60m are derived by continuous aggregates from 5m"
                 )
-                data = data.loc[~non_1m].copy()
+            if unsupported_count:
+                logger.warning(
+                    f"Skipping {unsupported_count} unsupported futures minute rows"
+                )
+            data = data.loc[supported_frequency].copy()
+            normalized_frequency = normalized_frequency.loc[supported_frequency]
         if data.empty:
             return 0
-        return await self._insert_futures_dataframe(
-            "minute_1m",
-            data,
-            [
-                "time",
-                "symbol",
-                "product_code",
-                "exchange",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-                "amount",
-                "open_interest",
-                "source",
-            ],
-            ["symbol", "time"],
-            time_data_type="minute",
-        )
+
+        data["_normalized_frequency"] = normalized_frequency.values
+        total_inserted = 0
+        columns = [
+            "time",
+            "symbol",
+            "product_code",
+            "exchange",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "open_interest",
+            "source",
+        ]
+        for frequency, table in raw_frequency_tables.items():
+            frequency_data = data.loc[data["_normalized_frequency"] == frequency].drop(
+                columns=["_normalized_frequency"]
+            )
+            if frequency_data.empty:
+                continue
+            total_inserted += await self._insert_futures_dataframe(
+                table,
+                frequency_data,
+                columns,
+                ["symbol", "time"],
+                time_data_type="minute",
+            )
+        return total_inserted
 
     async def insert_futures_settle_batch(self, data: pd.DataFrame) -> int:
         return await self._insert_futures_dataframe(
@@ -5634,9 +5668,15 @@ class DataOperations:
             ["product_code", "time"],
         )
 
-    async def insert_futures_term_structure_batch(self, data: pd.DataFrame) -> int:
+    async def insert_futures_term_metrics_batch(
+        self,
+        data: pd.DataFrame,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        progress_start: int = 0,
+        progress_total: Optional[int] = None,
+    ) -> int:
         return await self._insert_futures_dataframe(
-            "term_structure",
+            "term_metrics",
             data.copy(),
             [
                 "time",
@@ -5644,48 +5684,20 @@ class DataOperations:
                 "exchange",
                 "flag",
                 "primary_contract",
-                "secondary_contract",
-                "candidate_count",
-                "source",
-            ],
-            ["product_code", "time"],
-        )
-
-    async def insert_futures_term_spread_batch(self, data: pd.DataFrame) -> int:
-        return await self._insert_futures_dataframe(
-            "term_spread",
-            data.copy(),
-            [
-                "time",
-                "product_code",
-                "exchange",
-                "primary_contract",
                 "primary_contract_close",
                 "secondary_contract",
                 "secondary_contract_close",
                 "spread",
-                "source",
-            ],
-            ["product_code", "time"],
-        )
-
-    async def insert_futures_roll_yield_batch(self, data: pd.DataFrame) -> int:
-        return await self._insert_futures_dataframe(
-            "roll_yield",
-            data.copy(),
-            [
-                "time",
-                "product_code",
-                "exchange",
-                "primary_contract",
-                "secondary_contract",
-                "spread",
                 "days_to_primary_expiry",
                 "days_between_expiry",
                 "annualized_roll_yield",
+                "candidate_count",
                 "source",
             ],
             ["product_code", "time"],
+            progress_callback=progress_callback,
+            progress_start=progress_start,
+            progress_total=progress_total,
         )
 
     async def get_latest_futures_date(
@@ -5703,9 +5715,7 @@ class DataOperations:
             "index_daily",
             "spot_basis",
             "inventory_receipt",
-            "term_structure",
-            "term_spread",
-            "roll_yield",
+            "term_metrics",
         }
         if table not in allowed_tables:
             raise ValueError(f"Unsupported futures table: {table}")
@@ -5715,9 +5725,7 @@ class DataOperations:
         product_tables = {
             "spot_basis",
             "inventory_receipt",
-            "term_structure",
-            "term_spread",
-            "roll_yield",
+            "term_metrics",
         }
         if symbol and table not in product_tables:
             conditions.append("symbol = :symbol")
@@ -5859,9 +5867,7 @@ class DataOperations:
             "index_daily",
             "spot_basis",
             "inventory_receipt",
-            "term_structure",
-            "term_spread",
-            "roll_yield",
+            "term_metrics",
         }
         if table not in allowed_tables:
             raise ValueError(f"Unsupported futures table: {table}")
@@ -5952,9 +5958,9 @@ class DataOperations:
             return None
 
         frequency_select = (
-            "frequency"
-            if normalized_frequency != "1m"
-            else "'1m'::VARCHAR(8) AS frequency"
+            f"'{normalized_frequency}'::VARCHAR(8) AS frequency"
+            if normalized_frequency in {"1m", "5m"}
+            else "frequency"
         )
         query = f"""
             SELECT
@@ -6000,34 +6006,14 @@ class DataOperations:
             "inventory_receipt", None, product_codes, start_date, end_date
         )
 
-    async def get_futures_term_structure(
+    async def get_futures_term_metrics(
         self,
         product_codes: Optional[List[str]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         return await self._query_futures_time_table(
-            "term_structure", None, product_codes, start_date, end_date
-        )
-
-    async def get_futures_term_spread(
-        self,
-        product_codes: Optional[List[str]] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ) -> Optional[pd.DataFrame]:
-        return await self._query_futures_time_table(
-            "term_spread", None, product_codes, start_date, end_date
-        )
-
-    async def get_futures_roll_yield(
-        self,
-        product_codes: Optional[List[str]] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ) -> Optional[pd.DataFrame]:
-        return await self._query_futures_time_table(
-            "roll_yield", None, product_codes, start_date, end_date
+            "term_metrics", None, product_codes, start_date, end_date
         )
 
     async def get_futures_daily_for_preprocess(

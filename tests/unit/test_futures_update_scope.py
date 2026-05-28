@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 import pandas as pd
 
+import finance_data_hub.update.updater as updater_module
 from finance_data_hub.update.updater import (
     DataUpdater,
     _is_all_futures_selector,
@@ -378,6 +379,42 @@ def test_update_futures_minute_derived_frequency_skips_provider_download():
     asyncio.run(_run())
 
 
+def test_update_futures_minute_5m_downloads_from_provider():
+    async def _run():
+        settings = Mock()
+        settings.data_source.futures_minute_max_workers = 2
+        updater = DataUpdater(settings=settings)
+        updater.data_ops = Mock()
+        updater.data_ops.get_latest_futures_date = AsyncMock(return_value=None)
+        updater.data_ops.insert_futures_minute_batch = AsyncMock(return_value=1)
+        updater.router = Mock()
+        updater.router.route = Mock(
+            return_value=pd.DataFrame(
+                {
+                    "time": ["2024-04-30 09:30:00"],
+                    "symbol": ["RB2405.SHF"],
+                    "frequency": ["5m"],
+                }
+            )
+        )
+
+        inserted = await updater.update_futures_minute(
+            symbols=["RB2405.SHF"],
+            trade_date=None,
+            start_date="2024-04-30 09:30:00",
+            end_date="2024-04-30 10:00:00",
+            freq="5m",
+            force_update=True,
+        )
+
+        assert inserted == 1
+        updater.router.route.assert_called_once()
+        assert updater.router.route.call_args.kwargs["freq"] == "5m"
+        updater.data_ops.insert_futures_minute_batch.assert_awaited_once()
+
+    asyncio.run(_run())
+
+
 def test_update_futures_minute_skips_symbols_without_download_when_up_to_date():
     async def _run():
         settings = Mock()
@@ -461,6 +498,49 @@ def test_update_futures_minute_skips_failed_symbol_and_continues():
     asyncio.run(_run())
 
 
+def test_update_futures_minute_skips_xtquant_unsupported_synthetic_symbols():
+    async def _run():
+        settings = Mock()
+        settings.data_source.futures_minute_max_workers = 2
+        updater = DataUpdater(settings=settings)
+        updater.data_ops = Mock()
+        updater.data_ops.get_latest_futures_date = AsyncMock(return_value=None)
+        updater.data_ops.insert_futures_minute_batch = AsyncMock(return_value=1)
+        updater.router = Mock()
+        updater.router.route = Mock(
+            return_value=pd.DataFrame(
+                {
+                    "time": ["2024-04-30 09:30:00"],
+                    "symbol": ["RB2405.SHF"],
+                    "frequency": ["1m"],
+                }
+            )
+        )
+
+        progress = []
+        inserted = await updater.update_futures_minute(
+            symbols=["L_F.DCE", "PP_FL.DCE", "RB2405.SHF"],
+            trade_date=None,
+            start_date="2024-04-30 09:30:00",
+            end_date="2024-04-30 10:00:00",
+            freq="1m",
+            force_update=True,
+            progress_callback=lambda current, total: progress.append((current, total)),
+        )
+
+        assert inserted == 1
+        updater.data_ops.get_latest_futures_date.assert_awaited_once_with(
+            "minute", symbol="RB2405.SHF", frequency="1m"
+        )
+        updater.router.route.assert_called_once()
+        assert updater.router.route.call_args.kwargs["symbol"] == "RB2405.SHF"
+        assert progress == [(1, 1)]
+        assert updater.last_futures_minute_summary["total_symbols"] == 1
+        assert updater.last_futures_minute_summary["failed_symbols"] == []
+
+    asyncio.run(_run())
+
+
 def test_update_futures_minute_trade_date_filters_contract_universe():
     async def _run():
         settings = Mock()
@@ -502,6 +582,71 @@ def test_update_futures_minute_trade_date_filters_contract_universe():
         )
         assert updater.router.route.call_args.kwargs["start_date"] == "2024-04-30"
         assert updater.router.route.call_args.kwargs["end_date"] == "2024-04-30"
+
+    asyncio.run(_run())
+
+
+def test_preprocess_futures_term_metrics_flushes_batches_during_processing(monkeypatch):
+    async def _run():
+        monkeypatch.setattr(updater_module, "FUTURES_TERM_INSERT_BATCH_SIZE", 1)
+        updater = DataUpdater(settings=Mock())
+        updater.data_ops = Mock()
+        raw = pd.DataFrame(
+            {
+                "time": [
+                    pd.Timestamp("2024-04-30"),
+                    pd.Timestamp("2024-04-30"),
+                    pd.Timestamp("2024-05-01"),
+                    pd.Timestamp("2024-05-01"),
+                ],
+                "symbol": ["ZZ2405.SHF", "ZZ2406.SHF", "ZZ2405.SHF", "ZZ2406.SHF"],
+                "product_code": ["ZZ", "ZZ", "ZZ", "ZZ"],
+                "exchange": ["SHFE", "SHFE", "SHFE", "SHFE"],
+                "close": [3600.0, 3650.0, 3610.0, 3660.0],
+                "settle": [3601.0, 3651.0, 3611.0, 3661.0],
+                "open_interest": [1000, 900, 1000, 900],
+                "last_ddate": [
+                    pd.Timestamp("2024-05-15"),
+                    pd.Timestamp("2024-06-15"),
+                    pd.Timestamp("2024-05-15"),
+                    pd.Timestamp("2024-06-15"),
+                ],
+                "delivery_month": [5, 6, 5, 6],
+                "delivery_month_start": [
+                    pd.Timestamp("2024-05-01"),
+                    pd.Timestamp("2024-06-01"),
+                    pd.Timestamp("2024-05-01"),
+                    pd.Timestamp("2024-06-01"),
+                ],
+            }
+        )
+        updater.data_ops.get_futures_daily_for_preprocess = AsyncMock(return_value=raw)
+        events = []
+
+        async def insert_batch(data):
+            events.append(("insert", len(data)))
+            return len(data)
+
+        updater.data_ops.insert_futures_term_metrics_batch = AsyncMock(
+            side_effect=insert_batch
+        )
+
+        count = await updater.preprocess_futures_term_metrics(
+            product_codes=["ZZ"],
+            start_date="2024-04-30",
+            end_date="2024-05-01",
+            progress_callback=lambda current, total: events.append(
+                ("progress", current, total)
+            ),
+        )
+
+        assert count == 2
+        assert events[0] == ("progress", 0, 2)
+        assert events[1] == ("insert", 1)
+        assert events[2] == ("progress", 1, 2)
+        assert events[3] == ("insert", 1)
+        assert events[-1] == ("progress", 2, 2)
+        assert updater.data_ops.insert_futures_term_metrics_batch.await_count == 2
 
     asyncio.run(_run())
 

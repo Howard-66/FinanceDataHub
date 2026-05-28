@@ -3229,7 +3229,16 @@ class TushareProvider(BaseDataProvider):
                     inferred_exchange
                 )
             if "contract_type" not in df.columns:
-                df["contract_type"] = df[symbol_col].map(get_futures_contract_type)
+                if "fut_code" in df.columns:
+                    df["contract_type"] = df.apply(
+                        lambda row: get_futures_contract_type(
+                            row.get(symbol_col),
+                            product_code=row.get("fut_code"),
+                        ),
+                        axis=1,
+                    )
+                else:
+                    df["contract_type"] = df[symbol_col].map(get_futures_contract_type)
         return df
 
     def get_futures_basic(

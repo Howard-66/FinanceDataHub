@@ -385,9 +385,7 @@ FUTURE_DATASETS = {
     "index_daily",
     "spot_basis",
     "inventory",
-    "term_structure",
-    "term_spread",
-    "roll_yield",
+    "term_metrics",
 }
 
 
@@ -510,13 +508,17 @@ async def _run_future_update(
         get_spinner(),
         TextColumn("[bold blue]{task.description}"),
         BarColumn(),
+        TaskProgressColumn(),
         TimeElapsedColumn(),
         console=console,
     ) as progress:
         task = progress.add_task("正在更新期货数据...", total=task_total)
+        latest_progress_total = task_total
 
         async with DataUpdater(settings, config_path="sources.yml") as updater:
             def progress_callback(current, total):
+                nonlocal latest_progress_total
+                latest_progress_total = total
                 progress.update(task, completed=current, total=total)
 
             try:
@@ -586,17 +588,17 @@ async def _run_future_update(
                         force_update=force,
                     )
                 else:
-                    result = await updater.preprocess_futures_term_data(
+                    count = await updater.preprocess_futures_term_metrics(
                         product_codes=symbol_list,
                         start_date=start_date,
                         end_date=end_date,
+                        progress_callback=progress_callback,
                     )
-                    count = result.get(data_type, sum(result.values()))
 
                 completed_total = (
                     minute_summary["total_symbols"]
                     if minute_summary and minute_summary.get("total_symbols")
-                    else task_total
+                    else latest_progress_total
                 )
                 progress.update(
                     task, completed=completed_total, total=completed_total
