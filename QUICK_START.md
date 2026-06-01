@@ -31,6 +31,20 @@ docker ps
 # 应该看到 postgres 和 redis 容器在运行
 ```
 
+**长期运行调度器（可选）**:
+完成 `.env`、`sources.yml`、`schedules.yml` 配置并初始化数据库后，可用 Docker 启动 `fdh-cli schedule start`：
+
+```bash
+docker-compose --profile scheduler up -d scheduler
+docker-compose logs -f scheduler
+```
+
+如果 `xtquant_helper` 运行在宿主机，`.env` 中建议使用：
+
+```bash
+XTQUANT_API_URL=http://host.docker.internal:8100
+```
+
 ---
 
 ## 步骤 2: 安装依赖

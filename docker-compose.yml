@@ -41,6 +41,38 @@ services:
       timeout: 3s
       retries: 5
 
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["scheduler"]
+    container_name: trading_nexus_scheduler
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - TZ=Asia/Shanghai
+      - DATABASE_URL=postgresql://trading_nexus:trading.nexus.data@timescaledb:5432/trading_nexus_db
+      - REDIS_URL=redis://redis:6379/0
+      - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # If xtquant_helper runs on the Docker host, set this in .env to:
+      # XTQUANT_API_URL=http://host.docker.internal:8100
+      - XTQUANT_API_URL=${XTQUANT_API_URL:-http://host.docker.internal:8100}
+      - SOURCES_CONFIG_PATH=/app/sources.yml
+      - FDH_SCHEDULES_PATH=/app/schedules.yml
+    volumes:
+      - ./schedules.yml:/app/schedules.yml:ro
+      - ./sources.yml:/app/sources.yml:ro
+      - ./logs:/app/logs
+      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["fdh-cli", "schedule", "start", "--config", "/app/schedules.yml"]
+
 # Docker Compose 网络配置
 networks:
   default:
@@ -49,3 +81,4 @@ networks:
 # docker-compose up -d
 # docker exec -it trading_nexus_container psql -U trading_nexus -d trading_nexus_db
 # redis-cli -h localhost -p 6379
+# docker-compose --profile scheduler up -d scheduler

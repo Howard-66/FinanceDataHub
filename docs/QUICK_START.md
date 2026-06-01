@@ -27,6 +27,27 @@ docker-compose up -d
 docker-compose ps
 ```
 
+#### 启动调度器容器（可选，生产/长期运行推荐）
+
+默认 `docker-compose up -d` 只启动 PostgreSQL 和 Redis。完成 `.env`、`sources.yml`、`schedules.yml` 配置并初始化数据库后，可启动调度器容器：
+
+```bash
+docker-compose --profile scheduler up -d scheduler
+docker-compose logs -f scheduler
+```
+
+调度器容器会以前台模式运行：
+
+```bash
+fdh-cli schedule start --config /app/schedules.yml
+```
+
+容器内数据库地址会自动使用 compose 服务名 `timescaledb`。如果 `xtquant_helper` 跑在宿主机，请在 `.env` 中配置：
+
+```bash
+XTQUANT_API_URL=http://host.docker.internal:8100
+```
+
 #### 配置环境变量
 创建 `.env` 文件：
 ```bash

@@ -5,7 +5,7 @@
 import pytest
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date
 
 
 class TestJobConfig:
@@ -218,7 +218,10 @@ jobs:
         config = ScheduleConfig.from_yaml("schedules.yml")
 
         assert "futures_minute_5m_update" in config.jobs
+        assert "futures_minute_5m_saturday_update" in config.jobs
         assert config.jobs["futures_minute_15m_refresh"].type.value == "aggregate"
+        assert config.jobs["futures_daily_update"].params["trade_date"] == "previous_trade_date"
+        assert config.jobs["futures_term_metrics_saturday_update"].dataset == "term_metrics"
 
 
 class TestTaskExecutor:
@@ -313,17 +316,18 @@ class TestTaskExecutor:
         assert "--end-date 2024-04-30" in joined
 
     def test_build_download_command_resolves_relative_latest_date_placeholders(self):
-        """下载命令应支持 latest +/- Nd 与工作日日期占位。"""
+        """下载命令应支持 latest/previous_trade_date 与相对日期占位。"""
         from finance_data_hub.scheduler.executor import TaskExecutor
 
         executor = TaskExecutor()
         executor._get_latest_trade_date = lambda asset_class=None: "2024-04-30"
+        executor._get_previous_trade_date = lambda asset_class=None: "2024-04-29"
 
         cmd = executor._build_download_command(
             "minute_5",
             {
                 "asset_class": "future",
-                "start_date": "latest-1bd",
+                "start_date": "previous_trade_date",
                 "end_date": "latest+1d",
             },
         )
@@ -333,11 +337,12 @@ class TestTaskExecutor:
         assert "--end-date 2024-05-01" in joined
 
         executor._get_latest_trade_date = lambda asset_class=None: "2024-05-06"
+        executor._get_previous_trade_date = lambda asset_class=None: "2024-05-03"
         cmd = executor._build_download_command(
             "minute_5",
             {
                 "asset_class": "future",
-                "start_date": "latest-1bd",
+                "start_date": "previous_trade_date",
                 "end_date": "latest",
             },
         )
@@ -346,18 +351,54 @@ class TestTaskExecutor:
         assert "--start-date 2024-05-03" in joined
         assert "--end-date 2024-05-06" in joined
 
+    def test_trade_calendar_date_lookup_uses_database(self, monkeypatch):
+        """latest/previous_trade_date 优先来自 trade_cal。"""
+        from finance_data_hub.scheduler import executor as executor_module
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        class FakeRow:
+            trade_date = "2024-05-06"
+
+        class FakeResult:
+            def fetchone(self):
+                return FakeRow()
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def execute(self, query, params):
+                assert params["exchanges"] == ["CFFEX", "SHFE", "CZCE", "DCE", "INE", "GFEX"]
+                return FakeResult()
+
+        class FakeEngine:
+            def connect(self):
+                return FakeConnection()
+
+            def dispose(self):
+                pass
+
+        monkeypatch.setattr(executor_module, "create_engine", lambda *args, **kwargs: FakeEngine())
+
+        executor = TaskExecutor()
+        assert executor._query_trade_calendar_date("future", date(2024, 5, 7), None) == "2024-05-06"
+
     def test_build_aggregate_command(self):
         """连续聚合刷新命令应透传表名与日期窗口。"""
         from finance_data_hub.scheduler.executor import TaskExecutor
 
         executor = TaskExecutor()
         executor._get_latest_trade_date = lambda asset_class=None: "2024-04-30"
+        executor._get_previous_trade_date = lambda asset_class=None: "2024-04-29"
 
         cmd = executor._build_aggregate_command(
             "futures.minute_15m",
             {
                 "asset_class": "future",
-                "start_date": "latest-1bd",
+                "start_date": "previous_trade_date",
                 "end_date": "latest+1d",
             },
         )

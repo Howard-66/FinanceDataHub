@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Any, Union
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from loguru import logger
+from sqlalchemy import create_engine, text
 
 from .models import JobConfig, JobType, JobExecutionLog
 
@@ -302,21 +303,25 @@ class TaskExecutor:
         normalized = value.strip().lower()
         if not normalized:
             return None
-        latest_match = re.fullmatch(r"latest(?:([+-])(\d+)(bd|d))?", normalized)
-        if latest_match:
-            latest = self._get_latest_trade_date(asset_class=asset_class)
-            if latest is None:
+
+        placeholder_match = re.fullmatch(
+            r"(latest|previous_trade_date)(?:([+-])(\d+)(bd|d))?",
+            normalized,
+        )
+        if placeholder_match:
+            placeholder, sign, days, unit = placeholder_match.groups()
+            if placeholder == "latest":
+                resolved_value = self._get_latest_trade_date(asset_class=asset_class)
+            else:
+                resolved_value = self._get_previous_trade_date(asset_class=asset_class)
+            if resolved_value is None:
                 return None
-            resolved = datetime.strptime(latest, "%Y-%m-%d").date()
-            sign, days, unit = latest_match.groups()
+
+            resolved = datetime.strptime(resolved_value, "%Y-%m-%d").date()
             if days:
                 offset = int(days)
                 if unit == "bd":
-                    step = -1 if sign == "-" else 1
-                    for _ in range(offset):
-                        resolved += timedelta(days=step)
-                        while resolved.weekday() >= 5:
-                            resolved += timedelta(days=step)
+                    resolved = self._shift_business_days(resolved, offset, sign)
                 else:
                     delta = timedelta(days=offset)
                     resolved = resolved - delta if sign == "-" else resolved + delta
@@ -324,18 +329,123 @@ class TaskExecutor:
         return value
 
     def _get_latest_trade_date(self, asset_class: Optional[str] = None) -> Optional[str]:
-        """获取最新交易日"""
-        today = date.today()
+        """获取最新交易日。优先查询交易日历，失败时退回简单工作日规则。"""
+        calendar_date = self._query_trade_calendar_date(
+            asset_class=asset_class,
+            as_of=date.today(),
+            previous_to=None,
+        )
+        if calendar_date:
+            return calendar_date
+        return self._fallback_latest_business_date(date.today()).strftime("%Y-%m-%d")
+
+    def _get_previous_trade_date(
+        self,
+        asset_class: Optional[str] = None,
+    ) -> Optional[str]:
+        """获取最新交易日前一交易日。优先查询交易日历，失败时退回工作日规则。"""
+        latest = self._get_latest_trade_date(asset_class=asset_class)
+        if latest is None:
+            return None
+
+        latest_date = datetime.strptime(latest, "%Y-%m-%d").date()
+        calendar_date = self._query_trade_calendar_date(
+            asset_class=asset_class,
+            as_of=latest_date,
+            previous_to=latest_date,
+        )
+        if calendar_date:
+            return calendar_date
+        return self._shift_business_days(latest_date, 1, "-").strftime("%Y-%m-%d")
+
+    def _query_trade_calendar_date(
+        self,
+        asset_class: Optional[str],
+        as_of: date,
+        previous_to: Optional[date],
+    ) -> Optional[str]:
+        """Query trade_cal for the latest open date on or before ``as_of``."""
+        try:
+            from finance_data_hub.config import get_settings
+        except Exception as exc:
+            logger.debug(f"Unable to load settings for trade calendar lookup: {exc}")
+            return None
+
+        try:
+            settings = get_settings()
+            database_url = settings.database.url
+            if database_url.startswith("postgresql+asyncpg://"):
+                database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
+            if not database_url.startswith("postgresql://"):
+                return None
+
+            exchanges = self._trade_calendar_exchanges(asset_class)
+            query = """
+                SELECT MAX((cal_date AT TIME ZONE 'Asia/Shanghai')::date) AS trade_date
+                FROM trade_cal
+                WHERE is_open = 1
+                  AND exchange = ANY(:exchanges)
+                  AND (cal_date AT TIME ZONE 'Asia/Shanghai')::date <= :as_of
+            """
+            params: Dict[str, Any] = {
+                "exchanges": exchanges,
+                "as_of": as_of,
+            }
+            if previous_to is not None:
+                query += (
+                    " AND (cal_date AT TIME ZONE 'Asia/Shanghai')::date < :previous_to"
+                )
+                params["previous_to"] = previous_to
+
+            engine = create_engine(
+                database_url,
+                pool_pre_ping=True,
+                connect_args={"connect_timeout": 2},
+            )
+            try:
+                with engine.connect() as conn:
+                    row = conn.execute(text(query), params).fetchone()
+            finally:
+                engine.dispose()
+
+            if row and row.trade_date:
+                return self._date_to_str(row.trade_date)
+        except Exception as exc:
+            logger.debug(f"Trade calendar lookup failed, falling back to weekdays: {exc}")
+        return None
+
+    def _trade_calendar_exchanges(self, asset_class: Optional[str]) -> List[str]:
+        normalized = str(asset_class or "").strip().lower()
+        if normalized == "future":
+            return ["CFFEX", "SHFE", "CZCE", "DCE", "INE", "GFEX"]
+        return ["SSE", "SZSE"]
+
+    def _fallback_latest_business_date(self, current_date: date) -> date:
         # 简单判断：周六周日不是交易日
-        weekday = today.weekday()
+        weekday = current_date.weekday()
         if weekday == 5:  # 周六
-            trade_date = today - timedelta(days=1)
+            trade_date = current_date - timedelta(days=1)
         elif weekday == 6:  # 周日
-            trade_date = today - timedelta(days=2)
+            trade_date = current_date - timedelta(days=2)
         else:
-            trade_date = today
-        
-        return trade_date.strftime("%Y-%m-%d")
+            trade_date = current_date
+        return trade_date
+
+    def _date_to_str(self, value: Any) -> str:
+        if isinstance(value, datetime):
+            return value.date().strftime("%Y-%m-%d")
+        if isinstance(value, date):
+            return value.strftime("%Y-%m-%d")
+        return str(value)[:10]
+
+    def _shift_business_days(self, value: date, days: int, sign: str) -> date:
+        step = -1 if sign == "-" else 1
+        resolved = value
+        for _ in range(days):
+            resolved += timedelta(days=step)
+            while resolved.weekday() >= 5:
+                resolved += timedelta(days=step)
+        return resolved
     
     def _execute_preprocess(
         self,

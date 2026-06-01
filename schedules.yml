@@ -20,7 +20,7 @@ jobs:
     schedule:
       type: cron
       hour: 17
-      minute: 0
+      minute: 10
       day_of_week: "mon-fri"
     params:
       market: CN
@@ -46,14 +46,14 @@ jobs:
       max_retries: 3
       delay: 300
 
-  # 每日基本面 - 每日收盘后更新（17:30）
+  # 每日基本面 - 每日收盘后更新（18:30）
   daily_basic_update:
     enabled: true
     type: download
     dataset: daily_basic
     schedule:
       type: cron
-      hour: 17
+      hour: 18
       minute: 30
       day_of_week: "mon-fri"
     params:
@@ -306,16 +306,33 @@ jobs:
       max_retries: 3
       delay: 600
 
-  # 期货日线行情 - 每个交易日收盘后更新
+  # 期货日线行情 - 次日凌晨更新已完整收盘的交易日，避免夜盘/跨日导致日线未完结
   futures_daily_update:
     enabled: true
     type: download
     dataset: daily
     schedule:
       type: cron
-      hour: 16
-      minute: 30
-      day_of_week: "mon-fri"
+      hour: 3
+      minute: 10
+      day_of_week: "tue-fri"
+    params:
+      asset_class: future
+      trade_date: "previous_trade_date"
+    retry:
+      max_retries: 3
+      delay: 600
+
+  # 周五夜盘可能跨到周六凌晨，单独在周六更新周五完整日线
+  futures_daily_saturday_update:
+    enabled: true
+    type: download
+    dataset: daily
+    schedule:
+      type: cron
+      hour: 3
+      minute: 10
+      day_of_week: "sat"
     params:
       asset_class: future
       trade_date: "latest"
@@ -341,7 +358,7 @@ jobs:
       delay: 600
 
   # 期货分钟线 - 每个交易日收盘后更新 1m/5m 原始数据
-  # 夜盘会落在上一工作日，使用 latest-1bd 到 latest 覆盖完整当日交易日窗口
+  # 夜盘会落在上一交易日，使用 previous_trade_date 到 latest 覆盖完整当日交易日窗口
   futures_minute_1m_update:
     enabled: true
     type: download
@@ -354,7 +371,7 @@ jobs:
     params:
       asset_class: future
       symbols: all
-      start_date: "latest-1bd"
+      start_date: "previous_trade_date"
       end_date: "latest"
     retry:
       max_retries: 3
@@ -372,8 +389,45 @@ jobs:
     params:
       asset_class: future
       symbols: all
-      start_date: "latest-1bd"
+      start_date: "previous_trade_date"
       end_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 周五夜盘跨周末自然日，周六凌晨补齐分钟原始数据
+  futures_minute_1m_saturday_update:
+    enabled: true
+    type: download
+    dataset: minute_1
+    schedule:
+      type: cron
+      hour: 3
+      minute: 20
+      day_of_week: "sat"
+    params:
+      asset_class: future
+      symbols: all
+      start_date: "latest"
+      end_date: "latest+1d"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_5m_saturday_update:
+    enabled: true
+    type: download
+    dataset: minute_5
+    schedule:
+      type: cron
+      hour: 3
+      minute: 30
+      day_of_week: "sat"
+    params:
+      asset_class: future
+      symbols: all
+      start_date: "latest"
+      end_date: "latest+1d"
     retry:
       max_retries: 3
       delay: 300
@@ -390,7 +444,7 @@ jobs:
       day_of_week: "mon-fri"
     params:
       asset_class: future
-      start_date: "latest-1bd"
+      start_date: "previous_trade_date"
       end_date: "latest+1d"
     depends_on: [futures_minute_5m_update]
     retry:
@@ -408,7 +462,7 @@ jobs:
       day_of_week: "mon-fri"
     params:
       asset_class: future
-      start_date: "latest-1bd"
+      start_date: "previous_trade_date"
       end_date: "latest+1d"
     depends_on: [futures_minute_5m_update]
     retry:
@@ -426,9 +480,63 @@ jobs:
       day_of_week: "mon-fri"
     params:
       asset_class: future
-      start_date: "latest-1bd"
+      start_date: "previous_trade_date"
       end_date: "latest+1d"
     depends_on: [futures_minute_5m_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_15m_saturday_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_15m
+    schedule:
+      type: cron
+      hour: 3
+      minute: 40
+      day_of_week: "sat"
+    params:
+      asset_class: future
+      start_date: "latest"
+      end_date: "latest+1d"
+    depends_on: [futures_minute_5m_saturday_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_30m_saturday_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_30m
+    schedule:
+      type: cron
+      hour: 3
+      minute: 45
+      day_of_week: "sat"
+    params:
+      asset_class: future
+      start_date: "latest"
+      end_date: "latest+1d"
+    depends_on: [futures_minute_5m_saturday_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_60m_saturday_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_60m
+    schedule:
+      type: cron
+      hour: 3
+      minute: 50
+      day_of_week: "sat"
+    params:
+      asset_class: future
+      start_date: "latest"
+      end_date: "latest+1d"
+    depends_on: [futures_minute_5m_saturday_update]
     retry:
       max_retries: 3
       delay: 300
@@ -488,21 +596,39 @@ jobs:
       max_retries: 3
       delay: 600
 
-  # 期限结构指标 - 每个交易日收盘后按最新交易日重算
+  # 期限结构指标 - 使用已完整的期货日线重算
   futures_term_metrics_update:
     enabled: true
     type: download
     dataset: term_metrics
     schedule:
       type: cron
-      hour: 19
-      minute: 20
-      day_of_week: "mon-fri"
+      hour: 3
+      minute: 55
+      day_of_week: "tue-fri"
+    params:
+      asset_class: future
+      start_date: "previous_trade_date"
+      end_date: "previous_trade_date"
+    depends_on: [futures_daily_update]
+    retry:
+      max_retries: 2
+      delay: 300
+
+  futures_term_metrics_saturday_update:
+    enabled: true
+    type: download
+    dataset: term_metrics
+    schedule:
+      type: cron
+      hour: 4
+      minute: 5
+      day_of_week: "sat"
     params:
       asset_class: future
       start_date: "latest"
       end_date: "latest"
-    depends_on: [futures_daily_update]
+    depends_on: [futures_daily_saturday_update]
     retry:
       max_retries: 2
       delay: 300
@@ -550,7 +676,8 @@ jobs:
       max_retries: 2
       delay: 600
 
-  # 基本面指标预处理 - 每日运行（18:30）
+  # 基本面指标预处理 - 每日运行（18:50）
+  # 注意：必须晚于 daily_basic_update，避免 daily_basic 当日数据尚未落库导致依赖 pending
   # 注意：使用增量方式预处理
   fundamental_preprocess:
     enabled: true
@@ -558,7 +685,7 @@ jobs:
     category: fundamental
     schedule:
       type: cron
-      hour: 17
+      hour: 18
       minute: 50
       day_of_week: "mon-fri"
     params:
@@ -588,7 +715,8 @@ jobs:
       max_retries: 2
       delay: 600
 
-  # 行业差异化估值预处理 - 每日运行（18:00）
+  # 行业差异化估值预处理 - 每日运行（20:30）
+  # 注意：必须晚于 fundamental_preprocess；基本面预处理耗时较长时，依赖机制仍会兜底
   # 根据行业配置自动选择核心估值指标（银行用PB、成长股用PEG等）
   # 计算：1. 自身历史分位数  2. 行业内相对分位
   industry_valuation_preprocess:
@@ -597,8 +725,8 @@ jobs:
     category: industry_valuation
     schedule:
       type: cron
-      hour: 18
-      minute: 0
+      hour: 20
+      minute: 30
       day_of_week: "mon-fri"
     params:
       all: true
