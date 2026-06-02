@@ -39,10 +39,10 @@ docker-compose --profile scheduler up -d scheduler
 docker-compose logs -f scheduler
 ```
 
-如果 `xtquant_helper` 运行在宿主机，`.env` 中建议使用：
+如果 `xtquant_helper` 运行在宿主机，调度器容器请使用单独的 Docker 内地址：
 
 ```bash
-XTQUANT_API_URL=http://host.docker.internal:8100
+SCHEDULER_XTQUANT_API_URL=http://host.docker.internal:8100
 ```
 
 ---

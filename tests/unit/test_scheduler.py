@@ -351,6 +351,31 @@ class TestTaskExecutor:
         assert "--start-date 2024-05-03" in joined
         assert "--end-date 2024-05-06" in joined
 
+    def test_download_output_all_futures_failures_raises(self):
+        """期货分钟线全合约失败时调度任务应失败，避免误报 completed。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        output = """
+        [PARTIAL] 已更新 0 条期货数据，1080/1080 个合约失败
+          分钟线摘要: 成功 0，空数据 0，已是最新 0，失败 1080
+        """
+
+        with pytest.raises(RuntimeError, match="all 1080 futures symbols failed"):
+            executor._raise_if_download_fully_failed("minute_1", output)
+
+    def test_download_output_partial_futures_failures_do_not_raise(self):
+        """少量合约失败时保留 partial 输出，不让调度器整批重试。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        output = """
+        [PARTIAL] 已更新 100 条期货数据，2/1080 个合约失败
+          分钟线摘要: 成功 100，空数据 20，已是最新 958，失败 2
+        """
+
+        executor._raise_if_download_fully_failed("minute_1", output)
+
     def test_trade_calendar_date_lookup_uses_database(self, monkeypatch):
         """latest/previous_trade_date 优先来自 trade_cal。"""
         from finance_data_hub.scheduler import executor as executor_module

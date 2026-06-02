@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+import httpx
 import pytest
 
 from finance_data_hub.providers.base import ProviderDataError
@@ -76,3 +77,49 @@ def test_xtquant_futures_minute_rejects_monthly_average_symbol_before_api_call()
             end_date="2024-04-30 10:00:00",
             freq="1m",
         )
+
+
+def test_xtquant_initialize_falls_back_to_endpoint_probe_on_root_timeout():
+    provider = XTQuantProvider(
+        config={"api_url": "http://helper:8100", "health_timeout": 1}
+    )
+    provider.client = Mock()
+    provider.client.get = Mock(
+        side_effect=[
+            httpx.Response(
+                404,
+                request=httpx.Request("GET", "http://helper:8100/health"),
+            ),
+            httpx.ReadTimeout("root timeout"),
+            httpx.Response(
+                405,
+                request=httpx.Request(
+                    "GET", "http://helper:8100/download_history_data"
+                ),
+            ),
+        ]
+    )
+
+    provider._probe_helper_connectivity()
+
+    assert provider.client.get.call_args_list[0].args[0] == "/health"
+    assert provider.client.get.call_args_list[1].args[0] == "/"
+    assert provider.client.get.call_args_list[2].args[0] == "/download_history_data"
+
+
+def test_xtquant_initialize_uses_health_endpoint_first():
+    provider = XTQuantProvider(
+        config={"api_url": "http://helper:8100", "health_timeout": 1}
+    )
+    provider.client = Mock()
+    provider.client.get = Mock(
+        return_value=httpx.Response(
+            200,
+            json={"status": "ok", "service": "xtquant_helper"},
+            request=httpx.Request("GET", "http://helper:8100/health"),
+        )
+    )
+
+    provider._probe_helper_connectivity()
+
+    provider.client.get.assert_called_once_with("/health", timeout=1)

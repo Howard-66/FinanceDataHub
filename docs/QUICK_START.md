@@ -42,10 +42,10 @@ docker-compose logs -f scheduler
 fdh-cli schedule start --config /app/schedules.yml
 ```
 
-容器内数据库地址会自动使用 compose 服务名 `timescaledb`。如果 `xtquant_helper` 跑在宿主机，请在 `.env` 中配置：
+容器内数据库地址会自动使用 compose 服务名 `timescaledb`。如果 `xtquant_helper` 跑在宿主机，请在 `.env` 中为调度器容器单独配置：
 
 ```bash
-XTQUANT_API_URL=http://host.docker.internal:8100
+SCHEDULER_XTQUANT_API_URL=http://host.docker.internal:8100
 ```
 
 #### 配置环境变量

@@ -77,6 +77,9 @@ class XTQuantProvider(BaseDataProvider):
             config.get("api_url", "http://localhost:8100") if config else "http://localhost:8100"
         )
         self.timeout: int = config.get("timeout", 60) if config else 60
+        self.health_timeout: int = (
+            config.get("health_timeout", min(5, self.timeout)) if config else 5
+        )
         self.max_retry: int = config.get("max_retry", 3) if config else 3
 
         # HTTP client
@@ -104,20 +107,7 @@ class XTQuantProvider(BaseDataProvider):
                 follow_redirects=True,
             )
 
-            # 健康检查
-            response = self.client.get("/")
-            if response.status_code != 200:
-                raise ProviderConnectionError(
-                    f"xtquant_helper health check failed: {response.status_code}",
-                    provider_name=self.name,
-                )
-
-            data = response.json()
-            if data.get("status") != "ok":
-                raise ProviderConnectionError(
-                    "xtquant_helper is not running properly",
-                    provider_name=self.name,
-                )
+            self._probe_helper_connectivity()
 
             logger.info(
                 f"XTQuantProvider initialized successfully (api_url={self.api_url})"
@@ -135,6 +125,64 @@ class XTQuantProvider(BaseDataProvider):
                 provider_name=self.name,
             ) from e
 
+    def _is_ok_health_response(self, response: httpx.Response) -> bool:
+        if response.status_code != 200:
+            return False
+        try:
+            data = response.json()
+        except ValueError:
+            return True
+        return not data or data.get("status") == "ok"
+
+    def _probe_helper_connectivity(self) -> None:
+        """Check helper reachability with a lightweight health endpoint first."""
+        if not self.client:
+            raise ProviderConnectionError(
+                "XTQuant HTTP client is not initialized",
+                provider_name=self.name,
+            )
+
+        for endpoint in ("/health", "/"):
+            try:
+                response = self.client.get(endpoint, timeout=self.health_timeout)
+                if self._is_ok_health_response(response):
+                    return
+                logger.debug(
+                    f"XTQuant health check {endpoint} returned {response.status_code}; "
+                    "trying next probe"
+                )
+            except httpx.TimeoutException:
+                logger.warning(
+                    f"XTQuant health check {endpoint} timed out after "
+                    f"{self.health_timeout}s; trying next probe"
+                )
+            except httpx.ConnectError:
+                raise
+            except Exception as exc:
+                logger.debug(
+                    f"XTQuant health check {endpoint} failed ({exc}); "
+                    "trying next probe"
+                )
+
+        try:
+            response = self.client.get(
+                "/download_history_data",
+                timeout=self.health_timeout,
+            )
+            if response.status_code in {200, 405, 422}:
+                return
+            raise ProviderConnectionError(
+                f"xtquant_helper endpoint probe failed: {response.status_code}",
+                provider_name=self.name,
+            )
+        except httpx.ConnectError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise ProviderConnectionError(
+                f"xtquant_helper endpoint probe timed out after {self.health_timeout}s",
+                provider_name=self.name,
+            ) from exc
+
     def health_check(self) -> bool:
         """
         健康检查
@@ -148,8 +196,8 @@ class XTQuantProvider(BaseDataProvider):
             return False
 
         try:
-            response = self.client.get("/", timeout=5)
-            return response.status_code == 200
+            self._probe_helper_connectivity()
+            return True
         except Exception as e:
             logger.warning(f"XTQuant health check failed: {str(e)}")
             return False

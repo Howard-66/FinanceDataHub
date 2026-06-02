@@ -135,6 +135,7 @@ class TaskExecutor:
                 raise NoDataAvailableError(
                     f"数据集 {dataset} 暂无数据可用（Tushare 数据可能尚未更新），将触发重试"
                 )
+            self._raise_if_download_fully_failed(dataset, output)
             
             logger.info(f"Download completed for {dataset}")
             
@@ -144,6 +145,31 @@ class TaskExecutor:
             "records_processed": total_records,
             "symbols_count": total_symbols
         }
+
+    def _raise_if_download_fully_failed(self, dataset: str, output: str) -> None:
+        """Treat complete per-symbol failures as scheduler failures."""
+        failed_ratio = re.search(r"(\d+)/(\d+)\s*个合约失败", output)
+        if failed_ratio:
+            failed = int(failed_ratio.group(1))
+            total = int(failed_ratio.group(2))
+            if total > 0 and failed >= total:
+                raise RuntimeError(
+                    f"Download failed for {dataset}: all {total} futures symbols failed"
+                )
+
+        summary = re.search(
+            r"分钟线摘要:\s*成功\s*(\d+)，空数据\s*(\d+)，已是最新\s*(\d+)，失败\s*(\d+)",
+            output,
+        )
+        if summary:
+            inserted = int(summary.group(1))
+            empty = int(summary.group(2))
+            up_to_date = int(summary.group(3))
+            failed = int(summary.group(4))
+            if failed > 0 and inserted == 0 and empty == 0 and up_to_date == 0:
+                raise RuntimeError(
+                    f"Download failed for {dataset}: all attempted futures symbols failed"
+                )
 
     def _execute_aggregate(
         self,

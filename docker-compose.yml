@@ -59,9 +59,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # If xtquant_helper runs on the Docker host, set this in .env to:
-      # XTQUANT_API_URL=http://host.docker.internal:8100
-      - XTQUANT_API_URL=${XTQUANT_API_URL:-http://host.docker.internal:8100}
+      # Scheduler runs inside Docker. Do not reuse a host-side XTQUANT_API_URL
+      # like http://localhost:8100; set SCHEDULER_XTQUANT_API_URL when needed.
+      - XTQUANT_API_URL=${SCHEDULER_XTQUANT_API_URL:-http://host.docker.internal:8100}
       - SOURCES_CONFIG_PATH=/app/sources.yml
       - FDH_SCHEDULES_PATH=/app/schedules.yml
     volumes:
