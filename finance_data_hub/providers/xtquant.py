@@ -81,9 +81,20 @@ class XTQuantProvider(BaseDataProvider):
             config.get("health_timeout", min(5, self.timeout)) if config else 5
         )
         self.max_retry: int = config.get("max_retry", 3) if config else 3
+        self.retry_delay: float = config.get("retry_delay", 1.0) if config else 1.0
 
         # HTTP client
         self.client: Optional[httpx.Client] = None
+
+    def _parse_retry_after(self, response: httpx.Response) -> Optional[int]:
+        """Parse Retry-After header seconds for retryable helper responses."""
+        retry_after = response.headers.get("Retry-After")
+        if not retry_after:
+            return None
+        try:
+            return max(0, int(float(retry_after)))
+        except (TypeError, ValueError):
+            return None
 
     def initialize(self) -> None:
         """
@@ -228,7 +239,13 @@ class XTQuantProvider(BaseDataProvider):
                 response = self.client.post(endpoint, json=payload or {})
 
                 # 检查HTTP状态码
-                if response.status_code >= 500:
+                if response.status_code == 503:
+                    raise ProviderRateLimitError(
+                        "xtquant_helper temporarily unavailable: 503",
+                        provider_name=self.name,
+                        retry_after=self._parse_retry_after(response),
+                    )
+                elif response.status_code >= 500:
                     raise ProviderConnectionError(
                         f"xtquant_helper server error: {response.status_code}",
                         provider_name=self.name,
@@ -268,7 +285,7 @@ class XTQuantProvider(BaseDataProvider):
                     f"Request to xtquant_helper timed out (timeout={self.timeout}s)",
                     provider_name=self.name,
                 )
-            except (ProviderConnectionError, ProviderDataError):
+            except (ProviderConnectionError, ProviderRateLimitError, ProviderDataError):
                 raise
             except Exception as e:
                 raise ProviderError(
@@ -277,7 +294,11 @@ class XTQuantProvider(BaseDataProvider):
                 ) from e
 
         # 使用重试机制
-        return self.retry_on_failure(_call, max_retries=self.max_retry)
+        return self.retry_on_failure(
+            _call,
+            max_retries=self.max_retry,
+            base_delay=self.retry_delay,
+        )
 
     def _convert_dict_to_dataframe(
         self, data_dict: Dict[str, Any], symbol: str

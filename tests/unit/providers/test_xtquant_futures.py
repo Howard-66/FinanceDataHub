@@ -1,9 +1,9 @@
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
 
-from finance_data_hub.providers.base import ProviderDataError
+from finance_data_hub.providers.base import ProviderDataError, ProviderRateLimitError
 from finance_data_hub.providers.xtquant import XTQuantProvider
 
 
@@ -123,3 +123,47 @@ def test_xtquant_initialize_uses_health_endpoint_first():
     provider._probe_helper_connectivity()
 
     provider.client.get.assert_called_once_with("/health", timeout=1)
+
+
+def test_xtquant_call_api_retries_helper_503_and_returns_success():
+    provider = XTQuantProvider(config={"max_retry": 1, "retry_delay": 0})
+    provider._is_initialized = True
+    provider.client = Mock()
+    provider.client.post = Mock(
+        side_effect=[
+            httpx.Response(
+                503,
+                request=httpx.Request("POST", "http://helper:8100/get_local_data"),
+            ),
+            httpx.Response(
+                200,
+                json={"result": {"ok": True}},
+                request=httpx.Request("POST", "http://helper:8100/get_local_data"),
+            ),
+        ]
+    )
+
+    with patch("finance_data_hub.providers.base.time.sleep") as sleep:
+        result = provider._call_api("/get_local_data", {"symbol": "00700.HK"})
+
+    assert result == {"result": {"ok": True}}
+    assert provider.client.post.call_count == 2
+    sleep.assert_called_once_with(0)
+
+
+def test_xtquant_call_api_exhausts_helper_503_retries():
+    provider = XTQuantProvider(config={"max_retry": 1, "retry_delay": 0})
+    provider._is_initialized = True
+    provider.client = Mock()
+    provider.client.post = Mock(
+        return_value=httpx.Response(
+            503,
+            request=httpx.Request("POST", "http://helper:8100/get_local_data"),
+        )
+    )
+
+    with patch("finance_data_hub.providers.base.time.sleep"):
+        with pytest.raises(ProviderRateLimitError, match="503"):
+            provider._call_api("/get_local_data", {"symbol": "00700.HK"})
+
+    assert provider.client.post.call_count == 2
