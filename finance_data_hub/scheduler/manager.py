@@ -10,8 +10,9 @@
 import os
 import sys
 import traceback
+import json
 from typing import Optional, Dict, List, Any, Set
-from datetime import datetime
+from datetime import datetime, date, time, timedelta
 from pathlib import Path
 from loguru import logger
 
@@ -62,8 +63,6 @@ def _job_dispatcher(dispatcher_job_id: str, **kwargs) -> JobExecutionLog:
     Returns:
         任务执行日志
     """
-    logger.info(f"[Scheduler] 开始执行任务: {dispatcher_job_id}")
-    
     try:
         if dispatcher_job_id not in _job_registry:
             error_msg = f"Job {dispatcher_job_id} not found in registry. Registry contains: {list(_job_registry.keys())}"
@@ -71,12 +70,8 @@ def _job_dispatcher(dispatcher_job_id: str, **kwargs) -> JobExecutionLog:
             raise ValueError(error_msg)
         
         manager_ref, job_config = _job_registry[dispatcher_job_id]
-        logger.info(f"[Scheduler] 找到任务配置，开始执行: {dispatcher_job_id}")
         
-        result = manager_ref._execute_job(dispatcher_job_id, job_config)
-        
-        logger.info(f"[Scheduler] 任务完成: {dispatcher_job_id}, 状态: {result.status}")
-        return result
+        return manager_ref._execute_job(dispatcher_job_id, job_config, kwargs)
         
     except Exception as e:
         error_msg = f"任务执行失败: {dispatcher_job_id}\n{traceback.format_exc()}"
@@ -110,7 +105,7 @@ class ScheduleManager:
         self._executor: Optional[RetryExecutor] = None
         self._execution_logs: List[JobExecutionLog] = []
         self._job_dependencies: Dict[str, Set[str]] = {}
-        self._pending_jobs: Set[str] = set()
+        self._pending_jobs: Dict[str, Dict[str, Any]] = {}
         
     def load_config(self) -> ScheduleConfig:
         """加载调度配置"""
@@ -179,27 +174,55 @@ class ScheduleManager:
             # 注册任务监听器
             self._engine.register_listener(job_id, self._on_job_event)
     
-    def _execute_job(self, job_id: str, job_config: JobConfig) -> JobExecutionLog:
+    def _execute_job(
+        self,
+        job_id: str,
+        job_config: JobConfig,
+        execution_params: Optional[Dict[str, Any]] = None,
+    ) -> JobExecutionLog:
         """执行任务（带依赖检查）"""
+        execution_params = dict(execution_params or {})
+        scheduled_date = self._extract_scheduled_date(execution_params)
+        is_catchup_run = bool(execution_params.pop("_is_catchup_run", False))
+        execution_params.pop("_is_pending_run", None)
+        execution_params.pop("dispatcher_job_id", None)
+
+        resolved_params = self._resolve_execution_params(job_config, execution_params)
+        run_context = {
+            "scheduled_date": scheduled_date.isoformat(),
+            "catchup": is_catchup_run,
+        }
+
         # 检查依赖
-        if not self._check_dependencies(job_id):
-            logger.warning(f"Job {job_id} has unmet dependencies, adding to pending")
-            self._pending_jobs.add(job_id)
+        if not self._check_dependencies(job_id, scheduled_date):
+            logger.warning(
+                f"Job {job_id} has unmet dependencies for {scheduled_date}, adding to pending"
+            )
+            pending_key = f"{job_id}:{scheduled_date.isoformat()}"
+            self._pending_jobs[pending_key] = {
+                "job_id": job_id,
+                "params": resolved_params,
+                "scheduled_date": scheduled_date.isoformat(),
+            }
             log = JobExecutionLog(
                 job_id=job_id,
                 job_name=job_id,
                 job_type=job_config.type,
                 status="pending",
                 start_time=datetime.now(),
-                error_message="Waiting for dependencies"
+                error_message="Waiting for dependencies",
+                config={"params": resolved_params, "scheduler": run_context},
             )
             self._save_execution_log(log)
             return log
         
-        logger.info(f"[Scheduler] 开始执行任务: {job_id}")
+        logger.info(
+            f"[Scheduler] 开始执行任务: {job_id}, scheduled_date={scheduled_date}"
+        )
         
         # 执行任务
-        log = self._executor.execute_with_retry(job_id, job_config)
+        log = self._executor.execute_with_retry(job_id, job_config, **resolved_params)
+        log.config = {"params": resolved_params, "scheduler": run_context}
         self._execution_logs.append(log)
         
         # 保存执行日志到数据库
@@ -209,9 +232,87 @@ class ScheduleManager:
         
         # 如果成功，检查是否有等待此任务的其他任务
         if log.status == "completed":
-            self._trigger_dependent_jobs(job_id)
+            self._trigger_dependent_jobs(job_id, scheduled_date)
+        elif log.status == "failed" and not is_catchup_run:
+            self._schedule_next_day_catchup(
+                job_id=job_id,
+                job_config=job_config,
+                resolved_params=resolved_params,
+                scheduled_date=scheduled_date,
+            )
         
         return log
+
+    def _extract_scheduled_date(self, execution_params: Dict[str, Any]) -> date:
+        raw_value = execution_params.pop("_scheduled_date", None)
+        if isinstance(raw_value, date):
+            return raw_value
+        if raw_value:
+            return datetime.strptime(str(raw_value)[:10], "%Y-%m-%d").date()
+        return datetime.now().date()
+
+    def _resolve_execution_params(
+        self,
+        job_config: JobConfig,
+        execution_params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """将调度占位参数解析成当前执行使用的具体参数。"""
+        base_params = {**job_config.params, **execution_params}
+        if self._executor is None:
+            return base_params
+        return self._executor.executor.resolve_params(job_config, base_params)
+
+    def _schedule_next_day_catchup(
+        self,
+        job_id: str,
+        job_config: JobConfig,
+        resolved_params: Dict[str, Any],
+        scheduled_date: date,
+    ) -> None:
+        """安排 T+1 凌晨补跑，补跑时使用 T 日已解析参数。"""
+        if self._engine is None:
+            return
+
+        offset_minutes = 30 + self._catchup_stagger_minutes(job_id)
+        run_date = datetime.combine(
+            scheduled_date + timedelta(days=1),
+            time(hour=0, minute=0),
+        ) + timedelta(minutes=offset_minutes)
+
+        now = datetime.now()
+        if run_date <= now:
+            run_date = now + timedelta(minutes=1)
+
+        catchup_job_id = f"catchup:{job_id}:{scheduled_date.isoformat()}"
+        kwargs = {
+            "dispatcher_job_id": job_id,
+            **resolved_params,
+            "_scheduled_date": scheduled_date.isoformat(),
+            "_is_catchup_run": True,
+        }
+
+        _job_registry[job_id] = (self, job_config)
+        self._engine.add_one_time_job(
+            job_id=catchup_job_id,
+            func=_job_dispatcher,
+            run_date=run_date,
+            kwargs=kwargs,
+            name=f"{job_id} catchup {scheduled_date.isoformat()}",
+        )
+        logger.warning(
+            f"[Scheduler] 任务 {job_id} 多次重试失败，已安排补跑: "
+            f"run_date={run_date}, scheduled_date={scheduled_date}, params={resolved_params}"
+        )
+
+    def _catchup_stagger_minutes(self, job_id: str) -> int:
+        """按配置顺序错峰补跑，避免凌晨所有失败任务同时启动。"""
+        if self._config is None:
+            return 0
+        try:
+            job_index = list(self._config.jobs.keys()).index(job_id)
+        except ValueError:
+            job_index = 0
+        return (job_index * 3) % 90
     
     def _save_execution_log(self, log: JobExecutionLog) -> None:
         """将执行日志保存到数据库"""
@@ -221,7 +322,7 @@ class ScheduleManager:
         
         try:
             from sqlalchemy import create_engine, text
-            engine = create_engine(self.database_url)
+            engine = create_engine(self._sync_database_url())
             
             with engine.connect() as conn:
                 conn.execute(
@@ -230,7 +331,8 @@ class ScheduleManager:
                         (job_id, job_type, status, started_at, ended_at, 
                          symbols_count, records_processed, error_message, parameters)
                         VALUES (:job_id, :job_type, :status, :started_at, :ended_at,
-                                :symbols_count, :records_processed, :error_message, :parameters)
+                                :symbols_count, :records_processed, :error_message,
+                                CAST(:parameters AS JSONB))
                     """),
                     {
                         "job_id": log.job_id,
@@ -241,15 +343,29 @@ class ScheduleManager:
                         "symbols_count": log.symbols_count,
                         "records_processed": log.records_processed,
                         "error_message": log.error_message,
-                        "parameters": None  # 可以扩展为 JSON
+                        "parameters": json.dumps(log.config or {}, default=str),
                     }
                 )
                 conn.commit()
                 logger.debug(f"Saved execution log for job {log.job_id}")
         except Exception as e:
             logger.error(f"Failed to save execution log: {e}")
+
+    def _sync_database_url(self) -> str:
+        """Return a SQLAlchemy sync URL for scheduler bookkeeping queries."""
+        if not self.database_url:
+            return ""
+        return self.database_url.replace(
+            "postgresql+asyncpg://",
+            "postgresql://",
+            1,
+        )
     
-    def _check_dependencies(self, job_id: str) -> bool:
+    def _check_dependencies(
+        self,
+        job_id: str,
+        scheduled_date: Optional[date] = None,
+    ) -> bool:
         """检查任务依赖是否满足"""
         dependencies = self._job_dependencies.get(job_id, set())
         
@@ -257,48 +373,144 @@ class ScheduleManager:
             return True
         
         # 检查最近的执行日志
-        today = datetime.now().date()
+        target_date = scheduled_date or datetime.now().date()
         
         for dep_job_id in dependencies:
             # 查找今天该依赖任务的成功执行记录
             found = False
             for log in reversed(self._execution_logs):
+                log_scheduled_date = (
+                    (log.config or {})
+                    .get("scheduler", {})
+                    .get("scheduled_date")
+                )
                 if (log.job_id == dep_job_id and 
                     log.status == "completed" and
-                    log.start_time.date() == today):
+                    (
+                        log.start_time.date() == target_date
+                        or log_scheduled_date == target_date.isoformat()
+                    )):
                     found = True
                     break
             
             if not found:
-                logger.debug(f"Dependency {dep_job_id} not satisfied for {job_id}")
+                found = self._dependency_completed_today(dep_job_id, target_date)
+
+            if not found:
+                logger.debug(
+                    f"Dependency {dep_job_id} not satisfied for {job_id} on {target_date}"
+                )
                 return False
         
         return True
+
+    def _dependency_completed_today(self, job_id: str, today) -> bool:
+        """兼容旧测试/调用：检查数据库中指定日期是否已有依赖任务成功记录。"""
+        return self._dependency_completed_for_date(job_id, today)
+
+    def _dependency_completed_for_date(self, job_id: str, target_date: date) -> bool:
+        """检查数据库中指定调度日期是否已有依赖任务成功记录。
+
+        调度器可能因为容器重启丢失内存执行日志；依赖状态以数据库执行日志兜底。
+        """
+        if not self.database_url:
+            return False
+
+        try:
+            from sqlalchemy import create_engine, text
+
+            engine = create_engine(
+                self._sync_database_url(),
+                pool_pre_ping=True,
+                connect_args={"connect_timeout": 2},
+            )
+            try:
+                with engine.connect() as conn:
+                    row = conn.execute(
+                        text("""
+                            SELECT 1
+                            FROM preprocess_execution_log
+                            WHERE job_id = :job_id
+                              AND status = 'completed'
+                              AND (
+                                (started_at AT TIME ZONE 'Asia/Shanghai')::date = :target_date
+                                OR parameters->'scheduler'->>'scheduled_date' = :target_date_text
+                              )
+                            LIMIT 1
+                        """),
+                        {
+                            "job_id": job_id,
+                            "target_date": target_date,
+                            "target_date_text": target_date.isoformat(),
+                        },
+                    ).fetchone()
+            finally:
+                engine.dispose()
+            return row is not None
+        except Exception as exc:
+            logger.debug(
+                f"Dependency log lookup failed for {job_id}, using in-memory logs only: {exc}"
+            )
+            return False
     
-    def _trigger_dependent_jobs(self, completed_job_id: str) -> None:
+    def _trigger_dependent_jobs(
+        self,
+        completed_job_id: str,
+        scheduled_date: Optional[date] = None,
+    ) -> None:
         """触发依赖已完成任务的待处理任务"""
         jobs_to_trigger = []
         
-        for pending_job_id in list(self._pending_jobs):
+        for pending_key, pending_context in list(self._pending_jobs.items()):
+            pending_job_id = pending_context["job_id"]
             deps = self._job_dependencies.get(pending_job_id, set())
-            if completed_job_id in deps and self._check_dependencies(pending_job_id):
-                jobs_to_trigger.append(pending_job_id)
-                self._pending_jobs.discard(pending_job_id)
+            pending_date = datetime.strptime(
+                pending_context["scheduled_date"], "%Y-%m-%d"
+            ).date()
+            if (
+                completed_job_id in deps
+                and (scheduled_date is None or pending_date == scheduled_date)
+                and self._check_dependencies(pending_job_id, pending_date)
+            ):
+                jobs_to_trigger.append((pending_job_id, pending_context))
+                self._pending_jobs.pop(pending_key, None)
         
-        for job_id in jobs_to_trigger:
-            logger.info(f"Triggering pending job: {job_id}")
-            self._engine.run_job_now(job_id)
+        for job_id, pending_context in jobs_to_trigger:
+            params = pending_context["params"]
+            scheduled_date_text = pending_context["scheduled_date"]
+            one_time_id = f"pending:{job_id}:{scheduled_date_text}:{int(datetime.now().timestamp())}"
+            logger.info(
+                f"Triggering pending job: {job_id}, scheduled_date={scheduled_date_text}"
+            )
+            self._engine.add_one_time_job(
+                job_id=one_time_id,
+                func=_job_dispatcher,
+                run_date=datetime.now() + timedelta(seconds=1),
+                kwargs={
+                    "dispatcher_job_id": job_id,
+                    **params,
+                    "_scheduled_date": scheduled_date_text,
+                    "_is_pending_run": True,
+                },
+                name=f"{job_id} pending {scheduled_date_text}",
+            )
     
     def _on_job_event(self, event, status: str) -> None:
         """任务事件回调"""
         job_id = event.job_id
         
         if status == "success":
-            logger.info(f"Job {job_id} completed successfully")
+            result_status = getattr(getattr(event, "retval", None), "status", None)
+            if result_status == "pending":
+                logger.debug(f"Job {job_id} deferred: waiting for dependencies")
+            elif result_status and result_status != "completed":
+                logger.debug(f"Job {job_id} finished with task status: {result_status}")
+            else:
+                logger.debug(f"Job {job_id} completed successfully")
         elif status == "error":
-            logger.error(f"Job {job_id} failed: {event.exception}")
+            logger.debug(f"Job {job_id} failed: {event.exception}")
         elif status == "missed":
-            logger.warning(f"Job {job_id} missed scheduled execution")
+            logger.debug(f"Job {job_id} missed scheduled execution")
     
     def start(self, daemon: bool = False) -> None:
         """
@@ -356,6 +568,9 @@ class ScheduleManager:
         
         # 保存执行日志到数据库
         self._save_execution_log(log)
+
+        if log.status == "completed" and self._engine is not None:
+            self._trigger_dependent_jobs(job_id)
         
         return log
     
@@ -375,7 +590,7 @@ class ScheduleManager:
             "running": self._engine.running if self._engine else False,
             "jobs_count": len(self._config.jobs) if self._config else 0,
             "enabled_jobs": 0,
-            "pending_jobs": list(self._pending_jobs),
+            "pending_jobs": list(self._pending_jobs.keys()),
             "recent_executions": []
         }
         

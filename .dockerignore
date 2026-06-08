@@ -24,6 +24,8 @@ docs
 examples
 tests
 scripts
+!scripts/
+!scripts/check_akshare_hk_runtime.py
 openspec
 .claude
 .qoder

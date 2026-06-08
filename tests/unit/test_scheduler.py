@@ -5,7 +5,8 @@
 import pytest
 import os
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from unittest.mock import Mock
 
 
 class TestJobConfig:
@@ -351,6 +352,30 @@ class TestTaskExecutor:
         assert "--start-date 2024-05-03" in joined
         assert "--end-date 2024-05-06" in joined
 
+    def test_resolve_params_freezes_scheduler_date_placeholders(self):
+        """调度执行前应先冻结日期占位，供重试和次日补跑复用。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+        from finance_data_hub.scheduler.models import JobConfig
+
+        executor = TaskExecutor()
+        executor._get_latest_trade_date = lambda asset_class=None: "2024-05-06"
+        executor._get_previous_trade_date = lambda asset_class=None: "2024-05-03"
+        job_config = JobConfig(
+            type="download",
+            dataset="minute_5",
+            schedule={"type": "cron", "hour": 17},
+            params={
+                "asset_class": "future",
+                "start_date": "previous_trade_date",
+                "end_date": "latest+1d",
+            },
+        )
+
+        resolved = executor.resolve_params(job_config)
+
+        assert resolved["start_date"] == "2024-05-03"
+        assert resolved["end_date"] == "2024-05-07"
+
     def test_download_output_all_futures_failures_raises(self):
         """期货分钟线全合约失败时调度任务应失败，避免误报 completed。"""
         from finance_data_hub.scheduler.executor import TaskExecutor
@@ -519,6 +544,228 @@ jobs:
         
         preprocess_config = config.jobs["test_preprocess"]
         assert "test_download" in preprocess_config.depends_on
+
+    def test_dependency_check_uses_persistent_log_fallback(
+        self, sample_config_path, monkeypatch
+    ):
+        """容器重启导致内存日志为空时，应查询数据库执行日志兜底。"""
+        from finance_data_hub.scheduler.manager import ScheduleManager
+
+        manager = ScheduleManager(
+            config_path=sample_config_path,
+            database_url="postgresql+asyncpg://user:pass@localhost/db",
+        )
+        manager.load_config()
+
+        monkeypatch.setattr(
+            manager,
+            "_dependency_completed_today",
+            lambda job_id, today: job_id == "test_download",
+        )
+
+        assert manager._check_dependencies("test_preprocess") is True
+
+    def test_sync_database_url_converts_asyncpg_url(self, sample_config_path):
+        """调度器持久化查询使用同步 SQLAlchemy URL。"""
+        from finance_data_hub.scheduler.manager import ScheduleManager
+
+        manager = ScheduleManager(
+            config_path=sample_config_path,
+            database_url="postgresql+asyncpg://user:pass@localhost/db",
+        )
+
+        assert manager._sync_database_url() == "postgresql://user:pass@localhost/db"
+
+    def test_industry_valuation_waits_for_sw_daily(self):
+        """行业估值预处理应晚于申万行业日线更新并声明依赖。"""
+        from finance_data_hub.scheduler.models import ScheduleConfig
+
+        config = ScheduleConfig.from_yaml(
+            str(Path(__file__).resolve().parents[2] / "schedules.yml")
+        )
+
+        sw_daily = config.jobs["sw_daily_update"]
+        industry = config.jobs["industry_valuation_preprocess"]
+
+        assert "sw_daily_update" in industry.depends_on
+        assert "fundamental_preprocess" in industry.depends_on
+        assert (
+            industry.schedule["hour"],
+            industry.schedule["minute"],
+        ) > (
+            sw_daily.schedule["hour"],
+            sw_daily.schedule["minute"],
+        )
+
+    def test_production_misfire_grace_covers_short_scheduler_restart(self):
+        """生产调度应覆盖十几分钟级别的容器重启/恢复。"""
+        from finance_data_hub.scheduler.models import ScheduleConfig
+
+        config = ScheduleConfig.from_yaml(
+            str(Path(__file__).resolve().parents[2] / "schedules.yml")
+        )
+
+        assert config.scheduler.misfire_grace_time >= 1800
+
+    def test_quarterly_preprocess_matches_financial_update_cycle(self):
+        """季度预处理依赖月度财务更新时，调度周期也应一致。"""
+        from finance_data_hub.scheduler.models import ScheduleConfig
+
+        config = ScheduleConfig.from_yaml(
+            str(Path(__file__).resolve().parents[2] / "schedules.yml")
+        )
+
+        financial = config.jobs["financial_update"]
+        quarterly = config.jobs["quarterly_fundamental_preprocess"]
+
+        assert "financial_update" in quarterly.depends_on
+        assert quarterly.schedule["day"] == financial.schedule["day"]
+        assert "day_of_week" not in quarterly.schedule
+
+    def test_production_schedule_hk_adj_factor_waits_for_hk_daily(self):
+        """港股复权因子需要本地港股日线交易日序列，必须声明依赖。"""
+        from finance_data_hub.scheduler.models import ScheduleConfig
+
+        config = ScheduleConfig.from_yaml(
+            str(Path(__file__).resolve().parents[2] / "schedules.yml")
+        )
+
+        hk_adj = config.jobs["hk_adj_factor_update"]
+        hk_technical = config.jobs["hk_technical_preprocess"]
+
+        assert "hk_daily_update" in hk_adj.depends_on
+        assert "hk_adj_factor_update" in hk_technical.depends_on
+        assert (
+            hk_technical.schedule["hour"],
+            hk_technical.schedule["minute"],
+        ) > (
+            hk_adj.schedule["hour"],
+            hk_adj.schedule["minute"],
+        )
+
+    def test_macro_cycle_dependencies_share_same_monthly_cycle(self):
+        """宏观周期 15 号运行时，申万成分股依赖也应在 15 号更新。"""
+        from finance_data_hub.scheduler.models import ScheduleConfig
+
+        config = ScheduleConfig.from_yaml(
+            str(Path(__file__).resolve().parents[2] / "schedules.yml")
+        )
+
+        macro = config.jobs["macro_cycle_preprocess"]
+        sw_classify = config.jobs["sw_classify_update"]
+        sw_member = config.jobs["sw_member_update"]
+
+        assert "sw_member_update" in macro.depends_on
+        assert sw_classify.schedule["day"] == "1,15"
+        assert sw_member.schedule["day"] == "1,15"
+
+    def test_futures_minute_aggregates_leave_retry_window(self):
+        """5m 原始分钟线调度后应给重试窗口留出时间再刷新聚合。"""
+        from finance_data_hub.scheduler.models import ScheduleConfig
+
+        config = ScheduleConfig.from_yaml(
+            str(Path(__file__).resolve().parents[2] / "schedules.yml")
+        )
+
+        minute_5m = config.jobs["futures_minute_5m_update"]
+        refresh_15m = config.jobs["futures_minute_15m_refresh"]
+
+        minute_time = minute_5m.schedule["hour"] * 60 + minute_5m.schedule["minute"]
+        refresh_time = refresh_15m.schedule["hour"] * 60 + refresh_15m.schedule["minute"]
+
+        assert "futures_minute_5m_update" in refresh_15m.depends_on
+        assert refresh_time - minute_time >= 30
+
+    def test_failed_scheduled_job_creates_next_day_catchup_with_resolved_params(
+        self, sample_config_path, monkeypatch
+    ):
+        """重试耗尽后应安排 T+1 补跑，且补跑使用 T 日已解析参数。"""
+        from finance_data_hub.scheduler.manager import ScheduleManager
+        from finance_data_hub.scheduler.executor import TaskExecutor, RetryExecutor
+        from finance_data_hub.scheduler.models import JobExecutionLog
+
+        manager = ScheduleManager(config_path=sample_config_path)
+        config = manager.load_config()
+        job_config = config.jobs["test_download"]
+        job_config.params = {"market": "CN", "trade_date": "latest"}
+
+        base_executor = TaskExecutor()
+        base_executor._get_latest_trade_date = lambda asset_class=None: "2026-06-05"
+        manager._executor = RetryExecutor(base_executor)
+
+        failed_log = JobExecutionLog(
+            job_id="test_download",
+            job_name="test_download",
+            job_type=job_config.type,
+            status="failed",
+            start_time=datetime(2026, 6, 5, 17, 10),
+            end_time=datetime(2026, 6, 5, 17, 40),
+        )
+        manager._executor.execute_with_retry = Mock(return_value=failed_log)
+        manager._save_execution_log = Mock()
+        manager._engine = Mock()
+
+        captured = {}
+        manager._engine.add_one_time_job = Mock(
+            side_effect=lambda **kwargs: captured.update(kwargs)
+        )
+        monkeypatch.setattr(
+            "finance_data_hub.scheduler.manager.datetime",
+            Mock(
+                now=Mock(return_value=datetime(2026, 6, 5, 17, 40)),
+                combine=datetime.combine,
+                strptime=datetime.strptime,
+            ),
+        )
+
+        manager._execute_job(
+            "test_download",
+            job_config,
+            {"_scheduled_date": "2026-06-05"},
+        )
+
+        assert captured["job_id"] == "catchup:test_download:2026-06-05"
+        assert captured["run_date"].date() == date(2026, 6, 6)
+        assert captured["kwargs"]["trade_date"] == "2026-06-05"
+        assert captured["kwargs"]["_scheduled_date"] == "2026-06-05"
+        assert captured["kwargs"]["_is_catchup_run"] is True
+
+    def test_catchup_run_does_not_schedule_another_catchup(
+        self, sample_config_path
+    ):
+        """补跑失败不应无限递归安排补跑。"""
+        from finance_data_hub.scheduler.manager import ScheduleManager
+        from finance_data_hub.scheduler.executor import TaskExecutor, RetryExecutor
+        from finance_data_hub.scheduler.models import JobExecutionLog
+
+        manager = ScheduleManager(config_path=sample_config_path)
+        config = manager.load_config()
+        job_config = config.jobs["test_download"]
+        manager._executor = RetryExecutor(TaskExecutor())
+
+        failed_log = JobExecutionLog(
+            job_id="test_download",
+            job_name="test_download",
+            job_type=job_config.type,
+            status="failed",
+            start_time=datetime(2026, 6, 6, 0, 30),
+            end_time=datetime(2026, 6, 6, 0, 45),
+        )
+        manager._executor.execute_with_retry = Mock(return_value=failed_log)
+        manager._save_execution_log = Mock()
+        manager._engine = Mock()
+        manager._engine.add_one_time_job = Mock()
+
+        manager._execute_job(
+            "test_download",
+            job_config,
+            {
+                "_scheduled_date": "2026-06-05",
+                "_is_catchup_run": True,
+            },
+        )
+
+        manager._engine.add_one_time_job.assert_not_called()
 
 
 class TestRetryExecutor:

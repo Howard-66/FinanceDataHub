@@ -2,6 +2,8 @@
 CLI 模块单元测试
 """
 
+import asyncio
+import concurrent.futures
 import pytest
 from unittest.mock import ANY, AsyncMock, Mock, patch
 from typer.testing import CliRunner
@@ -410,6 +412,36 @@ def test_cli_update_hk_basic_does_not_require_existing_symbol_pool():
     fake_updater.update_stock_basic.assert_awaited_once_with(market="HK")
 
 
+def test_cli_update_hk_daily_trade_date_passes_progress_callback():
+    """港股 daily 交易日模式应显示逐股票进度。"""
+
+    fake_updater = Mock()
+    fake_updater.initialize = AsyncMock()
+    fake_updater.close = AsyncMock()
+    fake_updater.update_daily_data = AsyncMock(return_value=2)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_updater):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--dataset", "daily",
+                "--market", "HK",
+                "--trade-date", "2024-01-02",
+            ],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.initialize.assert_awaited_once()
+    fake_updater.update_daily_data.assert_awaited_once_with(
+        trade_date="2024-01-02",
+        market="HK",
+        force_update=True,
+        progress_callback=ANY,
+    )
+    fake_updater.close.assert_awaited_once()
+
+
 def test_cli_update_adj_factor():
     """测试复权因子数据更新"""
     with patch('finance_data_hub.update.updater.DataUpdater.update_stock_basic', return_value=0):
@@ -518,3 +550,91 @@ def test_build_incremental_upsert_rule_for_new_month():
     )
 
     assert rule == {"start_date": pd.Timestamp("2026-03-31").date(), "inclusive": False}
+
+
+def test_fundamental_preprocess_backfill_uses_warmup_and_full_end_day(monkeypatch):
+    """基本面日期回填应多取历史计算分位，并写入完整 end_date 当天。"""
+    from finance_data_hub.cli import preprocess as preprocess_module
+
+    class FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def fetchall(self):
+            return self._rows
+
+    class FakeDbManager:
+        def __init__(self):
+            self.calls = []
+
+        async def initialize(self):
+            return None
+
+        async def execute_raw_sql(self, sql, params=None):
+            params = params or {}
+            self.calls.append((sql, params))
+            if "FROM v_daily_basic_enriched" in sql:
+                rows = []
+                for day in pd.date_range("2026-05-31", "2026-06-05", freq="D"):
+                    rows.append((
+                        day + pd.Timedelta(hours=15),
+                        "000001.SZ",
+                        10.0,
+                        1.0,
+                        2.0,
+                        3.0,
+                    ))
+                return FakeResult(rows)
+            if "FROM fina_indicator" in sql:
+                return FakeResult([])
+            return FakeResult([])
+
+    captured = {}
+
+    class FakeStorage:
+        def __init__(self, db_manager):
+            self.db_manager = db_manager
+
+        async def upsert(self, df):
+            captured["df"] = df.copy()
+            return len(df)
+
+    monkeypatch.setattr(preprocess_module, "FundamentalDataStorage", FakeStorage)
+    monkeypatch.setattr(
+        preprocess_module.concurrent.futures,
+        "ProcessPoolExecutor",
+        concurrent.futures.ThreadPoolExecutor,
+    )
+
+    db_manager = FakeDbManager()
+    result = asyncio.run(
+        preprocess_module._run_fundamental_preprocess(
+            db_manager=db_manager,
+            symbols=["000001.SZ"],
+            start_date="2026-06-01",
+            end_date="2026-06-05",
+            batch_size=1,
+            max_concurrent=1,
+            num_workers=1,
+        )
+    )
+
+    daily_sql, daily_params = next(
+        call for call in db_manager.calls if "FROM v_daily_basic_enriched" in call[0]
+    )
+    assert "time < :end_date" in daily_sql
+    assert daily_params["end_date"] == pd.Timestamp("2026-06-06").to_pydatetime()
+    assert daily_params["start_date"] < pd.Timestamp("2026-06-01").to_pydatetime()
+    assert (
+        pd.Timestamp("2026-06-01") - pd.Timestamp(daily_params["start_date"])
+    ).days >= 1800
+
+    written_dates = pd.to_datetime(captured["df"]["time"]).dt.date.tolist()
+    assert written_dates == [
+        pd.Timestamp("2026-06-01").date(),
+        pd.Timestamp("2026-06-02").date(),
+        pd.Timestamp("2026-06-03").date(),
+        pd.Timestamp("2026-06-04").date(),
+        pd.Timestamp("2026-06-05").date(),
+    ]
+    assert result == {"symbols_processed": 1, "records_processed": 5}

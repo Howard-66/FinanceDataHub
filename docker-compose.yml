@@ -42,6 +42,9 @@ services:
       retries: 5
 
   scheduler:
+    # AKShare's current Linux py-mini-racer dependency only ships an x86_64
+    # native wheel. Keep the scheduler image on amd64 even on Apple Silicon.
+    platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile

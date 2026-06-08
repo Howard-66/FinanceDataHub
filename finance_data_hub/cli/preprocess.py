@@ -195,6 +195,15 @@ def _filter_dataframe_from_cutoff(
     return df.loc[mask.fillna(False)].copy()
 
 
+def _date_exclusive_upper_bound(value: Any) -> datetime:
+    """Return the next local midnight for an inclusive YYYY-MM-DD end date."""
+    return (
+        _to_local_naive_timestamp(value)
+        .normalize()
+        + timedelta(days=1)
+    ).to_pydatetime()
+
+
 def _get_valuation_fill_runtime_config(
     symbol_count: int,
     batch_size: int,
@@ -306,8 +315,8 @@ async def _get_latest_source_times(
     params: Dict[str, Any] = {"symbols": symbols}
     date_condition = ""
     if end_date:
-        date_condition = "AND time <= :end_date"
-        params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
+        date_condition = "AND time < :end_date"
+        params["end_date"] = _date_exclusive_upper_bound(end_date)
 
     sql = f"""
         SELECT symbol, MAX(time) AS latest_time
@@ -1015,8 +1024,8 @@ async def _get_stock_data(
     
     if end_date:
         col_prefix = "d." if include_adj_factor else ""
-        conditions.append(f"{col_prefix}time <= :end_date")
-        params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
+        conditions.append(f"{col_prefix}time < :end_date")
+        params["end_date"] = _date_exclusive_upper_bound(end_date)
     
     where_clause = ""
     if conditions:
@@ -1088,8 +1097,8 @@ async def _get_stock_data_by_records(
     params = {"symbols": symbols, "limit": records_per_symbol}
 
     if end_date:
-        date_condition = "AND d.time <= :end_date"
-        params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
+        date_condition = "AND d.time < :end_date"
+        params["end_date"] = _date_exclusive_upper_bound(end_date)
 
     # 使用窗口函数获取每个symbol最近的N条记录
     sql = f"""
@@ -1508,6 +1517,21 @@ async def _run_fundamental_preprocess(
     data_start_date = start_date
     upsert_cutoff = None
     incremental_mode = False
+    end_date_exclusive = (
+        _date_exclusive_upper_bound(end_date) if end_date else None
+    )
+
+    if start_date:
+        requested_start = _to_local_naive_timestamp(start_date).normalize()
+        data_start_date = (
+            requested_start - timedelta(days=WINDOW_BUFFER_DAYS)
+        ).strftime("%Y-%m-%d")
+        upsert_cutoff = requested_start.to_pydatetime()
+        console.print(
+            f"[cyan]指定日期回填[/cyan]: 数据窗口 {data_start_date} → "
+            f"{end_date or '今天'}，写入范围 {requested_start.strftime('%Y-%m-%d')} → "
+            f"{end_date or '今天'}"
+        )
 
     if not force and not start_date:
         try:
@@ -1561,8 +1585,8 @@ async def _run_fundamental_preprocess(
                     conditions.append("time >= :start_date")
                     params["start_date"] = pd.to_datetime(data_start_date).to_pydatetime()
                 if end_date:
-                    conditions.append("time <= :end_date")
-                    params["end_date"] = pd.to_datetime(end_date).to_pydatetime()
+                    conditions.append("time < :end_date")
+                    params["end_date"] = end_date_exclusive
                 where_clause = " AND ".join(conditions)
 
                 sql = f"""

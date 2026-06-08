@@ -7,7 +7,7 @@ scheduler:
   timezone: "Asia/Shanghai"
   job_store: "postgresql"         # 任务状态持久化到 PostgreSQL
   max_concurrent_jobs: 3          # 最大并发任务数
-  misfire_grace_time: 300         # 错过执行的容忍时间（秒）
+  misfire_grace_time: 3600        # 错过执行的容忍时间（秒），覆盖短暂停机/容器重启
 
 jobs:
   # ========== 数据下载任务 ==========
@@ -81,20 +81,21 @@ jobs:
       max_retries: 3
       delay: 300
 
-  # 港股复权因子 - 每日更新（17:20）
+  # 港股复权因子 - 每日更新（18:20）
+  # 依赖本地港股日线交易日序列展开稀疏复权因子
   hk_adj_factor_update:
     enabled: true
     type: download
     dataset: adj_factor
     schedule:
       type: cron
-      hour: 17
+      hour: 18
       minute: 20
       day_of_week: "mon-fri"
     params:
       market: HK
       trade_date: "latest"
-    # depends_on: [hk_daily_update]
+    depends_on: [hk_daily_update]
     retry:
       max_retries: 3
       delay: 300
@@ -212,28 +213,28 @@ jobs:
       max_retries: 3
       delay: 600  # 10分钟后重试
 
-  # 申万行业分类 - 每月1号更新
+  # 申万行业分类 - 每月1号和15号更新
   sw_classify_update:
     enabled: true
     type: download
     dataset: sw_industry_classify
     schedule:
       type: cron
-      day: 1
+      day: "1,15"
       hour: 7
       minute: 0
     retry:
       max_retries: 3
       delay: 300
 
-  # 申万行业成分股 - 每月1号更新
+  # 申万行业成分股 - 每月1号和15号更新
   sw_member_update:
     enabled: true
     type: download
     dataset: sw_industry_member
     schedule:
       type: cron
-      day: 1
+      day: "1,15"
       hour: 7
       minute: 30
     depends_on: [sw_classify_update]
@@ -440,7 +441,7 @@ jobs:
     schedule:
       type: cron
       hour: 17
-      minute: 15
+      minute: 40
       day_of_week: "mon-fri"
     params:
       asset_class: future
@@ -458,7 +459,7 @@ jobs:
     schedule:
       type: cron
       hour: 17
-      minute: 20
+      minute: 45
       day_of_week: "mon-fri"
     params:
       asset_class: future
@@ -476,7 +477,7 @@ jobs:
     schedule:
       type: cron
       hour: 17
-      minute: 25
+      minute: 50
       day_of_week: "mon-fri"
     params:
       asset_class: future
@@ -635,7 +636,7 @@ jobs:
 
   # ========== 预处理任务 ==========
 
-  # 技术指标预处理 - 每日运行（18:00）
+  # 技术指标预处理 - 每日运行（19:00）
   # 注意：使用前复权(qfq)，需要全量预处理
   technical_preprocess:
     enabled: true
@@ -643,8 +644,8 @@ jobs:
     category: technical
     schedule:
       type: cron
-      hour: 18
-      minute: 40
+      hour: 19
+      minute: 0
       day_of_week: "mon-fri"
     params:
       all: true
@@ -656,15 +657,15 @@ jobs:
       max_retries: 2
       delay: 600
 
-  # 港股技术指标预处理 - 每日运行（18:50）
+  # 港股技术指标预处理 - 每日运行（19:10）
   hk_technical_preprocess:
     enabled: true
     type: preprocess
     category: technical
     schedule:
       type: cron
-      hour: 18
-      minute: 00
+      hour: 19
+      minute: 10
       day_of_week: "mon-fri"
     params:
       all: true
@@ -676,7 +677,7 @@ jobs:
       max_retries: 2
       delay: 600
 
-  # 基本面指标预处理 - 每日运行（18:50）
+  # 基本面指标预处理 - 每日运行（19:30）
   # 注意：必须晚于 daily_basic_update，避免 daily_basic 当日数据尚未落库导致依赖 pending
   # 注意：使用增量方式预处理
   fundamental_preprocess:
@@ -685,8 +686,8 @@ jobs:
     category: fundamental
     schedule:
       type: cron
-      hour: 18
-      minute: 50
+      hour: 19
+      minute: 30
       day_of_week: "mon-fri"
     params:
       all: true
@@ -696,17 +697,17 @@ jobs:
       max_retries: 2
       delay: 600
 
-  # 季度基本面指标预处理 - 每日运行（19:00）
-  # 注意：使用增量方式预处理，依赖财务数据更新
+  # 季度基本面指标预处理 - 每月财务数据更新后运行
+  # 注意：使用增量方式预处理，与 financial_update 同周期，避免普通交易日依赖天然 pending
   quarterly_fundamental_preprocess:
     enabled: true
     type: preprocess
     category: quarterly_fundamental
     schedule:
       type: cron
+      day: "1,15"
       hour: 17
       minute: 45
-      day_of_week: "mon-fri"
     params:
       all: true
       market: CN
@@ -715,8 +716,8 @@ jobs:
       max_retries: 2
       delay: 600
 
-  # 行业差异化估值预处理 - 每日运行（20:30）
-  # 注意：必须晚于 fundamental_preprocess；基本面预处理耗时较长时，依赖机制仍会兜底
+  # 行业差异化估值预处理 - 每日运行（21:30）
+  # 注意：必须晚于 fundamental_preprocess 和 sw_daily_update；时间留出 sw_daily 重试窗口，依赖机制继续兜底
   # 根据行业配置自动选择核心估值指标（银行用PB、成长股用PEG等）
   # 计算：1. 自身历史分位数  2. 行业内相对分位
   industry_valuation_preprocess:
@@ -725,13 +726,13 @@ jobs:
     category: industry_valuation
     schedule:
       type: cron
-      hour: 20
+      hour: 21
       minute: 30
       day_of_week: "mon-fri"
     params:
       all: true
       market: CN
-    depends_on: [fundamental_preprocess]
+    depends_on: [fundamental_preprocess, sw_daily_update]
     retry:
       max_retries: 2
       delay: 600

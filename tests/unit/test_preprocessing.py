@@ -479,6 +479,60 @@ class TestPreprocessTimeFiltering:
             pd.Timestamp("2026-05-21"),
         ]
 
+    def test_technical_stock_data_end_date_is_inclusive_for_whole_day(self):
+        from finance_data_hub.cli.preprocess import _get_stock_data
+
+        captured = {}
+
+        class FakeResult:
+            def fetchall(self):
+                return []
+
+        class FakeDB:
+            async def execute_raw_sql(self, sql, params, *args, **kwargs):
+                captured["sql"] = sql
+                captured["params"] = params
+                return FakeResult()
+
+        asyncio.run(
+            _get_stock_data(
+                FakeDB(),
+                ["00700.HK"],
+                start_date="2026-06-01",
+                end_date="2026-06-05",
+                include_adj_factor=True,
+            )
+        )
+
+        assert "d.time < :end_date" in captured["sql"]
+        assert captured["params"]["end_date"] == datetime(2026, 6, 6, 0, 0)
+
+    def test_latest_source_times_end_date_is_inclusive_for_whole_day(self):
+        from finance_data_hub.cli.preprocess import _get_latest_source_times
+
+        captured = {}
+
+        class FakeResult:
+            def fetchall(self):
+                return []
+
+        class FakeDB:
+            async def execute_raw_sql(self, sql, params, *args, **kwargs):
+                captured["sql"] = sql
+                captured["params"] = params
+                return FakeResult()
+
+        asyncio.run(
+            _get_latest_source_times(
+                FakeDB(),
+                ["00700.HK"],
+                end_date="2026-06-05",
+            )
+        )
+
+        assert "time < :end_date" in captured["sql"]
+        assert captured["params"]["end_date"] == datetime(2026, 6, 6, 0, 0)
+
     def test_valuation_fill_runtime_config_uses_conservative_defaults_for_full_run(self):
         from finance_data_hub.cli.preprocess import _get_valuation_fill_runtime_config
 

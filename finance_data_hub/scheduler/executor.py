@@ -315,6 +315,32 @@ class TaskExecutor:
         
         return cmd
 
+    def resolve_params(
+        self,
+        job_config: JobConfig,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Resolve scheduler date placeholders once for a concrete job run.
+
+        The scheduler uses this before retries and next-day catch-up jobs so
+        placeholders such as ``latest`` keep the business date of the original
+        scheduled run instead of being re-evaluated later.
+        """
+        resolved = dict(params or job_config.params)
+        asset_class = resolved.get("asset_class")
+        normalized_asset_class = (
+            str(asset_class).strip().lower() if asset_class is not None else None
+        )
+
+        for key in ("trade_date", "start_date", "end_date"):
+            if key in resolved:
+                resolved[key] = self._resolve_date_param(
+                    resolved.get(key),
+                    normalized_asset_class,
+                )
+
+        return resolved
+
     def _resolve_date_param(
         self,
         value: Optional[Any],

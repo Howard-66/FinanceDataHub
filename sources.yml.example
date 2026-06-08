@@ -93,7 +93,7 @@ routing_strategy:
           providers: [xtquant]
           fallback: false
       adj_factor:
-        providers: [xtquant]
+        providers: [akshare]
         fallback: false
       tick:
         providers: [xtquant]

@@ -277,6 +277,12 @@ class DataUpdater:
 
         calendar["trade_date"] = calendar["trade_date"].dt.normalize()
         factors["trade_date"] = factors["trade_date"].dt.normalize()
+        calendar["trade_date"] = pd.to_datetime(
+            calendar["trade_date"], errors="coerce"
+        ).astype("datetime64[ns]")
+        factors["trade_date"] = pd.to_datetime(
+            factors["trade_date"], errors="coerce"
+        ).astype("datetime64[ns]")
         factors["adj_factor"] = pd.to_numeric(factors["adj_factor"], errors="coerce")
         factors = factors.dropna(subset=["trade_date", "adj_factor"])
 
@@ -384,6 +390,7 @@ class DataUpdater:
         trade_date: Optional[str] = None,
         force_update: bool = False,
         market: Optional[str] = None,
+        progress_callback: Optional[callable] = None,
     ) -> int:
         """
         更新日线数据
@@ -401,6 +408,7 @@ class DataUpdater:
             trade_date: 交易日期（YYYY-MM-DD格式），批量获取当日所有股票数据
             force_update: 是否强制更新（忽略数据库状态）
             market: 宽市场代码（CN/HK/ALL），默认 CN
+            progress_callback: 进度回调函数，接收 (current, total) 参数
 
         Returns:
             int: 更新的记录数
@@ -423,6 +431,7 @@ class DataUpdater:
                     trade_date=trade_date,
                     force_update=force_update,
                     market=market_code,
+                    progress_callback=progress_callback,
                 )
             return total
 
@@ -443,6 +452,7 @@ class DataUpdater:
                 adj=adj,
                 force_update=True,
                 market=market_code,
+                progress_callback=progress_callback,
             )
 
         # 交易日模式：批量获取当日所有股票数据
@@ -492,7 +502,7 @@ class DataUpdater:
         total_records = 0
         single_symbol_request = len(symbols) == 1
 
-        for symbol in symbols:
+        for idx, symbol in enumerate(symbols):
             try:
                 # 智能下载逻辑：确定该symbol的实际起始日期
                 symbol_start_date = start_date
@@ -546,6 +556,9 @@ class DataUpdater:
                 if single_symbol_request:
                     raise
                 continue
+            finally:
+                if progress_callback:
+                    progress_callback(idx + 1, len(symbols))
 
         logger.info(f"Updated total {total_records} daily records")
         return total_records
@@ -808,6 +821,7 @@ class DataUpdater:
         trade_date: Optional[str] = None,
         force_update: bool = False,
         market: Optional[str] = None,
+        progress_callback: Optional[callable] = None,
     ) -> int:
         """
         更新复权因子数据
@@ -824,6 +838,7 @@ class DataUpdater:
             trade_date: 交易日期（YYYY-MM-DD格式），批量获取当日所有股票复权因子
             force_update: 是否强制更新（忽略数据库状态）
             market: 宽市场代码（CN/HK/ALL），默认 CN
+            progress_callback: 进度回调函数，接收 (current, total) 参数
 
         Returns:
             int: 更新的记录数
@@ -845,6 +860,7 @@ class DataUpdater:
                     trade_date=trade_date,
                     force_update=force_update,
                     market=market_code,
+                    progress_callback=progress_callback,
                 )
             return total
 
@@ -864,6 +880,7 @@ class DataUpdater:
                 end_date=trade_date,
                 force_update=True,
                 market=market_code,
+                progress_callback=progress_callback,
             )
 
         # 交易日模式：批量获取当日所有股票复权因子
@@ -910,7 +927,7 @@ class DataUpdater:
         skipped_count = 0
         single_symbol_request = len(symbols) == 1
 
-        for symbol in symbols:
+        for idx, symbol in enumerate(symbols):
             try:
                 # 智能下载逻辑：确定该symbol的实际起始日期
                 symbol_start_date = start_date
@@ -972,6 +989,9 @@ class DataUpdater:
                 if single_symbol_request:
                     raise
                 continue
+            finally:
+                if progress_callback:
+                    progress_callback(idx + 1, len(symbols))
 
         if skipped_count > 0:
             logger.info(

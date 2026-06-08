@@ -1417,6 +1417,26 @@ async def _run_smart_download(
 
                 task = progress.add_task("正在智能下载...", total=len(symbol_list))
 
+                if data_type == "adj_factor":
+                    def progress_callback(current, total):
+                        progress.update(task, completed=current, total=total)
+
+                    count = await updater.update_adj_factor(
+                        symbols=symbol_list,
+                        start_date=None,  # 智能下载
+                        end_date=end_date,
+                        force_update=False,
+                        market=market,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=len(symbol_list), total=len(symbol_list))
+                    if not quiet:
+                        console.print(f"\n[bold]智能下载完成:[/bold]")
+                        console.print(f"  更新记录: {count}")
+                    else:
+                        console.print(f"[bold]完成:[/bold] 更新 {count} 条记录")
+                    return count
+
                 for idx, symbol in enumerate(symbol_list):
                     try:
                         if verbose:
@@ -2295,6 +2315,26 @@ async def _run_force_update(
 
                 task = progress.add_task("正在强制更新...", total=len(symbol_list))
 
+                if data_type == "adj_factor":
+                    def progress_callback(current, total):
+                        progress.update(task, completed=current, total=total)
+
+                    count = await updater.update_adj_factor(
+                        symbols=symbol_list,
+                        start_date=start_date,
+                        end_date=end_date,
+                        force_update=True,
+                        market=market,
+                        progress_callback=progress_callback,
+                    )
+                    progress.update(task, completed=len(symbol_list), total=len(symbol_list))
+                    if not quiet:
+                        console.print(f"\n[bold]强制更新完成:[/bold]")
+                        console.print(f"  更新记录: {count}")
+                    else:
+                        console.print(f"[bold]完成:[/bold] 更新 {count} 条记录")
+                    return count
+
                 for idx, symbol in enumerate(symbol_list):
                     try:
                         if verbose:
@@ -2430,17 +2470,55 @@ async def _run_trade_date_update(
 
         if market_code in {"HK", "ALL"} and data_type in {"daily", "adj_factor"}:
             if data_type == "daily":
-                count = await updater.update_daily_data(
-                    trade_date=trade_date,
-                    market=market_code,
-                    force_update=True,
-                )
+                with Progress(
+                    get_spinner(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    TimeElapsedColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task("正在获取港股日线数据...", total=None)
+                    latest_total = None
+
+                    def progress_callback(current, total):
+                        nonlocal latest_total
+                        latest_total = total
+                        progress.update(task, completed=current, total=total)
+
+                    count = await updater.update_daily_data(
+                        trade_date=trade_date,
+                        market=market_code,
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    if latest_total is not None:
+                        progress.update(task, completed=latest_total, total=latest_total)
             else:
-                count = await updater.update_adj_factor(
-                    trade_date=trade_date,
-                    market=market_code,
-                    force_update=True,
-                )
+                with Progress(
+                    get_spinner(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    TimeElapsedColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task("正在获取港股复权因子...", total=None)
+                    latest_total = None
+
+                    def progress_callback(current, total):
+                        nonlocal latest_total
+                        latest_total = total
+                        progress.update(task, completed=current, total=total)
+
+                    count = await updater.update_adj_factor(
+                        trade_date=trade_date,
+                        market=market_code,
+                        force_update=True,
+                        progress_callback=progress_callback,
+                    )
+                    if latest_total is not None:
+                        progress.update(task, completed=latest_total, total=latest_total)
             if not quiet:
                 console.print(f"[green][OK][/green] 已更新 {count} 条{data_type}数据")
             else:

@@ -1,9 +1,10 @@
 """HK market support unit tests."""
 
 import asyncio
-from datetime import time
+from datetime import datetime, timezone, time
 from unittest.mock import AsyncMock, Mock, patch
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -372,6 +373,79 @@ def test_updater_hk_daily_uses_market_specific_symbol_pool_and_route():
     assert updater.router.route.call_args.kwargs["symbol"] == "00700.HK"
 
 
+def test_updater_hk_daily_reports_per_symbol_progress():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.data_ops = Mock()
+    updater.data_ops.get_symbol_list = AsyncMock(
+        return_value=["00700.HK", "00005.HK"]
+    )
+    updater.data_ops.insert_symbol_daily_batch = AsyncMock(return_value=1)
+    updater.router.route.return_value = pd.DataFrame(
+        {
+            "time": [pd.Timestamp("2024-01-02")],
+            "symbol": ["00700.HK"],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "amount": [100000.0],
+        }
+    )
+    progress = []
+
+    count = asyncio.run(
+        updater.update_daily_data(
+            start_date="2024-01-02",
+            end_date="2024-01-02",
+            force_update=True,
+            market="HK",
+            progress_callback=lambda current, total: progress.append(
+                (current, total)
+            ),
+        )
+    )
+
+    assert count == 2
+    assert progress == [(1, 2), (2, 2)]
+    assert updater.router.route.call_count == 2
+
+
+def test_updater_hk_adj_factor_reports_per_symbol_progress():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.data_ops = Mock()
+    updater.data_ops.insert_adj_factor_batch = AsyncMock(return_value=1)
+    updater._get_hk_adj_factor_from_akshare = AsyncMock(
+        return_value=pd.DataFrame(
+            {
+                "time": [pd.Timestamp("2024-01-02")],
+                "symbol": ["00700.HK"],
+                "adj_factor": [1.0],
+            }
+        )
+    )
+    progress = []
+
+    count = asyncio.run(
+        updater.update_adj_factor(
+            symbols=["00700.HK", "00005.HK"],
+            start_date="2024-01-02",
+            end_date="2024-01-02",
+            force_update=True,
+            market="HK",
+            progress_callback=lambda current, total: progress.append(
+                (current, total)
+            ),
+        )
+    )
+
+    assert count == 2
+    assert progress == [(1, 2), (2, 2)]
+    assert updater._get_hk_adj_factor_from_akshare.await_count == 2
+
+
 def test_updater_single_symbol_daily_failure_is_raised():
     updater = DataUpdater(settings=Mock())
     updater.router = Mock()
@@ -514,3 +588,28 @@ def test_updater_hk_adj_factor_expansion_uses_sparse_anchor_row():
         "2024-01-05",
     ]
     assert list(result["adj_factor"].round(6)) == [1.0, 1.25, 1.25]
+
+
+def test_updater_hk_adj_factor_expansion_normalizes_datetime_precision():
+    updater = DataUpdater(settings=Mock())
+    daily_df = pd.DataFrame(
+        {
+            "time": [
+                datetime(2026, 6, 4, 8, 0, tzinfo=timezone.utc),
+            ],
+            "symbol": ["00023.HK"],
+        }
+    )
+    sparse_df = pd.DataFrame(
+        {
+            "time": np.array(["2026-03-03"], dtype="datetime64[s]"),
+            "symbol": ["00023.HK"],
+            "adj_factor": [3.006122],
+        }
+    )
+
+    result = updater._expand_hk_adj_factor_to_daily(daily_df, sparse_df)
+
+    assert len(result) == 1
+    assert result["symbol"].iloc[0] == "00023.HK"
+    assert result["adj_factor"].iloc[0] == pytest.approx(3.006122)

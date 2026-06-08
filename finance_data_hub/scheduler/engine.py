@@ -201,7 +201,30 @@ class SchedulerEngine:
             replace_existing=True
         )
         
-        logger.info(f"Added job: {job_id}")
+        logger.debug(f"Added job: {job_id}")
+
+    def add_one_time_job(
+        self,
+        job_id: str,
+        func: Callable,
+        run_date: datetime,
+        kwargs: Optional[Dict[str, Any]] = None,
+        name: Optional[str] = None,
+    ) -> None:
+        """添加一次性任务，用于依赖补触发或次日补跑。"""
+        if self._scheduler is None:
+            raise RuntimeError("Scheduler not initialized. Call initialize() first.")
+
+        self._scheduler.add_job(
+            func,
+            trigger=DateTrigger(run_date=run_date),
+            id=job_id,
+            name=name or job_id,
+            kwargs=kwargs or {},
+            replace_existing=True,
+        )
+
+        logger.info(f"Added one-time job: {job_id}, run_date={run_date}")
     
     def remove_job(self, job_id: str) -> None:
         """移除任务"""
@@ -264,7 +287,13 @@ class SchedulerEngine:
     def _on_job_executed(self, event: JobExecutionEvent) -> None:
         """任务执行完成回调"""
         job_id = event.job_id
-        logger.info(f"Job executed successfully: {job_id}")
+        result_status = getattr(getattr(event, "retval", None), "status", None)
+        if result_status == "pending":
+            logger.debug(f"Job deferred pending dependencies: {job_id}")
+        elif result_status and result_status != "completed":
+            logger.debug(f"Job executed with task status {result_status}: {job_id}")
+        else:
+            logger.debug(f"Job executed successfully: {job_id}")
         
         if job_id in self._job_listeners:
             try:
