@@ -143,228 +143,53 @@ finance_data_hub/
 
 #### 1.2 配置设计 (`schedules.yml`)
 
-```yaml
-# 调度配置
+生产调度以根目录 [schedules.yml](/Volumes/Repository/Projects/TradingNexus/FinanceDataHub/schedules.yml:1) 为准。配置按执行周期分组，并在每个分组内按周内、月内、日内先后排列。
 
-scheduler:
-  timezone: "Asia/Shanghai"
-  job_store: "postgresql"         # 任务状态持久化到 PG
-  max_concurrent_jobs: 3          # 最大并发任务数
-  misfire_grace_time: 300         # 错过执行的容忍时间（秒）
+关键原则：
 
-jobs:
-  # ========== 数据下载任务 ==========
-  
-  # 日线数据 - 每日收盘后更新
-  daily_update:
-    enabled: true
-    type: download
-    dataset: daily
-    schedule:
-      type: cron
-      hour: 17
-      minute: 0
-      day_of_week: "mon-fri"
-    params:
-      market: CN
-      trade_date: "latest"        # 自动获取最新交易日
-    retry:
-      max_retries: 3
-      delay: 300                  # 重试间隔（秒）
+- 股票类下载与预处理任务显式声明 `market`，A 股使用 `market: CN`，港股使用独立 `hk_*` 任务。
+- 支持 `trade_date` 的 Tushare 日频接口使用 `trade_date: latest`，任务间隔压缩到 5-15 分钟；不支持单日批量的接口保留更晚时间和更长重试窗口。
+- 期货 T 日完整日线、结算、分钟线和高周期分钟聚合安排在 T 日收盘后、T+1 夜盘开盘前；夜盘分钟线另在凌晨补齐，供 T+1 日盘开盘前查询。
+- 依赖关系仍由 `depends_on` 兜底，若前置任务运行较慢，后置任务会进入 pending 并在依赖完成后触发。
 
-  # 港股日线数据 - 每日收盘后更新
-  hk_daily_update:
-    enabled: true
-    type: download
-    dataset: daily
-    schedule:
-      type: cron
-      hour: 17
-      minute: 5
-      day_of_week: "mon-fri"
-    params:
-      market: HK
-      trade_date: "latest"
+周一到周五日内顺序：
 
-  # 每日基本面 - 每日收盘后更新
-  daily_basic_update:
-    enabled: true
-    type: download
-    dataset: daily_basic
-    schedule:
-      type: cron
-      hour: 17
-      minute: 30
-      day_of_week: "mon-fri"
-    params:
-      market: CN
-      trade_date: "latest"
-    depends_on: [daily_update]    # 依赖日线更新完成
+| 时间 | 任务 | 说明 |
+|------|------|------|
+| 03:20 | `futures_minute_1m_night_update` | 周二到周五补齐上一自然日晚盘到当前交易日凌晨的 1m 数据 |
+| 03:30 | `futures_minute_5m_night_update` | 周二到周五补齐 5m 夜盘原始数据 |
+| 04:05 / 04:10 / 04:15 | `futures_minute_15m/30m/60m_night_refresh` | 开盘前刷新夜盘高周期分钟聚合 |
+| 16:20 | `futures_mapping_update` | T 日主力 / 连续合约映射 |
+| 16:35 | `futures_daily_update` | T 日期货日线，使用 `trade_date: latest` |
+| 16:45 / 16:50 | `hk_daily_update` / `daily_update` | 港股、A 股日线 |
+| 16:55 / 17:05 | `adj_factor_update` / `daily_basic_update` | A 股复权因子、每日基本面，均使用 `trade_date` |
+| 17:10 / 17:15 | `futures_settle_update` / `hk_adj_factor_update` | 期货结算、港股复权因子 |
+| 17:25 / 17:35 | `futures_minute_1m_update` / `futures_minute_5m_update` | T 日收盘后覆盖完整交易日窗口 |
+| 18:10 / 18:15 / 18:20 | `futures_minute_15m/30m/60m_refresh` | 5m 原始数据完成后至少预留 30 分钟再刷新聚合 |
+| 18:25 | `futures_term_metrics_update` | 基于 T 日完整期货日线计算期限结构指标 |
+| 18:40 / 18:50 | `technical_preprocess` / `hk_technical_preprocess` | A 股、港股技术指标预处理 |
+| 19:00 / 19:10 / 19:20 | `futures_spot_basis_update` / `futures_inventory_update` / `futures_index_daily_update` | 期货基差、仓单、指数日线 |
+| 19:35 | `fundamental_preprocess` | A 股基本面预处理 |
+| 20:20 / 20:30 / 20:45 | `index_daily_update` / `index_dailybasic_update` / `sw_daily_update` | 指数与申万行业日频数据；指数日线保留较晚窗口 |
+| 21:20 | `industry_valuation_preprocess` | 晚于基本面预处理和申万行业日线 |
 
-  # 复权因子 - 每日更新
-  adj_factor_update:
-    enabled: true
-    type: download
-    dataset: adj_factor
-    schedule:
-      type: cron
-      hour: 17
-      minute: 15
-      day_of_week: "mon-fri"
-    params:
-      market: CN
+周六凌晨顺序：
 
-  # 港股复权因子 - 每日更新
-  hk_adj_factor_update:
-    enabled: true
-    type: download
-    dataset: adj_factor
-    schedule:
-      type: cron
-      hour: 17
-      minute: 20
-      day_of_week: "mon-fri"
-    params:
-      market: HK
-      trade_date: "latest"
-    depends_on: [hk_daily_update]
+| 时间 | 任务 | 说明 |
+|------|------|------|
+| 03:10 | `futures_daily_saturday_update` | 周末复核 / 补跑周五完整日线 |
+| 03:20 / 03:30 | `futures_minute_1m_saturday_update` / `futures_minute_5m_saturday_update` | 补齐周五夜盘自然日片段 |
+| 03:55 | `futures_term_metrics_saturday_update` | 基于周五日线复核期限结构 |
+| 04:10 / 04:15 / 04:20 | `futures_minute_15m/30m/60m_saturday_refresh` | 周六刷新夜盘片段聚合 |
 
-  # 财务数据 - 每月更新（财报季更频繁）
-  financial_update:
-    enabled: true
-    type: download
-    dataset: [fina_indicator, cashflow, balancesheet, income]
-    schedule:
-      type: cron
-      day: "1,15"                 # 每月1号和15号
-      hour: 6
-    params:
-      market: CN
+周 / 双周 / 月任务集中放在配置文件开头：
 
-  # 宏观数据 - 每月更新
-  macro_update:
-    enabled: true
-    type: download
-    dataset: [gdp, ppi, m, pmi]
-    schedule:
-      type: cron
-      day: 15
-      hour: 8
-
-  # 申万行业数据 - 每日更新
-  sw_daily_update:
-    enabled: true
-    type: download
-    dataset: sw_daily
-    schedule:
-      type: cron
-      hour: 17
-      minute: 45
-      day_of_week: "mon-fri"
-
-  # ========== 预处理任务 ==========
-  
-  # 技术指标预处理 - 每日运行
-  technical_preprocess:
-    enabled: true
-    type: preprocess
-    category: technical
-    schedule:
-      type: cron
-      hour: 18
-      minute: 40
-      day_of_week: "mon-fri"
-    params:
-      all: true
-      market: CN
-      freq: "daily,weekly,monthly"
-      adjust: qfq
-    depends_on: [daily_update, adj_factor_update]
-
-  # 港股技术指标预处理 - 每日运行
-  hk_technical_preprocess:
-    enabled: true
-    type: preprocess
-    category: technical
-    schedule:
-      type: cron
-      hour: 18
-      minute: 50
-      day_of_week: "mon-fri"
-    params:
-      all: true
-      market: HK
-      freq: "daily,weekly,monthly"
-      adjust: qfq
-    depends_on: [hk_daily_update, hk_adj_factor_update]
-
-  # 基本面指标预处理 - 每日运行
-  valuation_fill_preprocess:
-    enabled: true
-    type: preprocess
-    category: valuation_fill
-    schedule:
-      type: cron
-      hour: 17
-      minute: 40
-      day_of_week: "mon-fri"
-    params:
-      all: true
-      market: CN
-    depends_on: [daily_basic_update, financial_update]
-
-  # 基本面指标预处理 - 每日运行
-  fundamental_preprocess:
-    enabled: true
-    type: preprocess
-    category: fundamental
-    schedule:
-      type: cron
-      hour: 17
-      minute: 50
-      day_of_week: "mon-fri"
-    params:
-      all: true
-      market: CN
-    depends_on: [valuation_fill_preprocess]
-
-  # 行业差异化估值预处理 - 每日运行
-  industry_valuation_preprocess:
-    enabled: true
-    type: preprocess
-    category: industry_valuation
-    schedule:
-      type: cron
-      hour: 18
-      minute: 0
-      day_of_week: "mon-fri"
-    params:
-      all: true
-      market: CN
-    depends_on: [fundamental_preprocess]
-
-  # 中国宏观周期预处理 - 每月 15 号运行
-  macro_cycle_preprocess:
-    enabled: true
-    type: preprocess
-    category: macro_cycle
-    schedule:
-      type: cron
-      day: 15
-      hour: 8
-      minute: 20
-    params:
-      all: true
-    depends_on: [macro_update, sw_member_update]
-```
-
-说明：
-- 股票类下载与预处理任务现在都建议显式声明 `market`
-- 现有 A 股任务应写为 `market: CN`，避免在接入港股后继续依赖默认值
-- 港股建议拆分为独立任务，例如 `hk_daily_update`、`hk_adj_factor_update`、`hk_technical_preprocess`
-- `fdh-cli preprocess run --all --category technical --market HK` 会自动按港股股票池取 symbol，不需要手动传列表
-- 当前非 `CN` 市场仅支持 `technical` 预处理
-- A 股估值链路建议按 `valuation_fill -> fundamental -> industry_valuation` 顺序串联
+| 周期 | 日内顺序 | 任务 |
+|------|----------|------|
+| 每周一 | 06:40 -> 06:50 -> 07:00 | `futures_basic_update` -> `basic_update` -> `hk_basic_update` |
+| 每月 1 / 15 号 | 06:00 -> 07:10 -> 07:25 -> 19:50 | `financial_update` -> `sw_classify_update` -> `sw_member_update` -> `quarterly_fundamental_preprocess` |
+| 每月 1 号 | 06:30 -> 08:40 | `trade_cal_update` -> `index_weight_update` |
+| 每月 15 号 | 08:00 -> 08:20 | `macro_update` -> `macro_cycle_preprocess` |
 
 #### 1.3 CLI 命令扩展
 

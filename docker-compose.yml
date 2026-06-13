@@ -62,6 +62,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - FUTURES_MINUTE_MAX_WORKERS=${FUTURES_MINUTE_MAX_WORKERS:-1}
       # Scheduler runs inside Docker. Do not reuse a host-side XTQUANT_API_URL
       # like http://localhost:8100; set SCHEDULER_XTQUANT_API_URL when needed.
       - XTQUANT_API_URL=${SCHEDULER_XTQUANT_API_URL:-http://host.docker.internal:8100}
@@ -72,8 +73,9 @@ services:
       - ./sources.yml:/app/sources.yml:ro
       - ./logs:/app/logs
       - ./data:/app/data
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    # Docker Desktop provides host.docker.internal automatically. Do not
+    # override it with host-gateway on macOS/Windows; that can point the
+    # scheduler at an unreachable VM gateway instead of the host.
     command: ["fdh-cli", "schedule", "start", "--config", "/app/schedules.yml"]
 
 # Docker Compose 网络配置

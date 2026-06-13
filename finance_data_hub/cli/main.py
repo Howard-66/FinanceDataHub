@@ -3056,12 +3056,12 @@ def refresh_aggregates(
     ),
     start_date: Optional[str] = typer.Option(
         None,
-        "--start",
+        "--start-date",
         help="刷新开始日期 (YYYY-MM-DD)，默认为空（刷新所有历史数据）"
     ),
     end_date: Optional[str] = typer.Option(
         None,
-        "--end",
+        "--end-date",
         help="刷新结束日期 (YYYY-MM-DD)，默认为空（刷新到最新）"
     ),
     verbose: bool = typer.Option(

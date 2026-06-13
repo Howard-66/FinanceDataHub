@@ -232,13 +232,13 @@ class TaskExecutor:
             params.get("start_date"), normalized_asset_class
         )
         if start_date:
-            cmd.extend(["--start", start_date])
+            cmd.extend(["--start-date", start_date])
 
         end_date = self._resolve_date_param(
             params.get("end_date"), normalized_asset_class
         )
         if end_date:
-            cmd.extend(["--end", end_date])
+            cmd.extend(["--end-date", end_date])
 
         if params.get("verbose"):
             cmd.append("--verbose")

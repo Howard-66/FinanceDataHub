@@ -130,7 +130,7 @@ class DataSourceConfig(BaseSettings):
     )
 
     futures_minute_max_workers: int = Field(
-        default=4,
+        default=1,
         ge=1,
         le=32,
         description="期货分钟数据下载最大线程并发数",

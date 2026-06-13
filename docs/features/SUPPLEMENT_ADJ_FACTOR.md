@@ -160,7 +160,7 @@ async def get_data():
 
 ```bash
 # 刷新周线复权因子聚合
-fdh-cli refresh-aggregates --table adj_factor_weekly --start 2024-01-01 --end 2024-12-31
+fdh-cli refresh-aggregates --table adj_factor_weekly --start-date 2024-01-01 --end-date 2024-12-31
 
 # 刷新月线复权因子聚合
 fdh-cli refresh-aggregates --table adj_factor_monthly
@@ -233,7 +233,7 @@ fdh-cli refresh-aggregates --table adj_factor_weekly
 fdh-cli refresh-aggregates --table adj_factor_monthly
 
 # 指定日期范围刷新
-fdh-cli refresh-aggregates --table adj_factor_weekly --start 2024-01-01 --end 2024-12-31
+fdh-cli refresh-aggregates --table adj_factor_weekly --start-date 2024-01-01 --end-date 2024-12-31
 ```
 
 ### 4. 数据查询

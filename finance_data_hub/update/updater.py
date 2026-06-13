@@ -190,12 +190,12 @@ class DataUpdater:
         """Return bounded worker count for futures minute downloads."""
         data_source_config = getattr(self.settings, "data_source", None)
         configured_workers = getattr(
-            data_source_config, "futures_minute_max_workers", 4
+            data_source_config, "futures_minute_max_workers", 1
         )
         try:
             workers = int(configured_workers)
         except (TypeError, ValueError):
-            workers = 4
+            workers = 1
         workers = max(1, workers)
         if symbol_count > 0:
             workers = min(workers, symbol_count)

@@ -1,7 +1,7 @@
 # FinanceDataHub 调度配置
-# 
-# 此文件定义了自动化数据下载和预处理任务的调度规则。
-# 支持 cron、interval 两种调度类型。
+#
+# 此文件定义自动化数据下载、聚合刷新和预处理任务。
+# 同一组任务按周期和日内执行先后排列，便于检查依赖和时间间隔。
 
 scheduler:
   timezone: "Asia/Shanghai"
@@ -10,269 +10,9 @@ scheduler:
   misfire_grace_time: 3600        # 错过执行的容忍时间（秒），覆盖短暂停机/容器重启
 
 jobs:
-  # ========== 数据下载任务 ==========
-  
-  # 日线数据 - 每日收盘后更新（17:00）
-  daily_update:
-    enabled: true
-    type: download
-    dataset: daily
-    schedule:
-      type: cron
-      hour: 17
-      minute: 10
-      day_of_week: "mon-fri"
-    params:
-      market: CN
-      trade_date: "latest"        # 自动获取最新交易日
-    retry:
-      max_retries: 3
-      delay: 300
+  # ========== 周 / 双周 / 月周期维护任务 ==========
 
-  # 港股日线数据 - 每日收盘后更新（17:05）
-  hk_daily_update:
-    enabled: true
-    type: download
-    dataset: daily
-    schedule:
-      type: cron
-      hour: 17
-      minute: 5
-      day_of_week: "mon-fri"
-    params:
-      market: HK
-      trade_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 每日基本面 - 每日收盘后更新（18:30）
-  daily_basic_update:
-    enabled: true
-    type: download
-    dataset: daily_basic
-    schedule:
-      type: cron
-      hour: 18
-      minute: 30
-      day_of_week: "mon-fri"
-    params:
-      market: CN
-      trade_date: "latest"
-    depends_on: [daily_update]
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 复权因子 - 每日更新（17:15）
-  adj_factor_update:
-    enabled: true
-    type: download
-    dataset: adj_factor
-    schedule:
-      type: cron
-      hour: 17
-      minute: 15
-      day_of_week: "mon-fri"
-    params:
-      market: CN
-      trade_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 港股复权因子 - 每日更新（18:20）
-  # 依赖本地港股日线交易日序列展开稀疏复权因子
-  hk_adj_factor_update:
-    enabled: true
-    type: download
-    dataset: adj_factor
-    schedule:
-      type: cron
-      hour: 18
-      minute: 20
-      day_of_week: "mon-fri"
-    params:
-      market: HK
-      trade_date: "latest"
-    depends_on: [hk_daily_update]
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 股票基本信息 - 每周一更新（可捕获新上市、退市等变化）
-  basic_update:
-    enabled: true
-    type: download
-    dataset: basic
-    schedule:
-      type: cron
-      day_of_week: "mon"
-      hour: 7
-      minute: 0
-    params:
-      market: CN
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 港股股票基本信息 - 每周一更新
-  hk_basic_update:
-    enabled: true
-    type: download
-    dataset: basic
-    schedule:
-      type: cron
-      day_of_week: "mon"
-      hour: 7
-      minute: 10
-    params:
-      market: HK
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 财务数据 - 每月1号和15号更新
-  financial_update:
-    enabled: true
-    type: download
-    dataset: [fina_indicator, cashflow, balancesheet, income]
-    schedule:
-      type: cron
-      day: "1,15"
-      hour: 6
-      minute: 0
-    params:
-      market: CN
-    retry:
-      max_retries: 3
-      delay: 600
-
-  # 宏观数据 - 每月15号更新
-  macro_update:
-    enabled: true
-    type: download
-    dataset: [gdp, ppi, m, pmi]
-    schedule:
-      type: cron
-      day: 15
-      hour: 8
-      minute: 0
-    retry:
-      max_retries: 3
-      delay: 600
-
-  # 大盘指数每日指标 - 每日更新（19:30）
-  # 注意：Tushare 的指数级别数据通常在收盘后 2-3 小时才完全可用
-  index_daily_update:
-    enabled: true
-    type: download
-    dataset: index_daily
-    schedule:
-      type: cron
-      hour: 20
-      minute: 20
-      day_of_week: "mon-fri"
-    # 注意：index_daily 接口不支持仅通过 trade_date 批量获取全部指数当日数据
-    # 因此这里不配置 trade_date，交由智能增量逻辑逐指数更新
-    retry:
-      max_retries: 3
-      delay: 600  # 10分钟后重试
-
-  # 大盘指数每日指标 - 每日更新（20:30）
-  # 注意：Tushare 的指数级别数据通常在收盘后 2-3 小时才完全可用
-  index_dailybasic_update:
-    enabled: true
-    type: download
-    dataset: index_dailybasic
-    schedule:
-      type: cron
-      hour: 20
-      minute: 30
-      day_of_week: "mon-fri"
-    params:
-      trade_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 600  # 10分钟后重试
-
-  # 申万行业日线 - 每日更新（19:45）
-  # 注意：Tushare 的申万行业数据通常在收盘后 2-3 小时才完全可用
-  sw_daily_update:
-    enabled: true
-    type: download
-    dataset: sw_daily
-    schedule:
-      type: cron
-      hour: 20
-      minute: 45
-      day_of_week: "mon-fri"
-    params:
-      trade_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 600  # 10分钟后重试
-
-  # 申万行业分类 - 每月1号和15号更新
-  sw_classify_update:
-    enabled: true
-    type: download
-    dataset: sw_industry_classify
-    schedule:
-      type: cron
-      day: "1,15"
-      hour: 7
-      minute: 0
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 申万行业成分股 - 每月1号和15号更新
-  sw_member_update:
-    enabled: true
-    type: download
-    dataset: sw_industry_member
-    schedule:
-      type: cron
-      day: "1,15"
-      hour: 7
-      minute: 30
-    depends_on: [sw_classify_update]
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 交易日历 - 每月1号更新（获取未来一年的交易日历）
-  trade_cal_update:
-    enabled: true
-    type: download
-    dataset: trade_cal
-    schedule:
-      type: cron
-      day: 1
-      hour: 6
-      minute: 30
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 指数成分权重 - 每月1号更新（沪深300、中证500等）
-  index_weight_update:
-    enabled: true
-    type: download
-    dataset: index_weight
-    schedule:
-      type: cron
-      day: 1
-      hour: 8
-      minute: 30
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # ========== 期货数据下载任务 ==========
-
-  # 期货合约基础信息 - 每周一更新（捕获新品种、合约挂牌/摘牌变化）
+  # 每周一：期货合约基础信息 -> A 股基础信息 -> 港股基础信息
   futures_basic_update:
     enabled: true
     type: download
@@ -288,9 +28,249 @@ jobs:
       max_retries: 3
       delay: 300
 
-  # 期货主力/连续合约映射 - 每个交易日收盘后更新
-  # 显式指定 trade_date，避免仅按当前活跃池增量时漏掉当日有效合约
-  # 调度时间放在夜盘开启前，确保上一交易日（含前一夜盘）已完整收盘
+  basic_update:
+    enabled: true
+    type: download
+    dataset: basic
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 6
+      minute: 50
+    params:
+      market: CN
+    retry:
+      max_retries: 3
+      delay: 300
+
+  hk_basic_update:
+    enabled: true
+    type: download
+    dataset: basic
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 7
+      minute: 0
+    params:
+      market: HK
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 每月 1 / 15 号：财务 -> 申万分类 -> 申万成分 -> 季度基本面预处理
+  financial_update:
+    enabled: true
+    type: download
+    dataset: [fina_indicator, cashflow, balancesheet, income]
+    schedule:
+      type: cron
+      day: "1,15"
+      hour: 6
+      minute: 30
+    params:
+      market: CN
+    retry:
+      max_retries: 3
+      delay: 600
+
+  sw_classify_update:
+    enabled: true
+    type: download
+    dataset: sw_industry_classify
+    schedule:
+      type: cron
+      day: "1,15"
+      hour: 7
+      minute: 10
+    retry:
+      max_retries: 3
+      delay: 300
+
+  sw_member_update:
+    enabled: true
+    type: download
+    dataset: sw_industry_member
+    schedule:
+      type: cron
+      day: "1,15"
+      hour: 7
+      minute: 20
+    depends_on: [sw_classify_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  quarterly_fundamental_preprocess:
+    enabled: true
+    type: preprocess
+    category: quarterly_fundamental
+    schedule:
+      type: cron
+      day: "1,15"
+      hour: 8
+      minute: 20
+    params:
+      all: true
+      market: CN
+    depends_on: [financial_update]
+    retry:
+      max_retries: 2
+      delay: 600
+
+  # 每月 1 号：交易日历 -> 指数成分权重
+  trade_cal_update:
+    enabled: true
+    type: download
+    dataset: trade_cal
+    schedule:
+      type: cron
+      day: 1
+      hour: 6
+      minute: 15
+    retry:
+      max_retries: 3
+      delay: 300
+
+  index_weight_update:
+    enabled: true
+    type: download
+    dataset: index_weight
+    schedule:
+      type: cron
+      day: 1
+      hour: 8
+      minute: 0
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # 每月 15 号：宏观原始数据 -> 宏观周期预处理
+  macro_update:
+    enabled: true
+    type: download
+    dataset: [gdp, ppi, m, pmi]
+    schedule:
+      type: cron
+      day: 15
+      hour: 7
+      minute: 40
+    retry:
+      max_retries: 3
+      delay: 600
+
+  macro_cycle_preprocess:
+    enabled: true
+    type: preprocess
+    category: macro_cycle
+    schedule:
+      type: cron
+      day: 15
+      hour: 8
+      minute: 0
+    params:
+      all: true
+    depends_on: [macro_update, sw_member_update]
+    retry:
+      max_retries: 2
+      delay: 600
+
+  # ========== 期货夜盘后 / T+1 日盘开盘前任务（周二到周五） ==========
+
+  # 夜盘分钟线在凌晨补齐，供 T+1 日盘开盘前查询；下午任务会再次覆盖完整交易日窗口。
+  futures_minute_5m_night_update:
+    enabled: true
+    type: download
+    dataset: minute_5
+    schedule:
+      type: cron
+      hour: 3
+      minute: 20
+      day_of_week: "tue-fri"
+    params:
+      asset_class: future
+      symbols: all
+      start_date: "latest-1d"
+      end_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_1m_night_update:
+    enabled: true
+    type: download
+    dataset: minute_1
+    schedule:
+      type: cron
+      hour: 3
+      minute: 30
+      day_of_week: "tue-fri"
+    params:
+      asset_class: future
+      symbols: all
+      start_date: "latest-1d"
+      end_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_15m_night_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_15m
+    schedule:
+      type: cron
+      hour: 4
+      minute: 5
+      day_of_week: "tue-fri"
+    params:
+      asset_class: future
+      start_date: "latest-1d"
+      end_date: "latest"
+    depends_on: [futures_minute_5m_night_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_30m_night_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_30m
+    schedule:
+      type: cron
+      hour: 4
+      minute: 10
+      day_of_week: "tue-fri"
+    params:
+      asset_class: future
+      start_date: "latest-1d"
+      end_date: "latest"
+    depends_on: [futures_minute_5m_night_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  futures_minute_60m_night_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_60m
+    schedule:
+      type: cron
+      hour: 4
+      minute: 15
+      day_of_week: "tue-fri"
+    params:
+      asset_class: future
+      start_date: "latest-1d"
+      end_date: "latest"
+    depends_on: [futures_minute_5m_night_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  # ========== 每日收盘后任务（周一到周五） ==========
+
+  # 16:20-18:25：期货 T 日收盘链路，尽量在 21:00 夜盘开盘前完成日线和高周期分钟聚合。
   futures_mapping_update:
     enabled: true
     type: download
@@ -298,7 +278,7 @@ jobs:
     schedule:
       type: cron
       hour: 16
-      minute: 20
+      minute: 10
       day_of_week: "mon-fri"
     params:
       asset_class: future
@@ -307,24 +287,396 @@ jobs:
       max_retries: 3
       delay: 600
 
-  # 期货日线行情 - 次日凌晨更新已完整收盘的交易日，避免夜盘/跨日导致日线未完结
   futures_daily_update:
     enabled: true
     type: download
     dataset: daily
     schedule:
       type: cron
-      hour: 3
-      minute: 10
-      day_of_week: "tue-fri"
+      hour: 16
+      minute: 15
+      day_of_week: "mon-fri"
     params:
       asset_class: future
-      trade_date: "previous_trade_date"
+      trade_date: "latest"
     retry:
       max_retries: 3
       delay: 600
 
-  # 周五夜盘可能跨到周六凌晨，单独在周六更新周五完整日线
+  # futures_minute_5m_update:
+  #   enabled: true
+  #   type: download
+  #   dataset: minute_5
+  #   schedule:
+  #     type: cron
+  #     hour: 16
+  #     minute: 30
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     asset_class: future
+  #     symbols: all
+  #     start_date: "previous_trade_date"
+  #     end_date: "latest"
+  #   retry:
+  #     max_retries: 3
+  #     delay: 300
+
+  # futures_minute_1m_update:
+  #   enabled: true
+  #   type: download
+  #   dataset: minute_1
+  #   schedule:
+  #     type: cron
+  #     hour: 16
+  #     minute: 40
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     asset_class: future
+  #     symbols: all
+  #     start_date: "previous_trade_date"
+  #     end_date: "latest"
+  #   retry:
+  #     max_retries: 3
+  #     delay: 300
+
+  # futures_minute_15m_refresh:
+  #   enabled: true
+  #   type: aggregate
+  #   dataset: futures.minute_15m
+  #   schedule:
+  #     type: cron
+  #     hour: 17
+  #     minute: 10
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     asset_class: future
+  #     start_date: "previous_trade_date"
+  #     end_date: "latest"
+  #   depends_on: [futures_minute_5m_update]
+  #   retry:
+  #     max_retries: 3
+  #     delay: 300
+
+  # futures_minute_30m_refresh:
+  #   enabled: true
+  #   type: aggregate
+  #   dataset: futures.minute_30m
+  #   schedule:
+  #     type: cron
+  #     hour: 17
+  #     minute: 15
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     asset_class: future
+  #     start_date: "previous_trade_date"
+  #     end_date: "latest"
+  #   depends_on: [futures_minute_5m_update]
+  #   retry:
+  #     max_retries: 3
+  #     delay: 300
+
+  # futures_minute_60m_refresh:
+  #   enabled: true
+  #   type: aggregate
+  #   dataset: futures.minute_60m
+  #   schedule:
+  #     type: cron
+  #     hour: 17
+  #     minute: 20
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     asset_class: future
+  #     start_date: "previous_trade_date"
+  #     end_date: "latest"
+  #   depends_on: [futures_minute_5m_update]
+  #   retry:
+  #     max_retries: 3
+  #     delay: 300
+
+  futures_term_metrics_update:
+    enabled: true
+    type: download
+    dataset: term_metrics
+    schedule:
+      type: cron
+      hour: 16
+      minute: 30
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest"
+      end_date: "latest"
+    depends_on: [futures_daily_update]
+    retry:
+      max_retries: 2
+      delay: 300
+
+  futures_settle_update:
+    enabled: true
+    type: download
+    dataset: settle
+    schedule:
+      type: cron
+      hour: 22
+      minute: 30
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
+
+  futures_spot_basis_update:
+    enabled: true
+    type: download
+    dataset: spot_basis
+    schedule:
+      type: cron
+      hour: 17
+      minute: 50
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
+
+  futures_inventory_update:
+    enabled: true
+    type: download
+    dataset: inventory
+    schedule:
+      type: cron
+      hour: 18
+      minute: 05
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest"
+      end_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
+
+  futures_index_daily_update:
+    enabled: true
+    type: download
+    dataset: index_daily
+    schedule:
+      type: cron
+      hour: 18
+      minute: 20
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest"
+      end_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
+
+  daily_update:
+    enabled: true
+    type: download
+    dataset: daily
+    schedule:
+      type: cron
+      hour: 18
+      minute: 30
+      day_of_week: "mon-fri"
+    params:
+      market: CN
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  adj_factor_update:
+    enabled: true
+    type: download
+    dataset: adj_factor
+    schedule:
+      type: cron
+      hour: 18
+      minute: 35
+      day_of_week: "mon-fri"
+    params:
+      market: CN
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  daily_basic_update:
+    enabled: true
+    type: download
+    dataset: daily_basic
+    schedule:
+      type: cron
+      hour: 18
+      minute: 40
+      day_of_week: "mon-fri"
+    params:
+      market: CN
+      trade_date: "latest"
+    depends_on: [daily_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  technical_preprocess:
+    enabled: true
+    type: preprocess
+    category: technical
+    schedule:
+      type: cron
+      hour: 18
+      minute: 45
+      day_of_week: "mon-fri"
+    params:
+      all: true
+      market: CN
+      freq: "daily,weekly,monthly"
+      adjust: qfq
+    depends_on: [daily_update, adj_factor_update]
+    retry:
+      max_retries: 2
+      delay: 600
+
+  fundamental_preprocess:
+    enabled: true
+    type: preprocess
+    category: fundamental
+    schedule:
+      type: cron
+      hour: 19
+      minute: 15
+      day_of_week: "mon-fri"
+    params:
+      all: true
+      market: CN
+    depends_on: [daily_basic_update]
+    retry:
+      max_retries: 2
+      delay: 600
+
+  hk_daily_update:
+    enabled: true
+    type: download
+    dataset: daily
+    schedule:
+      type: cron
+      hour: 19
+      minute: 45
+      day_of_week: "mon-fri"
+    params:
+      market: HK
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 300
+
+  hk_adj_factor_update:
+    enabled: true
+    type: download
+    dataset: adj_factor
+    schedule:
+      type: cron
+      hour: 20
+      minute: 15
+      day_of_week: "mon-fri"
+    params:
+      market: HK
+      trade_date: "latest"
+    depends_on: [hk_daily_update]
+    retry:
+      max_retries: 3
+      delay: 300
+
+  hk_technical_preprocess:
+    enabled: true
+    type: preprocess
+    category: technical
+    schedule:
+      type: cron
+      hour: 21
+      minute: 0
+      day_of_week: "mon-fri"
+    params:
+      all: true
+      market: HK
+      freq: "daily,weekly,monthly"
+      adjust: qfq
+    depends_on: [hk_daily_update, hk_adj_factor_update]
+    retry:
+      max_retries: 2
+      delay: 600
+
+  index_daily_update:
+    enabled: true
+    type: download
+    dataset: index_daily
+    schedule:
+      type: cron
+      hour: 21
+      minute: 30
+      day_of_week: "mon-fri"
+    # index_daily 不支持仅通过 trade_date 批量获取全部指数当日数据。
+    retry:
+      max_retries: 3
+      delay: 600
+
+  index_dailybasic_update:
+    enabled: true
+    type: download
+    dataset: index_dailybasic
+    schedule:
+      type: cron
+      hour: 21
+      minute: 40
+      day_of_week: "mon-fri"
+    params:
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
+
+  # sw_daily_update:
+  #   enabled: true
+  #   type: download
+  #   dataset: sw_daily
+  #   schedule:
+  #     type: cron
+  #     hour: 21
+  #     minute: 50
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     trade_date: "latest"
+  #   retry:
+  #     max_retries: 3
+  #     delay: 600
+
+  industry_valuation_preprocess:
+    enabled: true
+    type: preprocess
+    category: industry_valuation
+    schedule:
+      type: cron
+      hour: 22
+      minute: 0
+      day_of_week: "mon-fri"
+    params:
+      all: true
+      market: CN
+    depends_on: [fundamental_preprocess, sw_daily_update]
+    retry:
+      max_retries: 2
+      delay: 600
+
+  # ========== 周六凌晨任务：补齐周五夜盘 / 周末复核 ==========
+
   futures_daily_saturday_update:
     enabled: true
     type: download
@@ -341,66 +693,10 @@ jobs:
       max_retries: 3
       delay: 600
 
-  # 期货结算参数 - 每个交易日收盘后更新
-  futures_settle_update:
-    enabled: true
-    type: download
-    dataset: settle
-    schedule:
-      type: cron
-      hour: 16
-      minute: 40
-      day_of_week: "mon-fri"
-    params:
-      asset_class: future
-      trade_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 600
-
-  # 期货分钟线 - 每个交易日收盘后更新 1m/5m 原始数据
-  # 夜盘会落在上一交易日，使用 previous_trade_date 到 latest 覆盖完整当日交易日窗口
-  futures_minute_1m_update:
-    enabled: true
-    type: download
-    dataset: minute_1
-    schedule:
-      type: cron
-      hour: 16
-      minute: 55
-      day_of_week: "mon-fri"
-    params:
-      asset_class: future
-      symbols: all
-      start_date: "previous_trade_date"
-      end_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 300
-
-  futures_minute_5m_update:
+  futures_minute_5m_saturday_update:
     enabled: true
     type: download
     dataset: minute_5
-    schedule:
-      type: cron
-      hour: 17
-      minute: 5
-      day_of_week: "mon-fri"
-    params:
-      asset_class: future
-      symbols: all
-      start_date: "previous_trade_date"
-      end_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 300
-
-  # 周五夜盘跨周末自然日，周六凌晨补齐分钟原始数据
-  futures_minute_1m_saturday_update:
-    enabled: true
-    type: download
-    dataset: minute_1
     schedule:
       type: cron
       hour: 3
@@ -415,10 +711,10 @@ jobs:
       max_retries: 3
       delay: 300
 
-  futures_minute_5m_saturday_update:
+  futures_minute_1m_saturday_update:
     enabled: true
     type: download
-    dataset: minute_5
+    dataset: minute_1
     schedule:
       type: cron
       hour: 3
@@ -433,59 +729,22 @@ jobs:
       max_retries: 3
       delay: 300
 
-  # 期货分钟线高周期聚合刷新 - 15m/30m/60m 从 5m 原始数据派生
-  futures_minute_15m_refresh:
+  futures_term_metrics_saturday_update:
     enabled: true
-    type: aggregate
-    dataset: futures.minute_15m
+    type: download
+    dataset: term_metrics
     schedule:
       type: cron
-      hour: 17
-      minute: 40
-      day_of_week: "mon-fri"
+      hour: 3
+      minute: 55
+      day_of_week: "sat"
     params:
       asset_class: future
-      start_date: "previous_trade_date"
-      end_date: "latest+1d"
-    depends_on: [futures_minute_5m_update]
+      start_date: "latest"
+      end_date: "latest"
+    depends_on: [futures_daily_saturday_update]
     retry:
-      max_retries: 3
-      delay: 300
-
-  futures_minute_30m_refresh:
-    enabled: true
-    type: aggregate
-    dataset: futures.minute_30m
-    schedule:
-      type: cron
-      hour: 17
-      minute: 45
-      day_of_week: "mon-fri"
-    params:
-      asset_class: future
-      start_date: "previous_trade_date"
-      end_date: "latest+1d"
-    depends_on: [futures_minute_5m_update]
-    retry:
-      max_retries: 3
-      delay: 300
-
-  futures_minute_60m_refresh:
-    enabled: true
-    type: aggregate
-    dataset: futures.minute_60m
-    schedule:
-      type: cron
-      hour: 17
-      minute: 50
-      day_of_week: "mon-fri"
-    params:
-      asset_class: future
-      start_date: "previous_trade_date"
-      end_date: "latest+1d"
-    depends_on: [futures_minute_5m_update]
-    retry:
-      max_retries: 3
+      max_retries: 2
       delay: 300
 
   futures_minute_15m_saturday_refresh:
@@ -494,8 +753,8 @@ jobs:
     dataset: futures.minute_15m
     schedule:
       type: cron
-      hour: 3
-      minute: 40
+      hour: 4
+      minute: 10
       day_of_week: "sat"
     params:
       asset_class: future
@@ -512,8 +771,8 @@ jobs:
     dataset: futures.minute_30m
     schedule:
       type: cron
-      hour: 3
-      minute: 45
+      hour: 4
+      minute: 15
       day_of_week: "sat"
     params:
       asset_class: future
@@ -530,8 +789,8 @@ jobs:
     dataset: futures.minute_60m
     schedule:
       type: cron
-      hour: 3
-      minute: 50
+      hour: 4
+      minute: 20
       day_of_week: "sat"
     params:
       asset_class: future
@@ -541,217 +800,3 @@ jobs:
     retry:
       max_retries: 3
       delay: 300
-
-  # 期货现货价格与基差 - 每个交易日收盘后更新
-  futures_spot_basis_update:
-    enabled: true
-    type: download
-    dataset: spot_basis
-    schedule:
-      type: cron
-      hour: 18
-      minute: 50
-      day_of_week: "mon-fri"
-    params:
-      asset_class: future
-      trade_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 600
-
-  # 期货注册仓单 - 每个交易日收盘后更新
-  # inventory 不支持 trade_date，全市场更新时显式收敛到单日窗口，避免首次运行扫描全历史
-  futures_inventory_update:
-    enabled: true
-    type: download
-    dataset: inventory
-    schedule:
-      type: cron
-      hour: 19
-      minute: 0
-      day_of_week: "mon-fri"
-    params:
-      asset_class: future
-      start_date: "latest"
-      end_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 600
-
-  # 期货指数日线 - 每个交易日收盘后更新
-  # index_daily 不支持 trade_date，需显式指定 start/end-date 才能把任务收敛到单交易日
-  futures_index_daily_update:
-    enabled: true
-    type: download
-    dataset: index_daily
-    schedule:
-      type: cron
-      hour: 19
-      minute: 10
-      day_of_week: "mon-fri"
-    params:
-      asset_class: future
-      start_date: "latest"
-      end_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 600
-
-  # 期限结构指标 - 使用已完整的期货日线重算
-  futures_term_metrics_update:
-    enabled: true
-    type: download
-    dataset: term_metrics
-    schedule:
-      type: cron
-      hour: 3
-      minute: 55
-      day_of_week: "tue-fri"
-    params:
-      asset_class: future
-      start_date: "previous_trade_date"
-      end_date: "previous_trade_date"
-    depends_on: [futures_daily_update]
-    retry:
-      max_retries: 2
-      delay: 300
-
-  futures_term_metrics_saturday_update:
-    enabled: true
-    type: download
-    dataset: term_metrics
-    schedule:
-      type: cron
-      hour: 4
-      minute: 5
-      day_of_week: "sat"
-    params:
-      asset_class: future
-      start_date: "latest"
-      end_date: "latest"
-    depends_on: [futures_daily_saturday_update]
-    retry:
-      max_retries: 2
-      delay: 300
-
-  # ========== 预处理任务 ==========
-
-  # 技术指标预处理 - 每日运行（19:00）
-  # 注意：使用前复权(qfq)，需要全量预处理
-  technical_preprocess:
-    enabled: true
-    type: preprocess
-    category: technical
-    schedule:
-      type: cron
-      hour: 19
-      minute: 0
-      day_of_week: "mon-fri"
-    params:
-      all: true
-      market: CN
-      freq: "daily,weekly,monthly"
-      adjust: qfq
-    depends_on: [daily_update, adj_factor_update]
-    retry:
-      max_retries: 2
-      delay: 600
-
-  # 港股技术指标预处理 - 每日运行（19:10）
-  hk_technical_preprocess:
-    enabled: true
-    type: preprocess
-    category: technical
-    schedule:
-      type: cron
-      hour: 19
-      minute: 10
-      day_of_week: "mon-fri"
-    params:
-      all: true
-      market: HK
-      freq: "daily,weekly,monthly"
-      adjust: qfq
-    depends_on: [hk_daily_update, hk_adj_factor_update]
-    retry:
-      max_retries: 2
-      delay: 600
-
-  # 基本面指标预处理 - 每日运行（19:30）
-  # 注意：必须晚于 daily_basic_update，避免 daily_basic 当日数据尚未落库导致依赖 pending
-  # 注意：使用增量方式预处理
-  fundamental_preprocess:
-    enabled: true
-    type: preprocess
-    category: fundamental
-    schedule:
-      type: cron
-      hour: 19
-      minute: 30
-      day_of_week: "mon-fri"
-    params:
-      all: true
-      market: CN
-    depends_on: [daily_basic_update]
-    retry:
-      max_retries: 2
-      delay: 600
-
-  # 季度基本面指标预处理 - 每月财务数据更新后运行
-  # 注意：使用增量方式预处理，与 financial_update 同周期，避免普通交易日依赖天然 pending
-  quarterly_fundamental_preprocess:
-    enabled: true
-    type: preprocess
-    category: quarterly_fundamental
-    schedule:
-      type: cron
-      day: "1,15"
-      hour: 17
-      minute: 45
-    params:
-      all: true
-      market: CN
-    depends_on: [financial_update]
-    retry:
-      max_retries: 2
-      delay: 600
-
-  # 行业差异化估值预处理 - 每日运行（21:30）
-  # 注意：必须晚于 fundamental_preprocess 和 sw_daily_update；时间留出 sw_daily 重试窗口，依赖机制继续兜底
-  # 根据行业配置自动选择核心估值指标（银行用PB、成长股用PEG等）
-  # 计算：1. 自身历史分位数  2. 行业内相对分位
-  industry_valuation_preprocess:
-    enabled: true
-    type: preprocess
-    category: industry_valuation
-    schedule:
-      type: cron
-      hour: 21
-      minute: 30
-      day_of_week: "mon-fri"
-    params:
-      all: true
-      market: CN
-    depends_on: [fundamental_preprocess, sw_daily_update]
-    retry:
-      max_retries: 2
-      delay: 600
-
-  # 中国宏观周期预处理 - 每月运行
-  # 使用 1 个月生效延迟和 2 个月确认平滑规则，输出月度主表与行业快照
-  # 依赖宏观原始数据和最新申万行业成分映射
-  macro_cycle_preprocess:
-    enabled: true
-    type: preprocess
-    category: macro_cycle
-    schedule:
-      type: cron
-      day: 15
-      hour: 8
-      minute: 20
-    params:
-      all: true
-    depends_on: [macro_update, sw_member_update]
-    retry:
-      max_retries: 2
-      delay: 600

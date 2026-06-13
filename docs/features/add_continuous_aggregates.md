@@ -193,7 +193,7 @@ python scripts/validate_aggregates.py --symbol 600519.SH --year 2024
 
 ```bash
 # 手动刷新测试
-fdh-cli refresh-aggregates --table symbol_weekly --start 2024-01-01 --end 2024-12-31
+fdh-cli refresh-aggregates --table symbol_weekly --start-date 2024-01-01 --end-date 2024-12-31
 ```
 
 **预期输出**: 刷新成功完成

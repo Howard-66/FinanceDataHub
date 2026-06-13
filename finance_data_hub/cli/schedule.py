@@ -160,6 +160,14 @@ def start(
     # 检查是否已有调度器运行
     existing_pid = _read_pid()
     if existing_pid:
+        if existing_pid == os.getpid():
+            logger.warning(
+                "发现当前进程 PID 对应的旧调度器 PID 文件，清理后继续启动: %s",
+                _pid_file,
+            )
+            _remove_pid()
+            existing_pid = None
+    if existing_pid:
         try:
             os.kill(existing_pid, 0)
             console.print(f"[yellow]调度器已在运行 (PID: {existing_pid})[/yellow]")

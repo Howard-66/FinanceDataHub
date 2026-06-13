@@ -201,9 +201,9 @@ fdh-cli update --asset-class future --dataset mapping --symbols RB.SHF --start-d
 fdh-cli update --asset-class future --dataset daily --symbols RB2405.SHF --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset minute_1 --symbols rb2405.SF --start-date 2024-04-30 09:30:00 --end-date 2024-04-30 10:00:00
 fdh-cli update --asset-class future --dataset minute_5 --symbols rb2405.SF --start-date 2024-04-30 09:30:00 --end-date 2024-04-30 10:00:00
-fdh-cli refresh-aggregates futures.minute_15m --start 2024-04-30 --end 2024-05-01
-fdh-cli refresh-aggregates futures.minute_30m --start 2024-04-30 --end 2024-05-01
-fdh-cli refresh-aggregates futures.minute_60m --start 2024-04-30 --end 2024-05-01
+fdh-cli refresh-aggregates --table futures.minute_15m --start-date 2024-04-30 --end-date 2024-05-01
+fdh-cli refresh-aggregates --table futures.minute_30m --start-date 2024-04-30 --end-date 2024-05-01
+fdh-cli refresh-aggregates --table futures.minute_60m --start-date 2024-04-30 --end-date 2024-05-01
 fdh-cli update --asset-class future --dataset settle --symbols RB2405.SHF --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset index_daily --symbols NHCI.NH --start-date 2024-04-30 --end-date 2024-04-30
 fdh-cli update --asset-class future --dataset spot_basis --symbols RB --trade-date 2024-04-30
@@ -217,7 +217,7 @@ fdh-cli update --asset-class future --dataset term_metrics --symbols RB --start-
 - `--symbols` 对于 `spot_basis`、`inventory`、预处理场景可直接传品种代码，例如 `RB`
 - `--symbols all` 已支持，用于按 `futures.contract_basic` 展开全量合约池
 - 输入 `rb2405.SF` 这类 XtQuant 风格代码时，会自动转换到内部标准格式
-- 期货分钟线只下载 `minute_1` 原始数据。`minute_5`、`minute_15`、`minute_30`、`minute_60` 为连续聚合查询结果，不再调用 Provider 下载
+- 期货分钟线下载 `minute_1` 与 `minute_5` 原始数据。`minute_15`、`minute_30`、`minute_60` 为连续聚合查询结果，不再调用 Provider 下载
 
 `--symbols all` 的当前定义：
 

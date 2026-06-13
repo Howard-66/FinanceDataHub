@@ -219,9 +219,10 @@ jobs:
         config = ScheduleConfig.from_yaml("schedules.yml")
 
         assert "futures_minute_5m_update" in config.jobs
+        assert "futures_minute_5m_night_update" in config.jobs
         assert "futures_minute_5m_saturday_update" in config.jobs
         assert config.jobs["futures_minute_15m_refresh"].type.value == "aggregate"
-        assert config.jobs["futures_daily_update"].params["trade_date"] == "previous_trade_date"
+        assert config.jobs["futures_daily_update"].params["trade_date"] == "latest"
         assert config.jobs["futures_term_metrics_saturday_update"].dataset == "term_metrics"
 
 
@@ -456,8 +457,8 @@ class TestTaskExecutor:
         joined = " ".join(cmd)
         assert "refresh-aggregates" in joined
         assert "--table futures.minute_15m" in joined
-        assert "--start 2024-04-29" in joined
-        assert "--end 2024-05-01" in joined
+        assert "--start-date 2024-04-29" in joined
+        assert "--end-date 2024-05-01" in joined
 
     def test_build_preprocess_command_includes_market(self):
         """预处理命令应透传 market 参数。"""

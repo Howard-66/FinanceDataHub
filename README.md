@@ -465,7 +465,7 @@ fdh-cli update --frequency adj_factor       # 复权因子
 # 6. 高周期数据聚合（可选）
 # 连续聚合会自动创建并每小时刷新一次
 # 手动刷新指定聚合
-fdh-cli refresh-aggregates --table symbol_weekly --start 2024-01-01 --end 2024-12-31
+fdh-cli refresh-aggregates --table symbol_weekly --start-date 2024-01-01 --end-date 2024-12-31
 # 查看聚合状态
 fdh-cli status --aggregates
 # 验证聚合准确性

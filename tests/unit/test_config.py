@@ -126,7 +126,7 @@ class TestDataSourceConfig:
     def test_futures_minute_max_workers_default_and_validation(self):
         """测试期货分钟下载并发默认值和范围限制。"""
         config = DataSourceConfig()
-        assert config.futures_minute_max_workers == 4
+        assert config.futures_minute_max_workers == 1
 
         config = DataSourceConfig(futures_minute_max_workers=8)
         assert config.futures_minute_max_workers == 8
