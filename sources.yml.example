@@ -110,6 +110,12 @@ routing_strategy:
     daily:
       providers: [tushare, xtquant]
       fallback: true
+    weekly:
+      providers: [tushare]
+      fallback: false
+    monthly:
+      providers: [tushare]
+      fallback: false
     minute:
       1m:
         providers: [xtquant]

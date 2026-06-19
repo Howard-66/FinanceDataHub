@@ -5525,6 +5525,42 @@ class DataOperations:
             ["symbol", "time"],
         )
 
+    async def _insert_futures_weekly_monthly_batch(
+        self,
+        table: str,
+        data: pd.DataFrame,
+    ) -> int:
+        if table not in {"weekly", "monthly"}:
+            raise ValueError(f"Unsupported futures period table: {table}")
+        return await self._insert_futures_dataframe(
+            table,
+            data.copy(),
+            [
+                "time",
+                "symbol",
+                "product_code",
+                "exchange",
+                "open",
+                "high",
+                "low",
+                "close",
+                "pre_close",
+                "change",
+                "pct_chg",
+                "volume",
+                "amount",
+                "open_interest",
+                "source",
+            ],
+            ["symbol", "time"],
+        )
+
+    async def insert_futures_weekly_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_weekly_monthly_batch("weekly", data)
+
+    async def insert_futures_monthly_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_futures_weekly_monthly_batch("monthly", data)
+
     async def insert_futures_minute_batch(self, data: pd.DataFrame) -> int:
         data = data.copy()
         if "frequency" in data.columns:
@@ -5710,6 +5746,8 @@ class DataOperations:
         allowed_tables = {
             "contract_mapping",
             "daily",
+            "weekly",
+            "monthly",
             "minute",
             "settle",
             "index_daily",
@@ -5862,6 +5900,8 @@ class DataOperations:
     ) -> Optional[pd.DataFrame]:
         allowed_tables = {
             "daily",
+            "weekly",
+            "monthly",
             "minute",
             "settle",
             "index_daily",
@@ -5874,7 +5914,15 @@ class DataOperations:
 
         params: Dict[str, Any] = {}
         conditions = []
-        if symbols and table in {"daily", "minute", "settle", "index_daily"}:
+        symbol_tables = {
+            "daily",
+            "weekly",
+            "monthly",
+            "minute",
+            "settle",
+            "index_daily",
+        }
+        if symbols and table in symbol_tables:
             conditions.append("symbol = ANY(:symbols)")
             params["symbols"] = [
                 normalize_tushare_futures_symbol(symbol) for symbol in symbols
@@ -5904,7 +5952,7 @@ class DataOperations:
             SELECT *
             FROM futures.{table}
             WHERE {' AND '.join(conditions)}
-            ORDER BY time, {('symbol' if table in {'daily', 'minute', 'settle', 'index_daily'} else 'product_code')}
+            ORDER BY time, {('symbol' if table in symbol_tables else 'product_code')}
         """
         async with self.db_manager._engine.begin() as conn:
             result = await conn.execute(text(query), params)
@@ -5920,6 +5968,28 @@ class DataOperations:
     ) -> Optional[pd.DataFrame]:
         return await self._query_futures_time_table(
             "daily", symbols, product_codes, start_date, end_date
+        )
+
+    async def get_futures_weekly(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        return await self._query_futures_time_table(
+            "weekly", symbols, product_codes, start_date, end_date
+        )
+
+    async def get_futures_monthly(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        return await self._query_futures_time_table(
+            "monthly", symbols, product_codes, start_date, end_date
         )
 
     async def get_futures_minute(

@@ -350,6 +350,41 @@ def test_cli_update_future_minute_trade_date_passed_to_updater():
     )
 
 
+def test_cli_update_future_weekly_trade_date_clears_default_end_date():
+    fake_updater = Mock()
+    fake_updater.update_futures_weekly = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--asset-class",
+                "future",
+                "--dataset",
+                "weekly",
+                "--symbols",
+                "all",
+                "--trade-date",
+                "2024-04-30",
+            ],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.update_futures_weekly.assert_awaited_once_with(
+        symbols=["all"],
+        trade_date="2024-04-30",
+        start_date=None,
+        end_date=None,
+        force_update=False,
+        progress_callback=ANY,
+    )
+
+
 def test_cli_update_future_term_metrics_passes_progress_callback():
     fake_updater = Mock()
     fake_updater.preprocess_futures_term_metrics = AsyncMock(return_value=1)

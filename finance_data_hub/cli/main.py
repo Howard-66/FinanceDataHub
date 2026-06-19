@@ -375,6 +375,8 @@ FUTURE_DATASETS = {
     "basic",
     "mapping",
     "daily",
+    "weekly",
+    "monthly",
     "minute",
     "minute_1",
     "minute_5",
@@ -486,7 +488,7 @@ async def _run_future_update(
         "minute_60": "60m",
     }
     task_total = len(symbol_list) if symbol_list else 1
-    if data_type in {"daily", "minute", "minute_1", "minute_5", "minute_15", "minute_30", "minute_60", "settle", "mapping"} and symbol_list:
+    if data_type in {"daily", "weekly", "monthly", "minute", "minute_1", "minute_5", "minute_15", "minute_30", "minute_60", "settle", "mapping"} and symbol_list:
         task_total = len(symbol_list)
 
     if not quiet:
@@ -522,7 +524,8 @@ async def _run_future_update(
                 progress.update(task, completed=current, total=total)
 
             try:
-                minute_summary = None
+                futures_summary = None
+                summary_label = "期货数据"
                 if data_type == "basic":
                     count = await updater.update_futures_basic()
                 elif data_type == "mapping":
@@ -543,6 +546,32 @@ async def _run_future_update(
                         force_update=force,
                         progress_callback=progress_callback,
                     )
+                elif data_type == "weekly":
+                    count = await updater.update_futures_weekly(
+                        symbols=symbol_list,
+                        trade_date=trade_date,
+                        start_date=None if trade_date else start_date,
+                        end_date=None if trade_date else end_date,
+                        force_update=force,
+                        progress_callback=progress_callback,
+                    )
+                    futures_summary = updater.__dict__.get(
+                        "last_futures_period_summary"
+                    )
+                    summary_label = "周线"
+                elif data_type == "monthly":
+                    count = await updater.update_futures_monthly(
+                        symbols=symbol_list,
+                        trade_date=trade_date,
+                        start_date=None if trade_date else start_date,
+                        end_date=None if trade_date else end_date,
+                        force_update=force,
+                        progress_callback=progress_callback,
+                    )
+                    futures_summary = updater.__dict__.get(
+                        "last_futures_period_summary"
+                    )
+                    summary_label = "月线"
                 elif data_type.startswith("minute"):
                     count = await updater.update_futures_minute(
                         symbols=symbol_list,
@@ -553,9 +582,10 @@ async def _run_future_update(
                         force_update=force,
                         progress_callback=progress_callback,
                     )
-                    minute_summary = getattr(
-                        updater, "last_futures_minute_summary", None
+                    futures_summary = updater.__dict__.get(
+                        "last_futures_minute_summary"
                     )
+                    summary_label = "分钟线"
                 elif data_type == "settle":
                     count = await updater.update_futures_settle(
                         symbols=symbol_list,
@@ -596,28 +626,28 @@ async def _run_future_update(
                     )
 
                 completed_total = (
-                    minute_summary["total_symbols"]
-                    if minute_summary and minute_summary.get("total_symbols")
+                    futures_summary["total_symbols"]
+                    if futures_summary and futures_summary.get("total_symbols")
                     else latest_progress_total
                 )
                 progress.update(
                     task, completed=completed_total, total=completed_total
                 )
                 failed_symbols = (
-                    minute_summary.get("failed_symbols", [])
-                    if minute_summary
+                    futures_summary.get("failed_symbols", [])
+                    if futures_summary
                     else []
                 )
                 if failed_symbols:
                     console.print(
                         f"[yellow][PARTIAL][/yellow] 已更新 {count} 条期货数据，"
-                        f"{len(failed_symbols)}/{minute_summary['total_symbols']} 个合约失败"
+                        f"{len(failed_symbols)}/{futures_summary['total_symbols']} 个合约失败"
                     )
                     console.print(
-                        "[yellow]  分钟线摘要:[/yellow] "
-                        f"成功 {minute_summary['inserted_symbols']}，"
-                        f"空数据 {minute_summary['empty_symbols']}，"
-                        f"已是最新 {minute_summary['up_to_date_symbols']}，"
+                        f"[yellow]  {summary_label}摘要:[/yellow] "
+                        f"成功 {futures_summary['inserted_symbols']}，"
+                        f"空数据 {futures_summary['empty_symbols']}，"
+                        f"已是最新 {futures_summary['up_to_date_symbols']}，"
                         f"失败 {len(failed_symbols)}"
                     )
                     sample = ", ".join(item["symbol"] for item in failed_symbols[:10])

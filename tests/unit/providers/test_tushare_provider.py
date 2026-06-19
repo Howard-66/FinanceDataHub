@@ -53,3 +53,26 @@ def test_call_api_returns_dataframe_after_successful_call():
 
     assert not result.empty
     assert list(result["ts_code"]) == ["RB2405.SHF"]
+
+
+def test_futures_monthly_normalizes_period_end_and_deduplicates():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        return_value=pd.DataFrame(
+            {
+                "ts_code": ["RB.SHF", "RB.SHF"],
+                "trade_date": ["20260529", "20260531"],
+                "close": [3157.0, 3158.0],
+            }
+        )
+    )
+
+    result = provider.get_futures_monthly(
+        symbol="RB.SHF",
+        start_date="2026-05-01",
+        end_date="2026-05-31",
+    )
+
+    assert len(result) == 1
+    assert result.iloc[0]["time"] == pd.Timestamp("2026-05-31")
+    assert result.iloc[0]["close"] == 3158.0

@@ -402,6 +402,23 @@ class TestTaskExecutor:
 
         executor._raise_if_download_fully_failed("minute_1", output)
 
+    def test_download_failure_preserves_stdout_and_stderr(self):
+        """下载失败时应同时保留 CLI traceback 和 provider 日志。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        result = Mock(
+            returncode=1,
+            stdout="ERROR: relation futures.weekly does not exist",
+            stderr="Registered provider: tushare",
+        )
+
+        message = TaskExecutor._format_subprocess_error(result)
+
+        assert "stdout:" in message
+        assert "relation futures.weekly does not exist" in message
+        assert "stderr:" in message
+        assert "Registered provider: tushare" in message
+
     def test_trade_calendar_date_lookup_uses_database(self, monkeypatch):
         """latest/previous_trade_date 优先来自 trade_cal。"""
         from finance_data_hub.scheduler import executor as executor_module

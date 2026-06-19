@@ -44,6 +44,7 @@ from finance_data_hub.providers.schema import (
     FuturesContractBasicSchema,
     FuturesContractMappingSchema,
     FuturesDailySchema,
+    FuturesWeeklyMonthlySchema,
     FuturesSettleSchema,
     FuturesIndexDailySchema,
     validate_dataframe,
@@ -87,6 +88,7 @@ SUPPORTED_EXCHANGES = [
 ]
 
 SUPPORTED_FUTURES_EXCHANGES = supported_futures_exchanges()
+FUTURES_WEEKLY_MONTHLY_MAX_RECORDS = 6000
 SUPPORTED_FUTURES_INDEX_CODES = [
     "NHCI.NH",  # 南华商品指数
     "NHAI.NH",  # 南华农产品指数
@@ -3444,6 +3446,114 @@ class TushareProvider(BaseDataProvider):
             ["symbol", "time"]
         )
         return validate_dataframe(result, FuturesDailySchema, provider_name=self.name)
+
+    def get_futures_weekly_monthly(
+        self,
+        freq: str,
+        symbol: Optional[str] = None,
+        symbols: Optional[list[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        exchange: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取期货周线/月线行情。"""
+        normalized_freq = str(freq or "").strip().lower()
+        if normalized_freq in {"w", "week", "weekly"}:
+            api_freq = "week"
+        elif normalized_freq in {"m", "mon", "month", "monthly"}:
+            api_freq = "month"
+        else:
+            raise ValueError(f"Unsupported futures weekly/monthly freq: {freq}")
+
+        fields = (
+            "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,"
+            "vol,amount,oi"
+        )
+        if symbol and not symbols:
+            symbols = [symbol]
+
+        targets = symbols or [None]
+        all_data = []
+        for target in targets:
+            current_end = end_date
+            while True:
+                api_params = {"freq": api_freq}
+                if target:
+                    api_params["ts_code"] = normalize_tushare_futures_symbol(target)
+                if trade_date:
+                    api_params["trade_date"] = self._clean_api_date(trade_date)
+                else:
+                    if start_date:
+                        api_params["start_date"] = self._clean_api_date(start_date)
+                    if current_end:
+                        api_params["end_date"] = self._clean_api_date(current_end)
+                if exchange:
+                    api_params["exchange"] = (
+                        normalize_futures_exchange(exchange) or str(exchange).upper()
+                    )
+
+                df = self._call_api(
+                    "fut_weekly_monthly",
+                    fields=fields,
+                    **api_params,
+                )
+                if df.empty:
+                    break
+
+                df = convert_to_standard_columns(
+                    df,
+                    {
+                        "trade_date": "time",
+                        "ts_code": "symbol",
+                        "vol": "volume",
+                        "oi": "open_interest",
+                    },
+                )
+                df["time"] = pd.to_datetime(df["time"], format="%Y%m%d", errors="coerce")
+                if api_freq == "month":
+                    # Tushare may switch a completed month from its last trading
+                    # day to the calendar month-end label on later refreshes.
+                    df["time"] = df["time"] + pd.offsets.MonthEnd(0)
+                df = self._finalize_futures_metadata(df)
+                df["source"] = "tushare"
+                all_data.append(df)
+
+                if trade_date or len(df) < FUTURES_WEEKLY_MONTHLY_MAX_RECORDS:
+                    break
+                earliest = df["time"].min()
+                current_end = (earliest - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        if not all_data:
+            return pd.DataFrame(
+                columns=FuturesWeeklyMonthlySchema.get_required_columns()
+            )
+
+        sanitized = [df.dropna(axis=1, how="all") for df in all_data if not df.empty]
+        if not sanitized:
+            return pd.DataFrame(
+                columns=FuturesWeeklyMonthlySchema.get_required_columns()
+            )
+
+        result = pd.concat(sanitized, ignore_index=True, sort=False)
+        result = result.drop_duplicates(
+            subset=["time", "symbol"], keep="last"
+        ).sort_values(
+            ["symbol", "time"]
+        )
+        return validate_dataframe(
+            result,
+            FuturesWeeklyMonthlySchema,
+            provider_name=self.name,
+        )
+
+    def get_futures_weekly(self, **kwargs) -> pd.DataFrame:
+        """获取期货周线行情。"""
+        return self.get_futures_weekly_monthly(freq="week", **kwargs)
+
+    def get_futures_monthly(self, **kwargs) -> pd.DataFrame:
+        """获取期货月线行情。"""
+        return self.get_futures_weekly_monthly(freq="month", **kwargs)
 
     def get_futures_settle(
         self,

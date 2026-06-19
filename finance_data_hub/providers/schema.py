@@ -1060,6 +1060,29 @@ FuturesDailySchema = DataFrameSchema(
 )
 
 
+FuturesWeeklyMonthlySchema = DataFrameSchema(
+    name="futures_weekly_monthly",
+    description="期货周线/月线行情",
+    columns=[
+        ColumnSchema("time", "datetime64[ns]", False, "周期结束交易日期"),
+        ColumnSchema("symbol", "object", False, "合约代码"),
+        ColumnSchema("product_code", "object", True, "品种代码"),
+        ColumnSchema("exchange", "object", True, "交易所代码"),
+        ColumnSchema("open", "float64", True, "开盘价"),
+        ColumnSchema("high", "float64", True, "最高价"),
+        ColumnSchema("low", "float64", True, "最低价"),
+        ColumnSchema("close", "float64", True, "收盘价"),
+        ColumnSchema("pre_close", "float64", True, "上一周期收盘价"),
+        ColumnSchema("change", "float64", True, "涨跌额"),
+        ColumnSchema("pct_chg", "float64", True, "涨跌幅"),
+        ColumnSchema("volume", "int64", True, "成交量"),
+        ColumnSchema("amount", "float64", True, "成交额"),
+        ColumnSchema("open_interest", "float64", True, "持仓量"),
+        ColumnSchema("source", "object", True, "数据源"),
+    ],
+)
+
+
 FuturesMinuteSchema = DataFrameSchema(
     name="futures_minute",
     description="期货分钟行情",

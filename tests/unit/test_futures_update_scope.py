@@ -9,6 +9,7 @@ import pandas as pd
 import finance_data_hub.update.updater as updater_module
 from finance_data_hub.update.updater import (
     DataUpdater,
+    _futures_period_query_end,
     _is_all_futures_selector,
     _iter_date_chunks,
     _normalize_futures_window,
@@ -34,6 +35,11 @@ def test_normalize_futures_window_for_trade_date():
         "2024-04-30",
         "2024-04-30",
     )
+
+
+def test_futures_period_query_end_uses_api_period_labels():
+    assert _futures_period_query_end("2026-06-18", "weekly") == "2026-06-19"
+    assert _futures_period_query_end("2026-06-19", "monthly") == "2026-06-30"
 
 
 def test_resolve_futures_symbol_universe_explicit_all_uses_contract_basic_overlap():
@@ -169,6 +175,120 @@ def test_resolve_futures_symbol_universe_explicit_symbols_bypass_lookup():
 
         assert resolved == ["RB2405.SHF", "RB.SHF"]
         updater.data_ops.get_futures_contract_symbols.assert_not_called()
+
+    asyncio.run(_run())
+
+
+def test_update_futures_weekly_redownloads_last_period_bar():
+    async def _run():
+        updater = DataUpdater(settings=Mock())
+        updater.data_ops = Mock()
+        updater.data_ops.get_futures_contract_symbols = AsyncMock(
+            return_value=["RB.SHF"]
+        )
+        updater.data_ops.get_latest_futures_date = AsyncMock(return_value="2024-04-26")
+        updater.data_ops.insert_futures_weekly_batch = AsyncMock(return_value=1)
+        updater.router = Mock(
+            route=Mock(
+                return_value=pd.DataFrame(
+                    {"time": ["2024-04-26"], "symbol": ["RB.SHF"]}
+                )
+            )
+        )
+
+        inserted = await updater.update_futures_weekly(
+            symbols=["all"],
+            start_date=None,
+            end_date="2024-04-30",
+            force_update=False,
+        )
+
+        assert inserted == 1
+        updater.data_ops.get_futures_contract_symbols.assert_awaited_once_with(
+            contract_types=["normal", "main", "continuous"],
+            active_only=False,
+            overlap_start="2024-04-30",
+            overlap_end="2024-04-30",
+        )
+        updater.router.route.assert_called_once()
+        assert updater.router.route.call_args.kwargs["start_date"] == "2024-04-19"
+        assert updater.router.route.call_args.kwargs["end_date"] == "2024-05-03"
+        updater.data_ops.insert_futures_weekly_batch.assert_awaited_once()
+
+    asyncio.run(_run())
+
+
+def test_update_futures_monthly_trade_date_expands_contract_universe():
+    async def _run():
+        updater = DataUpdater(settings=Mock())
+        updater.data_ops = Mock()
+        updater.data_ops.get_futures_contract_symbols = AsyncMock(
+            return_value=["RB.SHF", "RBL.SHF"]
+        )
+        updater.data_ops.get_latest_futures_date = AsyncMock()
+        updater.data_ops.insert_futures_monthly_batch = AsyncMock(return_value=1)
+        updater.router = Mock(
+            route=Mock(
+                return_value=pd.DataFrame(
+                    {"time": ["2024-04-30"], "symbol": ["RB.SHF"]}
+                )
+            )
+        )
+
+        inserted = await updater.update_futures_monthly(
+            symbols=["all"],
+            trade_date="2024-04-30",
+        )
+
+        assert inserted == 2
+        updater.data_ops.get_futures_contract_symbols.assert_awaited_once_with(
+            contract_types=["normal", "main", "continuous"],
+            active_only=False,
+            overlap_start="2024-04-30",
+            overlap_end="2024-04-30",
+        )
+        updater.data_ops.get_latest_futures_date.assert_not_called()
+        assert updater.router.route.call_count == 2
+        first_call = updater.router.route.call_args_list[0].kwargs
+        assert first_call["method_name"] == "get_futures_monthly"
+        assert first_call["symbol"] == "RB.SHF"
+        assert first_call["trade_date"] == "2024-04-30"
+        assert first_call["start_date"] is None
+        assert first_call["end_date"] is None
+
+    asyncio.run(_run())
+
+
+def test_update_futures_period_skips_failed_symbol_and_continues():
+    async def _run():
+        updater = DataUpdater(settings=Mock())
+        updater.data_ops = Mock()
+        updater.data_ops.get_futures_contract_symbols = AsyncMock(
+            return_value=["CU.SHF", "RB.SHF"]
+        )
+        updater.data_ops.get_latest_futures_date = AsyncMock(
+            return_value="2024-04-26"
+        )
+        updater.data_ops.insert_futures_weekly_batch = AsyncMock(return_value=2)
+        updater.router = Mock()
+        updater.router.route = Mock(
+            side_effect=[
+                RuntimeError("temporary provider error"),
+                pd.DataFrame({"time": ["2024-05-03"], "symbol": ["RB.SHF"]}),
+            ]
+        )
+
+        inserted = await updater.update_futures_weekly(
+            symbols=["all"],
+            end_date="2024-04-30",
+        )
+
+        assert inserted == 2
+        assert updater.last_futures_period_summary["inserted_symbols"] == 1
+        assert updater.last_futures_period_summary["failed_symbols"] == [
+            {"symbol": "CU.SHF", "error": "temporary provider error"}
+        ]
+        updater.data_ops.insert_futures_weekly_batch.assert_awaited_once()
 
     asyncio.run(_run())
 

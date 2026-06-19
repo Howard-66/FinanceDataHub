@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import calendar
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Dict, Any, Union, Iterator, Tuple, Callable
 from datetime import datetime, timedelta
@@ -35,6 +36,10 @@ FUTURES_SPOT_BASIS_HISTORY_START = "2011-01-04"
 FUTURES_SPOT_BASIS_CHUNK_DAYS = 31
 FUTURES_INVENTORY_SUPPORTED_EXCHANGES = {"DCE", "CZCE", "SHFE", "GFEX"}
 FUTURES_TERM_INSERT_BATCH_SIZE = 1000
+FUTURES_PERIOD_LOOKBACK_DAYS = {
+    "weekly": 7,
+    "monthly": 31,
+}
 
 
 def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
@@ -161,6 +166,23 @@ def _normalize_futures_query_dates(
             raise ValueError("trade_date cannot be used with start_date or end_date")
         return trade_date, trade_date
     return start_date, end_date
+
+
+def _futures_period_query_end(
+    end_date: Optional[str],
+    period: str,
+) -> Optional[str]:
+    """Expand a business-date cutoff to the API's period-end label."""
+    if not end_date:
+        return None
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    if period == "weekly":
+        end += timedelta(days=(4 - end.weekday()) % 7)
+    elif period == "monthly":
+        end = end.replace(day=calendar.monthrange(end.year, end.month)[1])
+    else:
+        raise ValueError(f"Unsupported futures period: {period}")
+    return end.strftime("%Y-%m-%d")
 
 
 class DataUpdater:
@@ -2520,6 +2542,22 @@ class DataUpdater:
             "%Y-%m-%d"
         )
 
+    def _futures_period_incremental_start(
+        self,
+        latest_date: Optional[str],
+        start_date: Optional[str],
+        force_update: bool,
+        period: str,
+    ) -> Optional[str]:
+        """Return a start date that re-downloads the still-moving last period bar."""
+        if force_update or start_date or not latest_date:
+            return start_date
+        lookback_days = FUTURES_PERIOD_LOOKBACK_DAYS[period]
+        return (
+            datetime.strptime(latest_date, "%Y-%m-%d")
+            - timedelta(days=lookback_days)
+        ).strftime("%Y-%m-%d")
+
     async def _resolve_futures_symbol_universe(
         self,
         symbols: Optional[List[str]],
@@ -2723,6 +2761,177 @@ class DataUpdater:
             if progress_callback:
                 progress_callback(idx + 1, len(symbols))
         return total
+
+    async def update_futures_weekly_monthly(
+        self,
+        period: str,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """更新期货周线/月线行情，并每日覆盖最后一根未完成 K 线。"""
+        self.last_futures_period_summary: Dict[str, Any] = {
+            "total_symbols": 0,
+            "inserted_symbols": 0,
+            "empty_symbols": 0,
+            "up_to_date_symbols": 0,
+            "failed_symbols": [],
+            "inserted_records": 0,
+        }
+        period = str(period).strip().lower()
+        if period not in {"weekly", "monthly"}:
+            raise ValueError(f"Unsupported futures period: {period}")
+        if not trade_date and not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+        explicit_all = _is_all_futures_selector(symbols)
+        inferred_products: List[str] = []
+        if not explicit_all:
+            explicit_symbols, inferred_products = _split_futures_symbols_and_products(
+                symbols
+            )
+            if symbols is not None:
+                symbols = explicit_symbols
+            if inferred_products:
+                product_codes = (product_codes or []) + inferred_products
+
+        request_start_date, request_end_date = _normalize_futures_query_dates(
+            trade_date,
+            start_date,
+            end_date,
+        )
+        api_end_date = (
+            request_end_date
+            if trade_date
+            else _futures_period_query_end(request_end_date, period)
+        )
+
+        symbols = await self._resolve_futures_symbol_universe(
+            symbols=symbols if not explicit_all else ["all"],
+            product_codes=product_codes,
+            contract_types=["normal", "main", "continuous"],
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=None if trade_date else end_date,
+            force_update=force_update,
+            default_active_only=True,
+        )
+        if not symbols:
+            logger.warning("No futures contracts found; run future basic first")
+            return 0
+        self.last_futures_period_summary["total_symbols"] = len(symbols)
+
+        method_name = (
+            "get_futures_weekly" if period == "weekly" else "get_futures_monthly"
+        )
+        insert_batch = (
+            self.data_ops.insert_futures_weekly_batch
+            if period == "weekly"
+            else self.data_ops.insert_futures_monthly_batch
+        )
+
+        total = 0
+        inserted_symbols = 0
+        empty_symbols = 0
+        up_to_date_symbols = 0
+        failed_symbols = []
+        for idx, symbol in enumerate(symbols):
+            try:
+                latest = None
+                actual_start = request_start_date
+                if not trade_date:
+                    latest = await self.data_ops.get_latest_futures_date(
+                        period,
+                        symbol=symbol,
+                    )
+                    actual_start = self._futures_period_incremental_start(
+                        latest,
+                        request_start_date,
+                        force_update,
+                        period,
+                    )
+                    if actual_start and api_end_date and actual_start > api_end_date:
+                        up_to_date_symbols += 1
+                        continue
+
+                data = self.router.route(
+                    asset_class="future",
+                    data_type=period,
+                    method_name=method_name,
+                    symbol=symbol,
+                    trade_date=trade_date,
+                    start_date=None if trade_date else actual_start,
+                    end_date=None if trade_date else api_end_date,
+                )
+                if data is not None and not data.empty:
+                    total += await insert_batch(data)
+                    inserted_symbols += 1
+                else:
+                    empty_symbols += 1
+            except Exception as exc:
+                logger.warning(
+                    f"Skipping futures {period} symbol {symbol} after failure: {exc}"
+                )
+                failed_symbols.append({"symbol": symbol, "error": str(exc)})
+            finally:
+                if progress_callback:
+                    progress_callback(idx + 1, len(symbols))
+
+        self.last_futures_period_summary = {
+            "total_symbols": len(symbols),
+            "inserted_symbols": inserted_symbols,
+            "empty_symbols": empty_symbols,
+            "up_to_date_symbols": up_to_date_symbols,
+            "failed_symbols": failed_symbols,
+            "inserted_records": total,
+        }
+        return total
+
+    async def update_futures_weekly(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        return await self.update_futures_weekly_monthly(
+            "weekly",
+            symbols=symbols,
+            product_codes=product_codes,
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=end_date,
+            force_update=force_update,
+            progress_callback=progress_callback,
+        )
+
+    async def update_futures_monthly(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        force_update: bool = False,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        return await self.update_futures_weekly_monthly(
+            "monthly",
+            symbols=symbols,
+            product_codes=product_codes,
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=end_date,
+            force_update=force_update,
+            progress_callback=progress_callback,
+        )
 
     async def update_futures_minute(
         self,

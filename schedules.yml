@@ -303,6 +303,42 @@ jobs:
       max_retries: 3
       delay: 600
 
+  futures_weekly_update:
+    enabled: true
+    type: download
+    dataset: weekly
+    schedule:
+      type: cron
+      hour: 16
+      minute: 20
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      symbols: all
+      end_date: "latest"
+    depends_on: [futures_daily_update]
+    retry:
+      max_retries: 3
+      delay: 600
+
+  futures_monthly_update:
+    enabled: true
+    type: download
+    dataset: monthly
+    schedule:
+      type: cron
+      hour: 16
+      minute: 25
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      symbols: all
+      end_date: "latest"
+    depends_on: [futures_daily_update]
+    retry:
+      max_retries: 3
+      delay: 600
+
   # futures_minute_5m_update:
   #   enabled: true
   #   type: download
@@ -689,6 +725,42 @@ jobs:
     params:
       asset_class: future
       trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
+
+  futures_weekly_saturday_update:
+    enabled: true
+    type: download
+    dataset: weekly
+    schedule:
+      type: cron
+      hour: 3
+      minute: 15
+      day_of_week: "sat"
+    params:
+      asset_class: future
+      symbols: all
+      end_date: "latest"
+    depends_on: [futures_daily_saturday_update]
+    retry:
+      max_retries: 3
+      delay: 600
+
+  futures_monthly_saturday_update:
+    enabled: true
+    type: download
+    dataset: monthly
+    schedule:
+      type: cron
+      hour: 3
+      minute: 18
+      day_of_week: "sat"
+    params:
+      asset_class: future
+      symbols: all
+      end_date: "latest"
+    depends_on: [futures_daily_saturday_update]
     retry:
       max_retries: 3
       delay: 600

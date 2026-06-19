@@ -2429,6 +2429,66 @@ class FinanceDataHub:
             end_date=end_date,
         )
 
+    def get_futures_weekly(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取期货周线行情（同步方法）。"""
+        return asyncio.run(
+            self.get_futures_weekly_async(symbols, product_codes, start_date, end_date)
+        )
+
+    async def get_futures_weekly_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取期货周线行情（异步方法）。"""
+        if symbols is None and product_codes is None and start_date is None and end_date is None:
+            logger.warning("get_futures_weekly: at least one filter is required")
+            return None
+        return await self.ops.get_futures_weekly(
+            symbols=symbols,
+            product_codes=product_codes,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    def get_futures_monthly(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取期货月线行情（同步方法）。"""
+        return asyncio.run(
+            self.get_futures_monthly_async(symbols, product_codes, start_date, end_date)
+        )
+
+    async def get_futures_monthly_async(
+        self,
+        symbols: Optional[List[str]] = None,
+        product_codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取期货月线行情（异步方法）。"""
+        if symbols is None and product_codes is None and start_date is None and end_date is None:
+            logger.warning("get_futures_monthly: at least one filter is required")
+            return None
+        return await self.ops.get_futures_monthly(
+            symbols=symbols,
+            product_codes=product_codes,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
     def get_futures_minute(
         self,
         symbols: List[str],

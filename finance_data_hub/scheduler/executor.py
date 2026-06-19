@@ -120,7 +120,7 @@ class TaskExecutor:
             )
             
             if result.returncode != 0:
-                error_msg = result.stderr or result.stdout
+                error_msg = self._format_subprocess_error(result)
                 raise RuntimeError(f"Download failed for {dataset}: {error_msg}")
             
             # 记录命令输出，以便调试
@@ -145,6 +145,23 @@ class TaskExecutor:
             "records_processed": total_records,
             "symbols_count": total_symbols
         }
+
+    @staticmethod
+    def _format_subprocess_error(
+        result: subprocess.CompletedProcess,
+        max_chars_per_stream: int = 12000,
+    ) -> str:
+        """Preserve CLI errors from stdout while retaining provider logs from stderr."""
+        streams = []
+        for name, value in (("stdout", result.stdout), ("stderr", result.stderr)):
+            content = str(value or "").strip()
+            if not content:
+                continue
+            if len(content) > max_chars_per_stream:
+                content = content[-max_chars_per_stream:]
+                content = f"...[truncated to last {max_chars_per_stream} chars]\n{content}"
+            streams.append(f"{name}:\n{content}")
+        return "\n\n".join(streams) or f"process exited with code {result.returncode}"
 
     def _raise_if_download_fully_failed(self, dataset: str, output: str) -> None:
         """Treat complete per-symbol failures as scheduler failures."""
