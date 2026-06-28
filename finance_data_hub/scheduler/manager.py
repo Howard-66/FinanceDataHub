@@ -154,10 +154,13 @@ class ScheduleManager:
     
     def _register_jobs(self) -> None:
         """注册所有任务"""
+        _job_registry.clear()
+        enabled_job_ids: Set[str] = set()
         for job_id, job_config in self._config.jobs.items():
             if not job_config.enabled:
                 logger.debug(f"Skipping disabled job: {job_id}")
                 continue
+            enabled_job_ids.add(job_id)
             
             # 将任务注册到全局注册表（供序列化后的任务查找）
             _job_registry[job_id] = (self, job_config)
@@ -173,6 +176,29 @@ class ScheduleManager:
             
             # 注册任务监听器
             self._engine.register_listener(job_id, self._on_job_event)
+
+        self._remove_stale_persisted_jobs(enabled_job_ids)
+
+    def _remove_stale_persisted_jobs(self, enabled_job_ids: Set[str]) -> None:
+        """Remove obsolete APScheduler jobs left in persistent job stores.
+
+        PostgreSQL job stores keep old cron/date jobs across config changes.
+        Without reconciliation, removed jobs still fire and fail before the
+        in-memory registry can find them. Catch-up/pending one-time jobs are
+        intentionally transient, so they are dropped on every scheduler start.
+        """
+        if self._engine is None:
+            return
+
+        for job in list(self._engine.get_jobs()):
+            job_id = getattr(job, "id", "")
+            if job_id in enabled_job_ids:
+                continue
+            if job_id.startswith(("catchup:", "pending:")):
+                logger.warning(f"Removing transient persisted scheduler job: {job_id}")
+            else:
+                logger.warning(f"Removing stale scheduler job not in config: {job_id}")
+            self._engine.remove_job(job_id)
     
     def _execute_job(
         self,
@@ -233,7 +259,11 @@ class ScheduleManager:
         # 如果成功，检查是否有等待此任务的其他任务
         if log.status == "completed":
             self._trigger_dependent_jobs(job_id, scheduled_date)
-        elif log.status == "failed" and not is_catchup_run:
+        elif (
+            log.status == "failed"
+            and not is_catchup_run
+            and job_config.catchup_on_failure
+        ):
             self._schedule_next_day_catchup(
                 job_id=job_id,
                 job_config=job_config,
@@ -281,7 +311,11 @@ class ScheduleManager:
 
         now = datetime.now()
         if run_date <= now:
-            run_date = now + timedelta(minutes=1)
+            logger.warning(
+                f"[Scheduler] 跳过过期补跑: job={job_id}, "
+                f"scheduled_date={scheduled_date}, original_run_date={run_date}, now={now}"
+            )
+            return
 
         catchup_job_id = f"catchup:{job_id}:{scheduled_date.isoformat()}"
         kwargs = {

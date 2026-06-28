@@ -177,11 +177,13 @@ jobs:
 
   # ========== 期货夜盘后 / T+1 日盘开盘前任务（周二到周五） ==========
 
-  # 夜盘分钟线在凌晨补齐，供 T+1 日盘开盘前查询；下午任务会再次覆盖完整交易日窗口。
+  # 夜盘分钟线在凌晨补齐，供 T+1 日盘开盘前查询；日间分钟任务暂不启用，避免长下载与夜盘链路叠加。
   futures_minute_5m_night_update:
     enabled: true
     type: download
     dataset: minute_5
+    resource_group: xtquant_helper
+    catchup_on_failure: false
     schedule:
       type: cron
       hour: 3
@@ -200,6 +202,8 @@ jobs:
     enabled: true
     type: download
     dataset: minute_1
+    resource_group: xtquant_helper
+    catchup_on_failure: false
     schedule:
       type: cron
       hour: 3
@@ -210,6 +214,7 @@ jobs:
       symbols: all
       start_date: "latest-1d"
       end_date: "latest"
+    depends_on: [futures_minute_5m_night_update]
     retry:
       max_retries: 3
       delay: 300
@@ -602,6 +607,7 @@ jobs:
     enabled: true
     type: download
     dataset: daily
+    resource_group: xtquant_helper
     schedule:
       type: cron
       hour: 19
@@ -679,20 +685,20 @@ jobs:
       max_retries: 3
       delay: 600
 
-  # sw_daily_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: sw_daily
-  #   schedule:
-  #     type: cron
-  #     hour: 21
-  #     minute: 50
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     trade_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 600
+  sw_daily_update:
+    enabled: true
+    type: download
+    dataset: sw_daily
+    schedule:
+      type: cron
+      hour: 21
+      minute: 50
+      day_of_week: "mon-fri"
+    params:
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
 
   industry_valuation_preprocess:
     enabled: true
@@ -769,6 +775,8 @@ jobs:
     enabled: true
     type: download
     dataset: minute_5
+    resource_group: xtquant_helper
+    catchup_on_failure: false
     schedule:
       type: cron
       hour: 3
@@ -787,6 +795,8 @@ jobs:
     enabled: true
     type: download
     dataset: minute_1
+    resource_group: xtquant_helper
+    catchup_on_failure: false
     schedule:
       type: cron
       hour: 3
@@ -797,6 +807,7 @@ jobs:
       symbols: all
       start_date: "latest"
       end_date: "latest+1d"
+    depends_on: [futures_minute_5m_saturday_update]
     retry:
       max_retries: 3
       delay: 300

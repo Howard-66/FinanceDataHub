@@ -653,6 +653,18 @@ async def _run_future_update(
                     sample = ", ".join(item["symbol"] for item in failed_symbols[:10])
                     suffix = "..." if len(failed_symbols) > 10 else ""
                     console.print(f"[yellow]  失败样例:[/yellow] {sample}{suffix}")
+                    error_samples = []
+                    seen_errors = set()
+                    for item in failed_symbols:
+                        error = str(item.get("error") or "").strip()
+                        if not error or error in seen_errors:
+                            continue
+                        seen_errors.add(error)
+                        error_samples.append(error[:500])
+                        if len(error_samples) >= 3:
+                            break
+                    for error in error_samples:
+                        console.print("[yellow]  错误样例:[/yellow]", Text(error))
                     return {"count": count, "partial_failure": True}
                 else:
                     console.print(f"[green][OK][/green] 已更新 {count} 条期货数据")

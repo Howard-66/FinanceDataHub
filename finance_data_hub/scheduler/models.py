@@ -102,6 +102,14 @@ class JobConfig(BaseModel):
     params: Dict[str, Any] = Field(default_factory=dict, description="任务参数")
     retry: RetryConfig = Field(default_factory=RetryConfig, description="重试配置")
     depends_on: List[str] = Field(default_factory=list, description="依赖的任务列表")
+    resource_group: Optional[str] = Field(
+        default=None,
+        description="互斥资源组；同组任务在调度器进程内串行执行",
+    )
+    catchup_on_failure: bool = Field(
+        default=True,
+        description="任务重试耗尽失败后是否安排下一日补跑",
+    )
     
     @field_validator("schedule", mode="before")
     @classmethod

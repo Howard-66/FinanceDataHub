@@ -350,6 +350,45 @@ def test_cli_update_future_minute_trade_date_passed_to_updater():
     )
 
 
+def test_cli_update_future_minute_partial_failure_shows_error_sample():
+    fake_updater = Mock()
+    fake_updater.update_futures_minute = AsyncMock(return_value=0)
+    fake_updater.last_futures_minute_summary = {
+        "total_symbols": 2,
+        "attempted_symbols": 2,
+        "inserted_symbols": 0,
+        "empty_symbols": 0,
+        "up_to_date_symbols": 0,
+        "failed_symbols": [
+            {
+                "symbol": "RB2601.SHF",
+                "error": "xtquant_helper temporarily unavailable: 503",
+            }
+        ],
+        "inserted_records": 0,
+    }
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--asset-class", "future",
+                "--dataset", "minute_1",
+                "--symbols", "all",
+                "--trade-date", "2024-04-30",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "错误样例" in result.output
+    assert "xtquant_helper temporarily unavailable: 503" in result.output
+
+
 def test_cli_update_future_weekly_trade_date_clears_default_end_date():
     fake_updater = Mock()
     fake_updater.update_futures_weekly = AsyncMock(return_value=0)

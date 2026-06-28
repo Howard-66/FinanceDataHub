@@ -3119,9 +3119,24 @@ class DataUpdater:
         if failed_symbols:
             sample = ", ".join(item["symbol"] for item in failed_symbols[:10])
             suffix = "..." if len(failed_symbols) > 10 else ""
+            error_samples: List[str] = []
+            seen_errors = set()
+            for item in failed_symbols:
+                error = str(item.get("error") or "").strip()
+                if not error or error in seen_errors:
+                    continue
+                seen_errors.add(error)
+                error_samples.append(error[:500])
+                if len(error_samples) >= 3:
+                    break
+            error_text = (
+                f"; error samples: {' | '.join(error_samples)}"
+                if error_samples
+                else ""
+            )
             logger.warning(
                 f"Futures minute update completed with {len(failed_symbols)} "
-                f"failed symbols out of {len(symbols)}: {sample}{suffix}"
+                f"failed symbols out of {len(symbols)}: {sample}{suffix}{error_text}"
             )
         return total
 

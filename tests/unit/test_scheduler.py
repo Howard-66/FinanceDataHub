@@ -34,6 +34,28 @@ class TestJobConfig:
         assert config.enabled is True
         assert config.type == JobType.DOWNLOAD
         assert config.dataset == "daily"
+        assert config.resource_group is None
+        assert config.catchup_on_failure is True
+
+    def test_job_config_resource_group_and_catchup_flag(self):
+        """任务可声明互斥资源组，并关闭失败后的次日补跑。"""
+        from finance_data_hub.scheduler.models import JobConfig, JobType
+
+        config = JobConfig(
+            enabled=True,
+            type=JobType.DOWNLOAD,
+            dataset="minute_1",
+            resource_group="xtquant_helper",
+            catchup_on_failure=False,
+            schedule={
+                "type": "cron",
+                "hour": 3,
+                "minute": 30,
+            },
+        )
+
+        assert config.resource_group == "xtquant_helper"
+        assert config.catchup_on_failure is False
     
     def test_job_config_with_list_dataset(self):
         """测试多数据集任务配置"""
@@ -218,11 +240,30 @@ jobs:
 
         config = ScheduleConfig.from_yaml("schedules.yml")
 
-        assert "futures_minute_5m_update" in config.jobs
+        assert "futures_minute_5m_update" not in config.jobs
+        assert "futures_minute_1m_update" not in config.jobs
+        assert "futures_minute_15m_refresh" not in config.jobs
         assert "futures_minute_5m_night_update" in config.jobs
         assert "futures_minute_5m_saturday_update" in config.jobs
-        assert config.jobs["futures_minute_15m_refresh"].type.value == "aggregate"
+        assert config.jobs["futures_minute_15m_night_refresh"].type.value == "aggregate"
+        assert config.jobs["futures_minute_5m_night_update"].resource_group == "xtquant_helper"
+        assert config.jobs["futures_minute_5m_night_update"].catchup_on_failure is False
+        assert config.jobs["futures_minute_1m_night_update"].resource_group == "xtquant_helper"
+        assert config.jobs["futures_minute_1m_night_update"].catchup_on_failure is False
+        assert (
+            "futures_minute_5m_night_update"
+            in config.jobs["futures_minute_1m_night_update"].depends_on
+        )
+        assert config.jobs["futures_minute_5m_saturday_update"].resource_group == "xtquant_helper"
+        assert config.jobs["futures_minute_5m_saturday_update"].catchup_on_failure is False
+        assert config.jobs["futures_minute_1m_saturday_update"].resource_group == "xtquant_helper"
+        assert config.jobs["futures_minute_1m_saturday_update"].catchup_on_failure is False
+        assert (
+            "futures_minute_5m_saturday_update"
+            in config.jobs["futures_minute_1m_saturday_update"].depends_on
+        )
         assert config.jobs["futures_daily_update"].params["trade_date"] == "latest"
+        assert "sw_daily_update" in config.jobs
         assert config.jobs["futures_term_metrics_saturday_update"].dataset == "term_metrics"
 
 
@@ -677,6 +718,34 @@ jobs:
         assert sw_classify.schedule["day"] == "1,15"
         assert sw_member.schedule["day"] == "1,15"
 
+    def test_remove_stale_persisted_jobs_drops_deleted_and_transient_jobs(
+        self, sample_config_path
+    ):
+        """启动时应清理 PostgreSQL job store 里已删除或临时补跑任务。"""
+        from finance_data_hub.scheduler.manager import ScheduleManager
+
+        class FakeJob:
+            def __init__(self, job_id):
+                self.id = job_id
+
+        manager = ScheduleManager(config_path=sample_config_path)
+        manager._engine = Mock()
+        manager._engine.get_jobs.return_value = [
+            FakeJob("test_download"),
+            FakeJob("futures_minute_5m_update"),
+            FakeJob("catchup:test_download:2026-06-05"),
+            FakeJob("pending:test_preprocess:2026-06-05:1"),
+        ]
+
+        manager._remove_stale_persisted_jobs({"test_download"})
+
+        removed = [call.args[0] for call in manager._engine.remove_job.call_args_list]
+        assert removed == [
+            "futures_minute_5m_update",
+            "catchup:test_download:2026-06-05",
+            "pending:test_preprocess:2026-06-05:1",
+        ]
+
     def test_futures_minute_aggregates_leave_retry_window(self):
         """5m 原始分钟线调度后应给重试窗口留出时间再刷新聚合。"""
         from finance_data_hub.scheduler.models import ScheduleConfig
@@ -685,14 +754,20 @@ jobs:
             str(Path(__file__).resolve().parents[2] / "schedules.yml")
         )
 
-        minute_5m = config.jobs["futures_minute_5m_update"]
-        refresh_15m = config.jobs["futures_minute_15m_refresh"]
+        windows = [
+            ("futures_minute_5m_night_update", "futures_minute_15m_night_refresh"),
+            ("futures_minute_5m_saturday_update", "futures_minute_15m_saturday_refresh"),
+        ]
 
-        minute_time = minute_5m.schedule["hour"] * 60 + minute_5m.schedule["minute"]
-        refresh_time = refresh_15m.schedule["hour"] * 60 + refresh_15m.schedule["minute"]
+        for minute_job_id, refresh_job_id in windows:
+            minute_5m = config.jobs[minute_job_id]
+            refresh_15m = config.jobs[refresh_job_id]
 
-        assert "futures_minute_5m_update" in refresh_15m.depends_on
-        assert refresh_time - minute_time >= 30
+            minute_time = minute_5m.schedule["hour"] * 60 + minute_5m.schedule["minute"]
+            refresh_time = refresh_15m.schedule["hour"] * 60 + refresh_15m.schedule["minute"]
+
+            assert minute_job_id in refresh_15m.depends_on
+            assert refresh_time - minute_time >= 30
 
     def test_failed_scheduled_job_creates_next_day_catchup_with_resolved_params(
         self, sample_config_path, monkeypatch
@@ -747,6 +822,71 @@ jobs:
         assert captured["kwargs"]["trade_date"] == "2026-06-05"
         assert captured["kwargs"]["_scheduled_date"] == "2026-06-05"
         assert captured["kwargs"]["_is_catchup_run"] is True
+
+    def test_failed_job_with_catchup_disabled_does_not_schedule_catchup(
+        self, sample_config_path
+    ):
+        """catchup_on_failure=false 的任务失败后不应进入补跑队列。"""
+        from finance_data_hub.scheduler.manager import ScheduleManager
+        from finance_data_hub.scheduler.executor import TaskExecutor, RetryExecutor
+        from finance_data_hub.scheduler.models import JobExecutionLog
+
+        manager = ScheduleManager(config_path=sample_config_path)
+        config = manager.load_config()
+        job_config = config.jobs["test_download"]
+        job_config.catchup_on_failure = False
+        manager._executor = RetryExecutor(TaskExecutor())
+
+        failed_log = JobExecutionLog(
+            job_id="test_download",
+            job_name="test_download",
+            job_type=job_config.type,
+            status="failed",
+            start_time=datetime(2026, 6, 5, 17, 10),
+            end_time=datetime(2026, 6, 5, 17, 40),
+        )
+        manager._executor.execute_with_retry = Mock(return_value=failed_log)
+        manager._save_execution_log = Mock()
+        manager._engine = Mock()
+        manager._engine.add_one_time_job = Mock()
+
+        manager._execute_job(
+            "test_download",
+            job_config,
+            {"_scheduled_date": "2026-06-05"},
+        )
+
+        manager._engine.add_one_time_job.assert_not_called()
+
+    def test_past_next_day_catchup_is_skipped(
+        self, sample_config_path, monkeypatch
+    ):
+        """调度器重启后不应把历史补跑改成当前立即执行。"""
+        from finance_data_hub.scheduler.manager import ScheduleManager
+
+        manager = ScheduleManager(config_path=sample_config_path)
+        config = manager.load_config()
+        job_config = config.jobs["test_download"]
+        manager._engine = Mock()
+        manager._engine.add_one_time_job = Mock()
+
+        monkeypatch.setattr(
+            "finance_data_hub.scheduler.manager.datetime",
+            Mock(
+                now=Mock(return_value=datetime(2026, 6, 7, 9, 0)),
+                combine=datetime.combine,
+                strptime=datetime.strptime,
+            ),
+        )
+
+        manager._schedule_next_day_catchup(
+            job_id="test_download",
+            job_config=job_config,
+            resolved_params={"trade_date": "2026-06-05"},
+            scheduled_date=date(2026, 6, 5),
+        )
+
+        manager._engine.add_one_time_job.assert_not_called()
 
     def test_catchup_run_does_not_schedule_another_catchup(
         self, sample_config_path

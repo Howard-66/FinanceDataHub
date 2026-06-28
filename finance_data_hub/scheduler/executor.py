@@ -9,6 +9,8 @@
 import subprocess
 import sys
 import re
+import threading
+from contextlib import contextmanager
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -21,6 +23,19 @@ from .models import JobConfig, JobType, JobExecutionLog
 class NoDataAvailableError(Exception):
     """当 API 返回空数据时抛出的异常，可触发重试"""
     pass
+
+
+_resource_locks: Dict[str, threading.Lock] = {}
+_resource_locks_guard = threading.Lock()
+
+
+def _get_resource_lock(resource_group: str) -> threading.Lock:
+    with _resource_locks_guard:
+        lock = _resource_locks.get(resource_group)
+        if lock is None:
+            lock = threading.Lock()
+            _resource_locks[resource_group] = lock
+        return lock
 
 
 class TaskExecutor:
@@ -40,6 +55,29 @@ class TaskExecutor:
         """
         self.project_root = Path(project_root) if project_root else Path.cwd()
         self.python_path = python_path or sys.executable
+
+    @contextmanager
+    def resource_guard(self, job_id: str, job_config: JobConfig):
+        """Serialize jobs that share an external resource such as xtquant_helper."""
+        resource_group = (job_config.resource_group or "").strip()
+        if not resource_group:
+            yield
+            return
+
+        lock = _get_resource_lock(resource_group)
+        wait_started = datetime.now()
+        logger.info(f"Job {job_id} waiting for scheduler resource group: {resource_group}")
+        lock.acquire()
+        waited = (datetime.now() - wait_started).total_seconds()
+        logger.info(
+            f"Job {job_id} acquired scheduler resource group: "
+            f"{resource_group} after {waited:.3f}s"
+        )
+        try:
+            yield
+        finally:
+            lock.release()
+            logger.info(f"Job {job_id} released scheduler resource group: {resource_group}")
         
     def execute(
         self,
@@ -822,16 +860,17 @@ class RetryExecutor:
         
         last_log = None
         
-        for attempt in range(max_retries + 1):
-            if attempt > 0:
-                logger.info(f"Retrying job {job_id}, attempt {attempt + 1}/{max_retries + 1}")
-                time.sleep(retry_delay)
-            
-            log = self.executor.execute(job_id, job_config, **kwargs)
-            last_log = log
-            
-            if log.status == "completed":
-                return log
+        with self.executor.resource_guard(job_id, job_config):
+            for attempt in range(max_retries + 1):
+                if attempt > 0:
+                    logger.info(f"Retrying job {job_id}, attempt {attempt + 1}/{max_retries + 1}")
+                    time.sleep(retry_delay)
+                
+                log = self.executor.execute(job_id, job_config, **kwargs)
+                last_log = log
+                
+                if log.status == "completed":
+                    return log
         
         # 所有重试都失败
         logger.error(f"Job {job_id} failed after {max_retries + 1} attempts")
