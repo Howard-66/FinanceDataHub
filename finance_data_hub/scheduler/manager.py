@@ -179,6 +179,16 @@ class ScheduleManager:
 
         self._remove_stale_persisted_jobs(enabled_job_ids)
 
+    def _enabled_job_ids(self) -> Set[str]:
+        """Return enabled job ids from the currently loaded schedule config."""
+        if self._config is None:
+            return set()
+        return {
+            job_id
+            for job_id, job_config in self._config.jobs.items()
+            if job_config.enabled
+        }
+
     def _remove_stale_persisted_jobs(self, enabled_job_ids: Set[str]) -> None:
         """Remove obsolete APScheduler jobs left in persistent job stores.
 
@@ -556,7 +566,9 @@ class ScheduleManager:
         if self._engine is None:
             self.initialize()
         
-        self._engine.start()
+        self._engine.start(paused=True)
+        self._remove_stale_persisted_jobs(self._enabled_job_ids())
+        self._engine.resume()
         
         if not daemon:
             # 非守护模式，保持主线程运行

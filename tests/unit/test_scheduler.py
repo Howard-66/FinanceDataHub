@@ -746,6 +746,33 @@ jobs:
             "pending:test_preprocess:2026-06-05:1",
         ]
 
+    def test_start_reconciles_persisted_jobs_after_scheduler_start(
+        self, sample_config_path
+    ):
+        """应在暂停启动后清理持久化旧任务，再恢复调度。"""
+        from finance_data_hub.scheduler.manager import ScheduleManager
+
+        manager = ScheduleManager(config_path=sample_config_path)
+        manager.load_config()
+        manager._engine = Mock()
+
+        events = []
+        manager._engine.start.side_effect = lambda paused=False: events.append(
+            ("start", paused)
+        )
+        manager._remove_stale_persisted_jobs = Mock(
+            side_effect=lambda job_ids: events.append(("cleanup", set(job_ids)))
+        )
+        manager._engine.resume.side_effect = lambda: events.append(("resume", None))
+
+        manager.start(daemon=True)
+
+        assert events == [
+            ("start", True),
+            ("cleanup", {"test_download", "test_preprocess"}),
+            ("resume", None),
+        ]
+
     def test_futures_minute_aggregates_leave_retry_window(self):
         """5m 原始分钟线调度后应给重试窗口留出时间再刷新聚合。"""
         from finance_data_hub.scheduler.models import ScheduleConfig
