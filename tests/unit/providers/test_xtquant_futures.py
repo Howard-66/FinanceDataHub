@@ -65,6 +65,63 @@ def test_xtquant_futures_minute_5m_uses_direct_xtquant_period():
     assert result["frequency"].iloc[0] == "5m"
     assert provider._call_api.call_args_list[0].args[1]["period"] == "5m"
     assert provider._call_api.call_args_list[1].args[1]["period"] == "5m"
+    assert (
+        provider._call_api.call_args_list[0].args[1]["start_time"]
+        == "20240430093000"
+    )
+    assert (
+        provider._call_api.call_args_list[0].args[1]["end_time"]
+        == "20240430100000"
+    )
+
+
+def test_xtquant_futures_minute_filters_cross_midnight_trading_window():
+    provider = XTQuantProvider()
+    payload = {
+        "rb2405.SF": {
+            "time": {
+                0: 20240430150000,
+                1: 20240430230000,
+                2: 20240501023000,
+                3: 20240501160000,
+            },
+            "open": {0: 99.0, 1: 100.0, 2: 101.0, 3: 102.0},
+            "high": {0: 99.5, 1: 100.5, 2: 101.5, 3: 102.5},
+            "low": {0: 98.5, 1: 99.5, 2: 100.5, 3: 101.5},
+            "close": {0: 99.2, 1: 100.2, 2: 101.2, 3: 102.2},
+            "volume": {0: 10, 1: 20, 2: 30, 3: 40},
+            "amount": {0: 1000.0, 1: 2000.0, 2: 3000.0, 3: 4000.0},
+        }
+    }
+    provider._call_api = Mock(side_effect=[None, payload])
+
+    result = provider.get_futures_minute(
+        symbols=["rb2405.SF"],
+        start_date="2024-04-30 21:00:00",
+        end_date="2024-05-01 15:00:00",
+        freq="1m",
+    )
+
+    assert result["time"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist() == [
+        "2024-04-30 23:00:00",
+        "2024-05-01 02:30:00",
+    ]
+    assert (
+        provider._call_api.call_args_list[0].args[1]["start_time"]
+        == "20240430210000"
+    )
+    assert (
+        provider._call_api.call_args_list[0].args[1]["end_time"]
+        == "20240501150000"
+    )
+    assert (
+        provider._call_api.call_args_list[1].args[1]["start_time"]
+        == "20240430210000"
+    )
+    assert (
+        provider._call_api.call_args_list[1].args[1]["end_time"]
+        == "20240501150000"
+    )
 
 
 def test_xtquant_futures_minute_rejects_monthly_average_symbol_before_api_call():

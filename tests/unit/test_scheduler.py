@@ -240,22 +240,37 @@ jobs:
 
         config = ScheduleConfig.from_yaml("schedules.yml")
 
-        assert "futures_minute_5m_update" not in config.jobs
-        assert "futures_minute_1m_update" not in config.jobs
-        assert "futures_minute_15m_refresh" not in config.jobs
+        assert "futures_minute_5m_update" in config.jobs
+        assert "futures_minute_1m_update" in config.jobs
+        assert "futures_minute_15m_refresh" in config.jobs
         assert "futures_minute_5m_night_update" in config.jobs
         assert "futures_minute_5m_saturday_update" in config.jobs
         assert config.jobs["futures_minute_15m_night_refresh"].type.value == "aggregate"
+        assert config.jobs["futures_minute_5m_update"].resource_group == "xtquant_helper"
+        assert config.jobs["futures_minute_5m_update"].catchup_on_failure is False
+        assert config.jobs["futures_minute_5m_update"].params["trade_date"] == "latest"
+        assert "futures_daily_update" in config.jobs["futures_minute_5m_update"].depends_on
+        assert config.jobs["futures_minute_1m_update"].resource_group == "xtquant_helper"
+        assert config.jobs["futures_minute_1m_update"].catchup_on_failure is False
+        assert config.jobs["futures_minute_1m_update"].params["trade_date"] == "latest"
+        assert (
+            "futures_minute_5m_update"
+            in config.jobs["futures_minute_1m_update"].depends_on
+        )
+        assert config.jobs["futures_minute_5m_night_update"].enabled is False
         assert config.jobs["futures_minute_5m_night_update"].resource_group == "xtquant_helper"
         assert config.jobs["futures_minute_5m_night_update"].catchup_on_failure is False
+        assert config.jobs["futures_minute_1m_night_update"].enabled is False
         assert config.jobs["futures_minute_1m_night_update"].resource_group == "xtquant_helper"
         assert config.jobs["futures_minute_1m_night_update"].catchup_on_failure is False
         assert (
             "futures_minute_5m_night_update"
             in config.jobs["futures_minute_1m_night_update"].depends_on
         )
+        assert config.jobs["futures_minute_5m_saturday_update"].enabled is False
         assert config.jobs["futures_minute_5m_saturday_update"].resource_group == "xtquant_helper"
         assert config.jobs["futures_minute_5m_saturday_update"].catchup_on_failure is False
+        assert config.jobs["futures_minute_1m_saturday_update"].enabled is False
         assert config.jobs["futures_minute_1m_saturday_update"].resource_group == "xtquant_helper"
         assert config.jobs["futures_minute_1m_saturday_update"].catchup_on_failure is False
         assert (
@@ -782,8 +797,7 @@ jobs:
         )
 
         windows = [
-            ("futures_minute_5m_night_update", "futures_minute_15m_night_refresh"),
-            ("futures_minute_5m_saturday_update", "futures_minute_15m_saturday_refresh"),
+            ("futures_minute_5m_update", "futures_minute_15m_refresh"),
         ]
 
         for minute_job_id, refresh_job_id in windows:

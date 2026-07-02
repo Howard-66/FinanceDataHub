@@ -177,9 +177,10 @@ jobs:
 
   # ========== 期货夜盘后 / T+1 日盘开盘前任务（周二到周五） ==========
 
-  # 夜盘分钟线在凌晨补齐，供 T+1 日盘开盘前查询；日间分钟任务暂不启用，避免长下载与夜盘链路叠加。
+  # 分钟线按 T 日交易窗口（T-1 21:00 -> T 15:00）在日线完成后统一更新；
+  # 凌晨夜盘片段任务保留配置但停用，避免写入不完整交易日。
   futures_minute_5m_night_update:
-    enabled: true
+    enabled: false
     type: download
     dataset: minute_5
     resource_group: xtquant_helper
@@ -199,7 +200,7 @@ jobs:
       delay: 300
 
   futures_minute_1m_night_update:
-    enabled: true
+    enabled: false
     type: download
     dataset: minute_1
     resource_group: xtquant_helper
@@ -220,7 +221,7 @@ jobs:
       delay: 300
 
   futures_minute_15m_night_refresh:
-    enabled: true
+    enabled: false
     type: aggregate
     dataset: futures.minute_15m
     schedule:
@@ -238,7 +239,7 @@ jobs:
       delay: 300
 
   futures_minute_30m_night_refresh:
-    enabled: true
+    enabled: false
     type: aggregate
     dataset: futures.minute_30m
     schedule:
@@ -256,7 +257,7 @@ jobs:
       delay: 300
 
   futures_minute_60m_night_refresh:
-    enabled: true
+    enabled: false
     type: aggregate
     dataset: futures.minute_60m
     schedule:
@@ -344,95 +345,99 @@ jobs:
       max_retries: 3
       delay: 600
 
-  # futures_minute_5m_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: minute_5
-  #   schedule:
-  #     type: cron
-  #     hour: 16
-  #     minute: 30
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     symbols: all
-  #     start_date: "previous_trade_date"
-  #     end_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 300
+  futures_minute_5m_update:
+    enabled: true
+    type: download
+    dataset: minute_5
+    resource_group: xtquant_helper
+    catchup_on_failure: false
+    schedule:
+      type: cron
+      hour: 16
+      minute: 35
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      symbols: all
+      trade_date: "latest"
+    depends_on: [futures_daily_update]
+    retry:
+      max_retries: 3
+      delay: 300
 
-  # futures_minute_1m_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: minute_1
-  #   schedule:
-  #     type: cron
-  #     hour: 16
-  #     minute: 40
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     symbols: all
-  #     start_date: "previous_trade_date"
-  #     end_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 300
+  futures_minute_1m_update:
+    enabled: true
+    type: download
+    dataset: minute_1
+    resource_group: xtquant_helper
+    catchup_on_failure: false
+    schedule:
+      type: cron
+      hour: 16
+      minute: 45
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      symbols: all
+      trade_date: "latest"
+    depends_on: [futures_minute_5m_update]
+    retry:
+      max_retries: 3
+      delay: 300
 
-  # futures_minute_15m_refresh:
-  #   enabled: true
-  #   type: aggregate
-  #   dataset: futures.minute_15m
-  #   schedule:
-  #     type: cron
-  #     hour: 17
-  #     minute: 10
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     start_date: "previous_trade_date"
-  #     end_date: "latest"
-  #   depends_on: [futures_minute_5m_update]
-  #   retry:
-  #     max_retries: 3
-  #     delay: 300
+  futures_minute_15m_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_15m
+    schedule:
+      type: cron
+      hour: 17
+      minute: 20
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest-1d"
+      end_date: "latest+1d"
+    depends_on: [futures_minute_5m_update]
+    retry:
+      max_retries: 3
+      delay: 300
 
-  # futures_minute_30m_refresh:
-  #   enabled: true
-  #   type: aggregate
-  #   dataset: futures.minute_30m
-  #   schedule:
-  #     type: cron
-  #     hour: 17
-  #     minute: 15
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     start_date: "previous_trade_date"
-  #     end_date: "latest"
-  #   depends_on: [futures_minute_5m_update]
-  #   retry:
-  #     max_retries: 3
-  #     delay: 300
+  futures_minute_30m_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_30m
+    schedule:
+      type: cron
+      hour: 17
+      minute: 25
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest-1d"
+      end_date: "latest+1d"
+    depends_on: [futures_minute_5m_update]
+    retry:
+      max_retries: 3
+      delay: 300
 
-  # futures_minute_60m_refresh:
-  #   enabled: true
-  #   type: aggregate
-  #   dataset: futures.minute_60m
-  #   schedule:
-  #     type: cron
-  #     hour: 17
-  #     minute: 20
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     asset_class: future
-  #     start_date: "previous_trade_date"
-  #     end_date: "latest"
-  #   depends_on: [futures_minute_5m_update]
-  #   retry:
-  #     max_retries: 3
-  #     delay: 300
+  futures_minute_60m_refresh:
+    enabled: true
+    type: aggregate
+    dataset: futures.minute_60m
+    schedule:
+      type: cron
+      hour: 17
+      minute: 30
+      day_of_week: "mon-fri"
+    params:
+      asset_class: future
+      start_date: "latest-1d"
+      end_date: "latest+1d"
+    depends_on: [futures_minute_5m_update]
+    retry:
+      max_retries: 3
+      delay: 300
 
   futures_term_metrics_update:
     enabled: true
@@ -685,20 +690,20 @@ jobs:
       max_retries: 3
       delay: 600
 
-  sw_daily_update:
-    enabled: true
-    type: download
-    dataset: sw_daily
-    schedule:
-      type: cron
-      hour: 21
-      minute: 50
-      day_of_week: "mon-fri"
-    params:
-      trade_date: "latest"
-    retry:
-      max_retries: 3
-      delay: 600
+  # sw_daily_update:
+  #   enabled: true
+  #   type: download
+  #   dataset: sw_daily
+  #   schedule:
+  #     type: cron
+  #     hour: 21
+  #     minute: 50
+  #     day_of_week: "mon-fri"
+  #   params:
+  #     trade_date: "latest"
+  #   retry:
+  #     max_retries: 3
+  #     delay: 600
 
   industry_valuation_preprocess:
     enabled: true
@@ -772,7 +777,7 @@ jobs:
       delay: 600
 
   futures_minute_5m_saturday_update:
-    enabled: true
+    enabled: false
     type: download
     dataset: minute_5
     resource_group: xtquant_helper
@@ -792,7 +797,7 @@ jobs:
       delay: 300
 
   futures_minute_1m_saturday_update:
-    enabled: true
+    enabled: false
     type: download
     dataset: minute_1
     resource_group: xtquant_helper
@@ -831,7 +836,7 @@ jobs:
       delay: 300
 
   futures_minute_15m_saturday_refresh:
-    enabled: true
+    enabled: false
     type: aggregate
     dataset: futures.minute_15m
     schedule:
@@ -849,7 +854,7 @@ jobs:
       delay: 300
 
   futures_minute_30m_saturday_refresh:
-    enabled: true
+    enabled: false
     type: aggregate
     dataset: futures.minute_30m
     schedule:
@@ -867,7 +872,7 @@ jobs:
       delay: 300
 
   futures_minute_60m_saturday_refresh:
-    enabled: true
+    enabled: false
     type: aggregate
     dataset: futures.minute_60m
     schedule:

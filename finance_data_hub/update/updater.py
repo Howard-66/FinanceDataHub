@@ -6,9 +6,10 @@
 
 import asyncio
 import calendar
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Dict, Any, Union, Iterator, Tuple, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, time as datetime_time, timedelta
 from pathlib import Path
 import json
 import time
@@ -40,6 +41,8 @@ FUTURES_PERIOD_LOOKBACK_DAYS = {
     "weekly": 7,
     "monthly": 31,
 }
+FUTURES_MINUTE_TRADING_DAY_START = datetime_time(21, 0, 0)
+FUTURES_MINUTE_TRADING_DAY_END = datetime_time(15, 0, 0)
 
 
 def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
@@ -183,6 +186,79 @@ def _futures_period_query_end(
     else:
         raise ValueError(f"Unsupported futures period: {period}")
     return end.strftime("%Y-%m-%d")
+
+
+def _coerce_datetime(value: Union[str, datetime]) -> datetime:
+    """Parse common scheduler/CLI date or datetime strings."""
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+
+    text = str(value).strip()
+    if re.fullmatch(r"\d{14}", text):
+        return datetime.strptime(text, "%Y%m%d%H%M%S")
+    if re.fullmatch(r"\d{8}", text):
+        return datetime.strptime(text, "%Y%m%d")
+
+    parsed = pd.to_datetime(text)
+    if isinstance(parsed, pd.Timestamp):
+        if parsed.tz is not None:
+            parsed = parsed.tz_convert("Asia/Shanghai").tz_localize(None)
+        return parsed.to_pydatetime()
+    raise ValueError(f"Invalid datetime value: {value}")
+
+
+def _has_explicit_time(value: Optional[Union[str, datetime]]) -> bool:
+    """Return whether the user provided an intraday time component."""
+    if value is None:
+        return False
+    if isinstance(value, datetime):
+        return value.time() != datetime_time.min
+
+    text = str(value).strip()
+    if re.fullmatch(r"\d{14}", text):
+        return True
+    return bool(re.search(r"(?:\s|T)\d{1,2}:\d{2}", text))
+
+
+def _format_datetime(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _normalize_futures_minute_window(
+    trade_date: Optional[str],
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    """Normalize futures minute inputs to the mainland futures trading-day window."""
+    if trade_date:
+        if start_date or end_date:
+            raise ValueError("trade_date cannot be used with start_date or end_date")
+        trade_day = _coerce_datetime(trade_date).date()
+        start_dt = datetime.combine(
+            trade_day - timedelta(days=1),
+            FUTURES_MINUTE_TRADING_DAY_START,
+        )
+        end_dt = datetime.combine(trade_day, FUTURES_MINUTE_TRADING_DAY_END)
+        return _format_datetime(start_dt), _format_datetime(end_dt)
+
+    normalized_start = None
+    if start_date:
+        start_dt = _coerce_datetime(start_date)
+        if not _has_explicit_time(start_date):
+            start_dt = datetime.combine(
+                start_dt.date() - timedelta(days=1),
+                FUTURES_MINUTE_TRADING_DAY_START,
+            )
+        normalized_start = _format_datetime(start_dt)
+
+    if end_date:
+        end_dt = _coerce_datetime(end_date)
+        if not _has_explicit_time(end_date):
+            end_dt = datetime.combine(end_dt.date(), FUTURES_MINUTE_TRADING_DAY_END)
+    else:
+        end_dt = datetime.now()
+
+    return normalized_start, _format_datetime(end_dt)
 
 
 class DataUpdater:
@@ -2542,6 +2618,22 @@ class DataUpdater:
             "%Y-%m-%d"
         )
 
+    def _futures_minute_incremental_start(
+        self,
+        latest_date: Optional[str],
+        start_date: Optional[str],
+        force_update: bool,
+        freq: str,
+    ) -> Optional[str]:
+        """Return the next minute-bar timestamp for smart futures minute updates."""
+        if force_update or start_date or not latest_date:
+            return start_date
+
+        step_minutes = 5 if _normalize_futures_minute_frequency(freq) == "5m" else 1
+        return _format_datetime(
+            _coerce_datetime(latest_date) + timedelta(minutes=step_minutes)
+        )
+
     def _futures_period_incremental_start(
         self,
         latest_date: Optional[str],
@@ -2960,16 +3052,11 @@ class DataUpdater:
                 "skip provider download"
             )
             return 0
-        if trade_date and (start_date or end_date):
-            raise ValueError("trade_date cannot be used with start_date or end_date")
-
-        request_start_date, request_end_date = _normalize_futures_query_dates(
+        request_start_date, request_end_date = _normalize_futures_minute_window(
             trade_date,
             start_date,
             end_date,
         )
-        if request_end_date is None:
-            request_end_date = datetime.now().strftime("%Y-%m-%d")
 
         explicit_all = _is_all_futures_selector(symbols)
         symbols = await self._resolve_futures_symbol_universe(
@@ -3014,7 +3101,8 @@ class DataUpdater:
         max_workers = self._get_futures_minute_max_workers(len(symbols))
         logger.info(
             f"Updating futures minute data for {len(symbols)} symbols "
-            f"(freq={freq}, max_workers={max_workers})"
+            f"(freq={freq}, start={request_start_date or 'smart'}, "
+            f"end={request_end_date}, max_workers={max_workers})"
         )
 
         loop = asyncio.get_running_loop()
@@ -3038,11 +3126,19 @@ class DataUpdater:
                     latest = await self.data_ops.get_latest_futures_date(
                         "minute", symbol=symbol, frequency=freq
                     )
-                    actual_start = self._incremental_start(
-                        latest, request_start_date, force_update
+                    actual_start = self._futures_minute_incremental_start(
+                        latest, request_start_date, force_update, freq
                     )
-                    if actual_start and request_end_date and actual_start > request_end_date:
-                        return {"symbol": symbol, "status": "up_to_date", "records": 0}
+                    if (
+                        actual_start
+                        and request_end_date
+                        and actual_start > request_end_date
+                    ):
+                        return {
+                            "symbol": symbol,
+                            "status": "up_to_date",
+                            "records": 0,
+                        }
 
                     try:
                         data = await loop.run_in_executor(

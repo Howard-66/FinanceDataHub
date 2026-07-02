@@ -12,6 +12,7 @@ from finance_data_hub.update.updater import (
     _futures_period_query_end,
     _is_all_futures_selector,
     _iter_date_chunks,
+    _normalize_futures_minute_window,
     _normalize_futures_window,
 )
 
@@ -40,6 +41,29 @@ def test_normalize_futures_window_for_trade_date():
 def test_futures_period_query_end_uses_api_period_labels():
     assert _futures_period_query_end("2026-06-18", "weekly") == "2026-06-19"
     assert _futures_period_query_end("2026-06-19", "monthly") == "2026-06-30"
+
+
+def test_normalize_futures_minute_window_uses_trading_day_boundaries():
+    assert _normalize_futures_minute_window("2024-04-30", None, None) == (
+        "2024-04-29 21:00:00",
+        "2024-04-30 15:00:00",
+    )
+    assert _normalize_futures_minute_window(
+        None,
+        "2024-04-29",
+        "2024-04-30",
+    ) == (
+        "2024-04-28 21:00:00",
+        "2024-04-30 15:00:00",
+    )
+    assert _normalize_futures_minute_window(
+        None,
+        "2024-04-29 22:00:00",
+        "2024-04-30 02:30:00",
+    ) == (
+        "2024-04-29 22:00:00",
+        "2024-04-30 02:30:00",
+    )
 
 
 def test_resolve_futures_symbol_universe_explicit_all_uses_contract_basic_overlap():
@@ -700,8 +724,14 @@ def test_update_futures_minute_trade_date_filters_contract_universe():
             overlap_start="2024-04-30",
             overlap_end="2024-04-30",
         )
-        assert updater.router.route.call_args.kwargs["start_date"] == "2024-04-30"
-        assert updater.router.route.call_args.kwargs["end_date"] == "2024-04-30"
+        assert (
+            updater.router.route.call_args.kwargs["start_date"]
+            == "2024-04-29 21:00:00"
+        )
+        assert (
+            updater.router.route.call_args.kwargs["end_date"]
+            == "2024-04-30 15:00:00"
+        )
 
     asyncio.run(_run())
 

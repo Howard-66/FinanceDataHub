@@ -5771,6 +5771,7 @@ class DataOperations:
         if product_code:
             conditions.append("product_code = :product_code")
             params["product_code"] = product_code.upper()
+        is_minute_table = table == "minute"
         if frequency and table == "minute":
             normalized_frequency = _normalize_futures_minute_frequency(frequency)
             if normalized_frequency != "1m":
@@ -5798,6 +5799,8 @@ class DataOperations:
             latest_date = pd.to_datetime(row.latest_date)
             if latest_date.tz is not None:
                 latest_date = latest_date.tz_convert("Asia/Shanghai")
+            if is_minute_table:
+                return latest_date.strftime("%Y-%m-%d %H:%M:%S")
             return latest_date.strftime("%Y-%m-%d")
         return None
 

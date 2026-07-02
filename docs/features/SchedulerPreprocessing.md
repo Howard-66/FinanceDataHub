@@ -149,24 +149,22 @@ finance_data_hub/
 
 - 股票类下载与预处理任务显式声明 `market`，A 股使用 `market: CN`，港股使用独立 `hk_*` 任务。
 - 支持 `trade_date` 的 Tushare 日频接口使用 `trade_date: latest`，任务间隔压缩到 5-15 分钟；不支持单日批量的接口保留更晚时间和更长重试窗口。
-- 期货 T 日完整日线、结算、分钟线和高周期分钟聚合安排在 T 日收盘后、T+1 夜盘开盘前；夜盘分钟线另在凌晨补齐，供 T+1 日盘开盘前查询。
+- 期货 T 日完整日线、结算、分钟线和高周期分钟聚合安排在 T 日收盘后、T+1 夜盘开盘前；分钟线按 T-1 21:00 到 T 15:00 的交易日窗口更新。
 - 依赖关系仍由 `depends_on` 兜底，若前置任务运行较慢，后置任务会进入 pending 并在依赖完成后触发。
 
 周一到周五日内顺序：
 
 | 时间 | 任务 | 说明 |
 |------|------|------|
-| 03:20 | `futures_minute_1m_night_update` | 周二到周五补齐上一自然日晚盘到当前交易日凌晨的 1m 数据 |
-| 03:30 | `futures_minute_5m_night_update` | 周二到周五补齐 5m 夜盘原始数据 |
-| 04:05 / 04:10 / 04:15 | `futures_minute_15m/30m/60m_night_refresh` | 开盘前刷新夜盘高周期分钟聚合 |
-| 16:20 | `futures_mapping_update` | T 日主力 / 连续合约映射 |
-| 16:35 | `futures_daily_update` | T 日期货日线，使用 `trade_date: latest` |
+| 16:10 | `futures_mapping_update` | T 日主力 / 连续合约映射 |
+| 16:15 | `futures_daily_update` | T 日期货日线，使用 `trade_date: latest` |
+| 16:20 / 16:25 | `futures_weekly_update` / `futures_monthly_update` | 覆盖最后一根未完成周期 K 线 |
+| 16:30 | `futures_term_metrics_update` | 基于 T 日完整期货日线计算期限结构指标 |
+| 16:35 / 16:45 | `futures_minute_5m_update` / `futures_minute_1m_update` | T 日收盘后覆盖完整交易日窗口 |
 | 16:45 / 16:50 | `hk_daily_update` / `daily_update` | 港股、A 股日线 |
 | 16:55 / 17:05 | `adj_factor_update` / `daily_basic_update` | A 股复权因子、每日基本面，均使用 `trade_date` |
 | 17:10 / 17:15 | `futures_settle_update` / `hk_adj_factor_update` | 期货结算、港股复权因子 |
-| 17:25 / 17:35 | `futures_minute_1m_update` / `futures_minute_5m_update` | T 日收盘后覆盖完整交易日窗口 |
-| 18:10 / 18:15 / 18:20 | `futures_minute_15m/30m/60m_refresh` | 5m 原始数据完成后至少预留 30 分钟再刷新聚合 |
-| 18:25 | `futures_term_metrics_update` | 基于 T 日完整期货日线计算期限结构指标 |
+| 17:20 / 17:25 / 17:30 | `futures_minute_15m/30m/60m_refresh` | 5m 原始数据完成后至少预留 30 分钟再刷新聚合 |
 | 18:40 / 18:50 | `technical_preprocess` / `hk_technical_preprocess` | A 股、港股技术指标预处理 |
 | 19:00 / 19:10 / 19:20 | `futures_spot_basis_update` / `futures_inventory_update` / `futures_index_daily_update` | 期货基差、仓单、指数日线 |
 | 19:35 | `fundamental_preprocess` | A 股基本面预处理 |
@@ -178,9 +176,7 @@ finance_data_hub/
 | 时间 | 任务 | 说明 |
 |------|------|------|
 | 03:10 | `futures_daily_saturday_update` | 周末复核 / 补跑周五完整日线 |
-| 03:20 / 03:30 | `futures_minute_1m_saturday_update` / `futures_minute_5m_saturday_update` | 补齐周五夜盘自然日片段 |
 | 03:55 | `futures_term_metrics_saturday_update` | 基于周五日线复核期限结构 |
-| 04:10 / 04:15 / 04:20 | `futures_minute_15m/30m/60m_saturday_refresh` | 周六刷新夜盘片段聚合 |
 
 周 / 双周 / 月任务集中放在配置文件开头：
 

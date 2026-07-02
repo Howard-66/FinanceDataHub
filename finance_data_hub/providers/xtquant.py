@@ -513,7 +513,72 @@ class XTQuantProvider(BaseDataProvider):
         """Format a minute datetime for XTQuant endpoints."""
         if date_value is None:
             return ""
-        return str(date_value).replace("-", "").replace(" ", "").replace(":", "")
+        text = str(date_value).strip()
+        if not text:
+            return ""
+        if text.isdigit() and len(text) in {8, 14}:
+            return text
+
+        parsed = pd.to_datetime(text, errors="coerce")
+        if not pd.isna(parsed):
+            if isinstance(parsed, pd.Timestamp) and parsed.tz is not None:
+                parsed = parsed.tz_convert("Asia/Shanghai").tz_localize(None)
+            if (
+                parsed.hour == 0
+                and parsed.minute == 0
+                and parsed.second == 0
+                and parsed.microsecond == 0
+                and len(text) <= 10
+            ):
+                return parsed.strftime("%Y%m%d")
+            return parsed.strftime("%Y%m%d%H%M%S")
+
+        return (
+            text.replace("-", "")
+            .replace(" ", "")
+            .replace("T", "")
+            .replace(":", "")[:14]
+        )
+
+    def _format_minute_boundary(
+        self,
+        date_value: Optional[str],
+        *,
+        is_end: bool,
+    ) -> str:
+        """Format a minute boundary, expanding date-only values to full-day bounds."""
+        formatted = self._format_minute_date(date_value)
+        if not formatted:
+            return ""
+        if len(formatted) == 8:
+            return f"{formatted}{'235959' if is_end else '000000'}"
+        return formatted[:14]
+
+    def _filter_frame_by_minute_window(
+        self,
+        df: pd.DataFrame,
+        start_time: str,
+        end_time: str,
+    ) -> pd.DataFrame:
+        """Filter a normalized minute frame by full datetime boundaries."""
+        if df.empty or "time" not in df.columns:
+            return df
+
+        time_values = pd.to_datetime(df["time"], errors="coerce")
+        if isinstance(time_values.dtype, pd.DatetimeTZDtype):
+            time_values = (
+                time_values.dt.tz_convert("Asia/Shanghai").dt.tz_localize(None)
+            )
+
+        mask = time_values.notna()
+        if start_time:
+            start_bound = pd.to_datetime(start_time, format="%Y%m%d%H%M%S")
+            mask &= time_values >= start_bound
+        if end_time:
+            end_bound = pd.to_datetime(end_time, format="%Y%m%d%H%M%S")
+            mask &= time_values <= end_bound
+
+        return df.loc[mask].sort_values("time").reset_index(drop=True)
 
     def _empty_daily_frame(self) -> pd.DataFrame:
         return pd.DataFrame(columns=DailyDataSchema.get_required_columns())
@@ -948,8 +1013,8 @@ class XTQuantProvider(BaseDataProvider):
                 f"XTQuant futures minute only supports {', '.join(SUPPORTED_XTQUANT_FUTURES_MINUTE_FREQS)}; got {freq}",
                 provider_name=self.name,
             )
-        start_time = self._format_minute_date(start_date)
-        end_time = self._format_minute_date(end_date)
+        start_time = self._format_minute_boundary(start_date, is_end=False)
+        end_time = self._format_minute_boundary(end_date, is_end=True)
         start_day = start_time[:8]
         end_day = end_time[:8]
 
@@ -972,8 +1037,8 @@ class XTQuantProvider(BaseDataProvider):
                 {
                     "stock_code": xt_symbol,
                     "period": xt_freq,
-                    "start_time": start_day,
-                    "end_time": end_day,
+                    "start_time": start_time or start_day,
+                    "end_time": end_time or end_day,
                     "incrementally": None,
                 },
             )
@@ -983,8 +1048,8 @@ class XTQuantProvider(BaseDataProvider):
                     "field_list": [],
                     "stock_list": [xt_symbol],
                     "period": xt_freq,
-                    "start_time": start_day,
-                    "end_time": end_day,
+                    "start_time": start_time or start_day,
+                    "end_time": end_time or end_day,
                     "dividend_type": "none",
                     "fill_data": True,
                     "use_client_data": False,
@@ -997,6 +1062,7 @@ class XTQuantProvider(BaseDataProvider):
                 FuturesMinuteSchema,
                 frequency=freq,
             )
+            df = self._filter_frame_by_minute_window(df, start_time, end_time)
             if not df.empty:
                 all_data.append(df)
 
