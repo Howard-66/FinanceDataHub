@@ -415,8 +415,8 @@ async def _run_update(
         if "all" in lowered and len(lowered) > 1:
             raise ValueError("期货模式下 --symbols all 不能与其他代码混用")
 
-    # 设置默认日期（交易日历数据不设置默认 end_date，允许 API 返回全年数据）
-    if not end_date and data_type != "trade_cal":
+    # 设置默认日期；trade_date 模式不能自动注入 end_date，否则会破坏互斥参数。
+    if not end_date and not trade_date and data_type != "trade_cal":
         end_date = datetime.now().strftime("%Y-%m-%d")
 
     if asset_class == "future":

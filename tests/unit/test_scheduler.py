@@ -709,13 +709,12 @@ jobs:
 
         assert "hk_daily_update" in hk_adj.depends_on
         assert "hk_adj_factor_update" in hk_technical.depends_on
-        assert (
-            hk_technical.schedule["hour"],
-            hk_technical.schedule["minute"],
-        ) > (
-            hk_adj.schedule["hour"],
-            hk_adj.schedule["minute"],
+        hk_adj_time = hk_adj.schedule["hour"] * 60 + hk_adj.schedule["minute"]
+        hk_technical_time = (
+            hk_technical.schedule["hour"] * 60 + hk_technical.schedule["minute"]
         )
+
+        assert hk_technical_time - hk_adj_time >= 90
 
     def test_macro_cycle_dependencies_share_same_monthly_cycle(self):
         """宏观周期 15 号运行时，申万成分股依赖也应在 15 号更新。"""

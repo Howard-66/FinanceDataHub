@@ -343,7 +343,7 @@ def test_cli_update_future_minute_trade_date_passed_to_updater():
         symbols=["all"],
         trade_date="2024-04-30",
         start_date=None,
-        end_date=ANY,
+        end_date=None,
         freq="1m",
         force_update=False,
         progress_callback=ANY,

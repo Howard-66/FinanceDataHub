@@ -165,7 +165,7 @@ finance_data_hub/
 | 16:55 / 17:05 | `adj_factor_update` / `daily_basic_update` | A 股复权因子、每日基本面，均使用 `trade_date` |
 | 17:10 / 17:15 | `futures_settle_update` / `hk_adj_factor_update` | 期货结算、港股复权因子 |
 | 17:20 / 17:25 / 17:30 | `futures_minute_15m/30m/60m_refresh` | 5m 原始数据完成后至少预留 30 分钟再刷新聚合 |
-| 18:40 / 18:50 | `technical_preprocess` / `hk_technical_preprocess` | A 股、港股技术指标预处理 |
+| 18:40 / 21:45 | `technical_preprocess` / `hk_technical_preprocess` | A 股、港股技术指标预处理；港股等待复权因子完成 |
 | 19:00 / 19:10 / 19:20 | `futures_spot_basis_update` / `futures_inventory_update` / `futures_index_daily_update` | 期货基差、仓单、指数日线 |
 | 19:35 | `fundamental_preprocess` | A 股基本面预处理 |
 | 20:20 / 20:30 / 20:45 | `index_daily_update` / `index_dailybasic_update` / `sw_daily_update` | 指数与申万行业日频数据；指数日线保留较晚窗口 |
