@@ -717,7 +717,7 @@ jobs:
     params:
       all: true
       market: CN
-    depends_on: [fundamental_preprocess, sw_daily_update]
+    depends_on: [fundamental_preprocess]
     retry:
       max_retries: 2
       delay: 600

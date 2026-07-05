@@ -168,8 +168,8 @@ finance_data_hub/
 | 18:40 / 21:45 | `technical_preprocess` / `hk_technical_preprocess` | A 股、港股技术指标预处理；港股等待复权因子完成 |
 | 19:00 / 19:10 / 19:20 | `futures_spot_basis_update` / `futures_inventory_update` / `futures_index_daily_update` | 期货基差、仓单、指数日线 |
 | 19:35 | `fundamental_preprocess` | A 股基本面预处理 |
-| 20:20 / 20:30 / 20:45 | `index_daily_update` / `index_dailybasic_update` / `sw_daily_update` | 指数与申万行业日频数据；指数日线保留较晚窗口 |
-| 21:20 | `industry_valuation_preprocess` | 晚于基本面预处理和申万行业日线 |
+| 21:30 / 21:40 | `index_daily_update` / `index_dailybasic_update` | 指数日频数据 |
+| 22:00 | `industry_valuation_preprocess` | 晚于基本面预处理；使用 `processed_valuation_pct` 与最新 `sw_industry_member` 分类 |
 
 周六凌晨顺序：
 

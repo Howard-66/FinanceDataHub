@@ -278,7 +278,7 @@ jobs:
             in config.jobs["futures_minute_1m_saturday_update"].depends_on
         )
         assert config.jobs["futures_daily_update"].params["trade_date"] == "latest"
-        assert "sw_daily_update" in config.jobs
+        assert "sw_daily_update" not in config.jobs
         assert config.jobs["futures_term_metrics_saturday_update"].dataset == "term_metrics"
 
 
@@ -650,26 +650,17 @@ jobs:
 
         assert manager._sync_database_url() == "postgresql://user:pass@localhost/db"
 
-    def test_industry_valuation_waits_for_sw_daily(self):
-        """行业估值预处理应晚于申万行业日线更新并声明依赖。"""
+    def test_industry_valuation_depends_on_fundamental_preprocess_only(self):
+        """行业估值预处理只依赖基本面预处理，行业分类使用最新成分映射。"""
         from finance_data_hub.scheduler.models import ScheduleConfig
 
         config = ScheduleConfig.from_yaml(
             str(Path(__file__).resolve().parents[2] / "schedules.yml")
         )
 
-        sw_daily = config.jobs["sw_daily_update"]
         industry = config.jobs["industry_valuation_preprocess"]
 
-        assert "sw_daily_update" in industry.depends_on
-        assert "fundamental_preprocess" in industry.depends_on
-        assert (
-            industry.schedule["hour"],
-            industry.schedule["minute"],
-        ) > (
-            sw_daily.schedule["hour"],
-            sw_daily.schedule["minute"],
-        )
+        assert industry.depends_on == ["fundamental_preprocess"]
 
     def test_production_misfire_grace_covers_short_scheduler_restart(self):
         """生产调度应覆盖十几分钟级别的容器重启/恢复。"""
