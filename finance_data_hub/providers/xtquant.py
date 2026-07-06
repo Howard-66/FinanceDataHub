@@ -5,7 +5,7 @@ XTQuant数据提供者
 """
 
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import httpx
 import numpy as np
@@ -554,6 +554,14 @@ class XTQuantProvider(BaseDataProvider):
             return f"{formatted}{'235959' if is_end else '000000'}"
         return formatted[:14]
 
+    def _expand_futures_minute_fetch_end(self, end_time: str, freq: str) -> str:
+        """Request one extra bar because XTQuant treats minute end_time as exclusive."""
+        if not end_time:
+            return ""
+        step_minutes = 5 if freq == "5m" else 1
+        end_dt = datetime.strptime(end_time[:14], "%Y%m%d%H%M%S")
+        return (end_dt + timedelta(minutes=step_minutes)).strftime("%Y%m%d%H%M%S")
+
     def _filter_frame_by_minute_window(
         self,
         df: pd.DataFrame,
@@ -1015,8 +1023,9 @@ class XTQuantProvider(BaseDataProvider):
             )
         start_time = self._format_minute_boundary(start_date, is_end=False)
         end_time = self._format_minute_boundary(end_date, is_end=True)
+        fetch_end_time = self._expand_futures_minute_fetch_end(end_time, freq)
         start_day = start_time[:8]
-        end_day = end_time[:8]
+        end_day = fetch_end_time[:8]
 
         all_data = []
         for raw_symbol in symbols:
@@ -1038,7 +1047,7 @@ class XTQuantProvider(BaseDataProvider):
                     "stock_code": xt_symbol,
                     "period": xt_freq,
                     "start_time": start_time or start_day,
-                    "end_time": end_time or end_day,
+                    "end_time": fetch_end_time or end_day,
                     "incrementally": None,
                 },
             )
@@ -1049,7 +1058,7 @@ class XTQuantProvider(BaseDataProvider):
                     "stock_list": [xt_symbol],
                     "period": xt_freq,
                     "start_time": start_time or start_day,
-                    "end_time": end_time or end_day,
+                    "end_time": fetch_end_time or end_day,
                     "dividend_type": "none",
                     "fill_data": True,
                     "use_client_data": False,

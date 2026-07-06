@@ -43,13 +43,17 @@ def test_xtquant_futures_minute_5m_uses_direct_xtquant_period():
     provider = XTQuantProvider()
     payload = {
         "rb2405.SF": {
-            "time": {0: 20240430093000},
-            "open": {0: 100.0},
-            "high": {0: 101.0},
-            "low": {0: 99.0},
-            "close": {0: 100.5},
-            "volume": {0: 1000},
-            "amount": {0: 100000.0},
+            "time": {
+                0: 20240430093000,
+                1: 20240430100000,
+                2: 20240430100500,
+            },
+            "open": {0: 100.0, 1: 101.0, 2: 102.0},
+            "high": {0: 101.0, 1: 102.0, 2: 103.0},
+            "low": {0: 99.0, 1: 100.0, 2: 101.0},
+            "close": {0: 100.5, 1: 101.5, 2: 102.5},
+            "volume": {0: 1000, 1: 1100, 2: 1200},
+            "amount": {0: 100000.0, 1: 110000.0, 2: 120000.0},
         }
     }
     provider._call_api = Mock(side_effect=[None, payload])
@@ -61,7 +65,10 @@ def test_xtquant_futures_minute_5m_uses_direct_xtquant_period():
         freq="5m",
     )
 
-    assert len(result) == 1
+    assert result["time"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist() == [
+        "2024-04-30 09:30:00",
+        "2024-04-30 10:00:00",
+    ]
     assert result["frequency"].iloc[0] == "5m"
     assert provider._call_api.call_args_list[0].args[1]["period"] == "5m"
     assert provider._call_api.call_args_list[1].args[1]["period"] == "5m"
@@ -71,7 +78,7 @@ def test_xtquant_futures_minute_5m_uses_direct_xtquant_period():
     )
     assert (
         provider._call_api.call_args_list[0].args[1]["end_time"]
-        == "20240430100000"
+        == "20240430100500"
     )
 
 
@@ -83,14 +90,51 @@ def test_xtquant_futures_minute_filters_cross_midnight_trading_window():
                 0: 20240430150000,
                 1: 20240430230000,
                 2: 20240501023000,
-                3: 20240501160000,
+                3: 20240501150000,
+                4: 20240501150100,
+                5: 20240501160000,
             },
-            "open": {0: 99.0, 1: 100.0, 2: 101.0, 3: 102.0},
-            "high": {0: 99.5, 1: 100.5, 2: 101.5, 3: 102.5},
-            "low": {0: 98.5, 1: 99.5, 2: 100.5, 3: 101.5},
-            "close": {0: 99.2, 1: 100.2, 2: 101.2, 3: 102.2},
-            "volume": {0: 10, 1: 20, 2: 30, 3: 40},
-            "amount": {0: 1000.0, 1: 2000.0, 2: 3000.0, 3: 4000.0},
+            "open": {
+                0: 99.0,
+                1: 100.0,
+                2: 101.0,
+                3: 102.0,
+                4: 103.0,
+                5: 104.0,
+            },
+            "high": {
+                0: 99.5,
+                1: 100.5,
+                2: 101.5,
+                3: 102.5,
+                4: 103.5,
+                5: 104.5,
+            },
+            "low": {
+                0: 98.5,
+                1: 99.5,
+                2: 100.5,
+                3: 101.5,
+                4: 102.5,
+                5: 103.5,
+            },
+            "close": {
+                0: 99.2,
+                1: 100.2,
+                2: 101.2,
+                3: 102.2,
+                4: 103.2,
+                5: 104.2,
+            },
+            "volume": {0: 10, 1: 20, 2: 30, 3: 40, 4: 50, 5: 60},
+            "amount": {
+                0: 1000.0,
+                1: 2000.0,
+                2: 3000.0,
+                3: 4000.0,
+                4: 5000.0,
+                5: 6000.0,
+            },
         }
     }
     provider._call_api = Mock(side_effect=[None, payload])
@@ -105,6 +149,7 @@ def test_xtquant_futures_minute_filters_cross_midnight_trading_window():
     assert result["time"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist() == [
         "2024-04-30 23:00:00",
         "2024-05-01 02:30:00",
+        "2024-05-01 15:00:00",
     ]
     assert (
         provider._call_api.call_args_list[0].args[1]["start_time"]
@@ -112,7 +157,7 @@ def test_xtquant_futures_minute_filters_cross_midnight_trading_window():
     )
     assert (
         provider._call_api.call_args_list[0].args[1]["end_time"]
-        == "20240501150000"
+        == "20240501150100"
     )
     assert (
         provider._call_api.call_args_list[1].args[1]["start_time"]
@@ -120,7 +165,7 @@ def test_xtquant_futures_minute_filters_cross_midnight_trading_window():
     )
     assert (
         provider._call_api.call_args_list[1].args[1]["end_time"]
-        == "20240501150000"
+        == "20240501150100"
     )
 
 
