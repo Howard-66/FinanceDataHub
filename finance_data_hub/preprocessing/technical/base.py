@@ -127,7 +127,7 @@ class IndicatorRegistry:
             factory: 创建指标实例的工厂函数
         """
         self._registry[name] = factory
-        logger.debug(f"Registered indicator: {name}")
+        # logger.debug(f"Registered indicator: {name}")
     
     def create(self, name: str) -> BaseIndicator:
         """
