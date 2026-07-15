@@ -37,12 +37,75 @@ FUTURES_SPOT_BASIS_HISTORY_START = "2011-01-04"
 FUTURES_SPOT_BASIS_CHUNK_DAYS = 31
 FUTURES_INVENTORY_SUPPORTED_EXCHANGES = {"DCE", "CZCE", "SHFE", "GFEX"}
 FUTURES_TERM_INSERT_BATCH_SIZE = 1000
+FUTURES_TERM_STRUCTURE_RATE_EPS = 1e-4
 FUTURES_PERIOD_LOOKBACK_DAYS = {
     "weekly": 7,
     "monthly": 31,
 }
 FUTURES_MINUTE_TRADING_DAY_START = datetime_time(21, 0, 0)
 FUTURES_MINUTE_TRADING_DAY_END = datetime_time(15, 0, 0)
+
+
+def _as_positive_float(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(number) or number <= 0:
+        return None
+    return number
+
+
+def _futures_curve_expiry(row: pd.Series) -> Optional[pd.Timestamp]:
+    for column in ("last_ddate", "delivery_month_start"):
+        value = row.get(column)
+        if pd.notna(value):
+            return pd.Timestamp(value)
+    return None
+
+
+def _calculate_futures_term_structure_flag(curve: pd.DataFrame) -> float:
+    """Return a signed term-structure signal for a maturity-sorted futures curve."""
+    if len(curve) < 2:
+        return 0.0
+
+    signed_rates: List[Tuple[float, int]] = []
+    for position in range(1, len(curve)):
+        near = curve.iloc[position - 1]
+        far = curve.iloc[position]
+        near_price = _as_positive_float(near.get("price"))
+        far_price = _as_positive_float(far.get("price"))
+        if near_price is None or far_price is None:
+            continue
+
+        signed_return = (near_price - far_price) / near_price
+        near_expiry = _futures_curve_expiry(near)
+        far_expiry = _futures_curve_expiry(far)
+        if near_expiry is not None and far_expiry is not None:
+            days_between = (far_expiry.date() - near_expiry.date()).days
+        else:
+            days_between = 0
+
+        if days_between > 0:
+            signed_rates.append((signed_return * (365 / days_between), days_between))
+        else:
+            signed_rates.append((signed_return, 1))
+
+    if not signed_rates:
+        return 0.0
+
+    if all(rate > FUTURES_TERM_STRUCTURE_RATE_EPS for rate, _ in signed_rates):
+        return 1.0
+    if all(rate < -FUTURES_TERM_STRUCTURE_RATE_EPS for rate, _ in signed_rates):
+        return -1.0
+
+    total_weight = sum(weight for _, weight in signed_rates)
+    weighted_rate = sum(rate * weight for rate, weight in signed_rates) / total_weight
+    if weighted_rate > FUTURES_TERM_STRUCTURE_RATE_EPS:
+        return 0.5
+    if weighted_rate < -FUTURES_TERM_STRUCTURE_RATE_EPS:
+        return -0.5
+    return 0.0
 
 
 def _convert_to_month_format(date_str: Optional[str]) -> Optional[str]:
@@ -3553,21 +3616,7 @@ class DataUpdater:
                     progress_callback(completed_groups, total_groups)
                 continue
 
-            prices = curve["price"].astype(float)
-            diffs = prices.diff().dropna()
-            trend = prices.iloc[-1] - prices.iloc[0] if len(prices) >= 2 else 0
-            if len(prices) < 2:
-                flag = 0
-            elif (diffs > 0).all():
-                flag = -1
-            elif (diffs < 0).all():
-                flag = 1
-            elif trend > 0:
-                flag = -0.5
-            elif trend < 0:
-                flag = 0.5
-            else:
-                flag = 0
+            flag = _calculate_futures_term_structure_flag(curve)
 
             primary = curve.iloc[0]
             secondary = curve.iloc[1] if len(curve) > 1 else None
@@ -3581,19 +3630,17 @@ class DataUpdater:
             if secondary is not None:
                 secondary_price = float(secondary["price"])
                 spread = primary_price - secondary_price
-                primary_expiry = primary.get("last_ddate") or primary.get(
-                    "delivery_month_start"
-                )
-                secondary_expiry = secondary.get("last_ddate") or secondary.get(
-                    "delivery_month_start"
-                )
+                primary_expiry = _futures_curve_expiry(primary)
+                secondary_expiry = _futures_curve_expiry(secondary)
             else:
                 primary_expiry = None
                 secondary_expiry = None
 
-            if pd.notna(primary_expiry) and pd.notna(secondary_expiry) and primary_price:
-                primary_expiry = pd.Timestamp(primary_expiry)
-                secondary_expiry = pd.Timestamp(secondary_expiry)
+            if (
+                primary_expiry is not None
+                and secondary_expiry is not None
+                and primary_price
+            ):
                 trade_ts = pd.Timestamp(trade_time)
                 days_to_primary = max((primary_expiry.date() - trade_ts.date()).days, 0)
                 days_between = (secondary_expiry.date() - primary_expiry.date()).days

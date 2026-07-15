@@ -184,9 +184,19 @@ SQL 初始化文件：
 
 当前实现思路：
 
-- 期限结构 `flag` 根据候选曲线的升贴水方向计算
+- 候选曲线优先使用品种主力月份配置；价格使用结算价，缺失时回退收盘价
+- 曲线按交割月份日期排序，并从持仓量最大的主力合约开始，只保留主力及更远月份
+- 期限结构 `flag` 使用相邻候选合约的有符号年化升贴水方向计算：
+  - “相邻候选合约”不是自然月份上的所有相邻合约，而是先按品种主力月份配置过滤后的相邻合约
+  - 例如 `RB` 配置为 `[1, 5, 10]`，则曲线候选为 RB01/RB05/RB10/...；不会把 RB02、RB03、RB04 纳入期限结构计算
+  - 若品种没有主力月份配置，才回退使用 1-12 月所有可交易合约
+  - 单段方向：`signed_rate = (near_price - far_price) / near_price * 365 / days_between_expiry`
+  - `signed_rate > 0` 表示近月强于远月，即反向市场/Backwardation，`flag` 为正
+  - `signed_rate < 0` 表示远月升水，即正向市场/Contango，`flag` 为负
+  - 所有相邻段同为正：`flag = 1`；同为负：`flag = -1`
+  - 混合曲线使用到期日差加权平均方向，正值为 `0.5`，负值为 `-0.5`，近似平坦为 `0`
 - 跨期价差记录主力/次主力合约及 `primary_close - secondary_close`
-- 展期收益率使用主次合约价格和到期日差计算年化值，不调用 AKShare 展期收益率接口
+- `annualized_roll_yield` 记录主次合约的远月相对近月年化升贴水：`(secondary_close - primary_close) / primary_close * 365 / days_between_expiry`，不调用 AKShare 展期收益率接口
 
 ## CLI 用法
 

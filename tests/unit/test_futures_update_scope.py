@@ -9,6 +9,7 @@ import pandas as pd
 import finance_data_hub.update.updater as updater_module
 from finance_data_hub.update.updater import (
     DataUpdater,
+    _calculate_futures_term_structure_flag,
     _futures_period_query_end,
     _is_all_futures_selector,
     _iter_date_chunks,
@@ -36,6 +37,49 @@ def test_normalize_futures_window_for_trade_date():
         "2024-04-30",
         "2024-04-30",
     )
+
+
+def test_calculate_futures_term_structure_flag_uses_signed_annualized_carry():
+    curve = pd.DataFrame(
+        {
+            "price": [100.0, 102.0, 104.0],
+            "last_ddate": [
+                pd.Timestamp("2024-05-15"),
+                pd.Timestamp("2024-06-15"),
+                pd.Timestamp("2024-07-15"),
+            ],
+        }
+    )
+
+    assert _calculate_futures_term_structure_flag(curve) == -1.0
+
+    curve["price"] = [104.0, 102.0, 100.0]
+    assert _calculate_futures_term_structure_flag(curve) == 1.0
+
+
+def test_calculate_futures_term_structure_flag_handles_mixed_and_flat_curves():
+    mixed_curve = pd.DataFrame(
+        {
+            "price": [100.0, 98.0, 99.0],
+            "last_ddate": [
+                pd.Timestamp("2024-05-15"),
+                pd.Timestamp("2024-06-15"),
+                pd.Timestamp("2024-07-15"),
+            ],
+        }
+    )
+    flat_curve = pd.DataFrame(
+        {
+            "price": [100.0, 100.0001],
+            "last_ddate": [
+                pd.Timestamp("2024-05-15"),
+                pd.Timestamp("2024-06-15"),
+            ],
+        }
+    )
+
+    assert _calculate_futures_term_structure_flag(mixed_curve) == 0.5
+    assert _calculate_futures_term_structure_flag(flat_curve) == 0.0
 
 
 def test_futures_period_query_end_uses_api_period_labels():
@@ -772,9 +816,11 @@ def test_preprocess_futures_term_metrics_flushes_batches_during_processing(monke
         )
         updater.data_ops.get_futures_daily_for_preprocess = AsyncMock(return_value=raw)
         events = []
+        inserted_flags = []
 
         async def insert_batch(data):
             events.append(("insert", len(data)))
+            inserted_flags.extend(data["flag"].tolist())
             return len(data)
 
         updater.data_ops.insert_futures_term_metrics_batch = AsyncMock(
@@ -796,7 +842,66 @@ def test_preprocess_futures_term_metrics_flushes_batches_during_processing(monke
         assert events[2] == ("progress", 1, 2)
         assert events[3] == ("insert", 1)
         assert events[-1] == ("progress", 2, 2)
+        assert inserted_flags == [-1.0, -1.0]
         assert updater.data_ops.insert_futures_term_metrics_batch.await_count == 2
+
+    asyncio.run(_run())
+
+
+def test_preprocess_futures_term_metrics_uses_configured_dominant_months(monkeypatch):
+    async def _run():
+        updater = DataUpdater(settings=Mock())
+        updater.data_ops = Mock()
+        updater._load_futures_dominant_months = Mock(return_value={"RB": [1, 5, 10]})
+        raw = pd.DataFrame(
+            {
+                "time": [
+                    pd.Timestamp("2023-12-01"),
+                    pd.Timestamp("2023-12-01"),
+                    pd.Timestamp("2023-12-01"),
+                ],
+                "symbol": ["RB2401.SHF", "RB2402.SHF", "RB2405.SHF"],
+                "product_code": ["RB", "RB", "RB"],
+                "exchange": ["SHFE", "SHFE", "SHFE"],
+                "close": [100.0, 101.0, 103.0],
+                "settle": [100.0, 101.0, 103.0],
+                "open_interest": [1000, 5000, 900],
+                "last_ddate": [
+                    pd.Timestamp("2024-01-15"),
+                    pd.Timestamp("2024-02-15"),
+                    pd.Timestamp("2024-05-15"),
+                ],
+                "delivery_month": [1, 2, 5],
+                "delivery_month_start": [
+                    pd.Timestamp("2024-01-01"),
+                    pd.Timestamp("2024-02-01"),
+                    pd.Timestamp("2024-05-01"),
+                ],
+            }
+        )
+        updater.data_ops.get_futures_daily_for_preprocess = AsyncMock(return_value=raw)
+        inserted = []
+
+        async def insert_batch(data):
+            inserted.append(data.copy())
+            return len(data)
+
+        updater.data_ops.insert_futures_term_metrics_batch = AsyncMock(
+            side_effect=insert_batch
+        )
+
+        count = await updater.preprocess_futures_term_metrics(
+            product_codes=["RB"],
+            start_date="2023-12-01",
+            end_date="2023-12-01",
+        )
+
+        assert count == 1
+        row = inserted[0].iloc[0]
+        assert row["candidate_count"] == 2
+        assert row["primary_contract"] == "RB2401.SHF"
+        assert row["secondary_contract"] == "RB2405.SHF"
+        assert row["flag"] == -1.0
 
     asyncio.run(_run())
 

@@ -1187,7 +1187,7 @@ FuturesTermMetricsSchema = DataFrameSchema(
         ColumnSchema("time", "datetime64[ns]", False, "交易日期"),
         ColumnSchema("product_code", "object", False, "品种代码"),
         ColumnSchema("exchange", "object", True, "交易所代码"),
-        ColumnSchema("flag", "float64", True, "期限结构信号"),
+        ColumnSchema("flag", "float64", True, "期限结构信号（+反向/-正向）"),
         ColumnSchema("primary_contract", "object", True, "主力合约"),
         ColumnSchema("primary_contract_close", "float64", True, "主力合约收盘价"),
         ColumnSchema("secondary_contract", "object", True, "次主力合约"),
