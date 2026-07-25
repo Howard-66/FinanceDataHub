@@ -38,7 +38,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 from rich.text import Text
 from rich.syntax import Syntax
 
-from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES, SUPPORTED_INDEX_WEIGHT_CODES
+from finance_data_hub.providers.tushare import SUPPORTED_INDEX_CODES
 from rich import print as rprint
 
 from finance_data_hub.config import get_settings, reload_settings
@@ -146,7 +146,7 @@ def update(
         None,
         "--symbols",
         "-s",
-        help="代码列表，用逗号分隔，如: 600519.SH,000858.SZ；期货支持 --symbols all 表示按 contract_basic 展开全量合约池"
+        help="代码列表，用逗号分隔，如: 600519.SH,000858.SZ；期货和指数支持 --symbols all 表示更新全量代码池"
     ),
     start_date: Optional[str] = typer.Option(
         None,
@@ -238,13 +238,13 @@ def update(
         - 使用--trade-date参数：获取指定交易日所有指数数据（如 --trade-date 2024-11-27）
 
         index_daily使用说明:
-        - 不指定--symbols时：更新项目支持的指数列表（SUPPORTED_INDEX_CODES）
+        - 不指定--symbols或指定--symbols all时：更新 Tushare 指数基础信息中的全部指数（申万行业指数请使用 sw_daily）
         - 指定--symbols时：获取指定指数的历史数据（如 --symbols 000300.SH）
         - 支持 --start-date 和 --end-date 指定日期范围
         - 不支持 --trade-date 单日批量更新模式
 
         index_weight使用说明:
-        - 不指定--symbols时：获取所有支持的指数数据（智能更新）
+        - 不指定--symbols或指定--symbols all时：获取 Tushare 指数基础信息中的全部指数数据（智能更新）
         - 指定--symbols时：获取指定指数的数据（如 --symbols 000300.SH,000905.SH）
         - 使用--trade-date参数：获取指定日期所有指数的成分权重（如 --trade-date 2024-06-30）
         - 支持 --start-date 和 --end-date 指定日期范围
@@ -371,6 +371,21 @@ def _is_timeseries_data(data_type: str) -> bool:
     return data_type not in non_timeseries_types
 
 
+def _is_symbols_all(symbol_list: Optional[List[str]]) -> bool:
+    if not symbol_list:
+        return False
+    lowered = {symbol.lower() for symbol in symbol_list}
+    return lowered == {"all"}
+
+
+def _validate_symbols_all(symbol_list: Optional[List[str]], scope_name: str) -> None:
+    if not symbol_list:
+        return
+    lowered = {symbol.lower() for symbol in symbol_list}
+    if "all" in lowered and len(lowered) > 1:
+        raise ValueError(f"{scope_name} --symbols all 不能与其他代码混用")
+
+
 FUTURE_DATASETS = {
     "basic",
     "mapping",
@@ -411,9 +426,9 @@ async def _run_update(
     if symbols:
         symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
     if asset_class == "future" and symbol_list:
-        lowered = {symbol.lower() for symbol in symbol_list}
-        if "all" in lowered and len(lowered) > 1:
-            raise ValueError("期货模式下 --symbols all 不能与其他代码混用")
+        _validate_symbols_all(symbol_list, "期货模式下")
+    if data_type in {"index_daily", "index_weight"} and symbol_list:
+        _validate_symbols_all(symbol_list, "指数模式下")
 
     # 设置默认日期；trade_date 模式不能自动注入 end_date，否则会破坏互斥参数。
     if not end_date and not trade_date and data_type != "trade_cal":
@@ -864,36 +879,39 @@ async def _run_smart_download(
 
     # 指数日线行情数据处理
     if data_type == "index_daily":
-        ts_code_list = symbol_list
+        ts_code_list = None if _is_symbols_all(symbol_list) else symbol_list
 
-        if not quiet:
-            console.print("[bold]智能下载策略:[/bold]")
-            console.print("  - 指数日线行情数据（沪深300、中证500、上证50、上证综指等）")
-            if ts_code_list:
-                console.print(f"  - 将更新 {len(ts_code_list)} 个指数")
-            else:
-                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_CODES)} 个指数")
-            console.print("")
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            resolved_ts_codes = (
+                updater.resolve_index_daily_codes()
+                if ts_code_list is None
+                else ts_code_list
+            )
 
-        index_count = len(ts_code_list) if ts_code_list else len(SUPPORTED_INDEX_CODES)
+            if not quiet:
+                console.print("[bold]智能下载策略:[/bold]")
+                console.print("  - 指数日线行情数据（全部 Tushare 指数目录，申万行业指数请使用 sw_daily）")
+                console.print(f"  - 将更新 {len(resolved_ts_codes)} 个指数")
+                console.print("")
 
-        with Progress(
-            get_spinner(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            SymbolCountColumn("指数"),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("正在获取指数日线行情数据...", total=index_count)
+            index_count = len(resolved_ts_codes)
 
-            async with DataUpdater(settings, config_path="sources.yml") as updater:
+            with Progress(
+                get_spinner(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                SymbolCountColumn("指数"),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("正在获取指数日线行情数据...", total=index_count)
+
                 def progress_callback(current, total):
                     progress.update(task, completed=current, total=total)
 
                 try:
                     count = await updater.update_index_daily(
-                        ts_code_list=ts_code_list if ts_code_list else SUPPORTED_INDEX_CODES,
+                        ts_code_list=resolved_ts_codes,
                         start_date=None,  # 智能下载
                         end_date=end_date,
                         force_update=False,
@@ -963,37 +981,39 @@ async def _run_smart_download(
     # 指数成分权重数据处理
     if data_type == "index_weight":
         # 获取指数代码列表
-        index_code_list = symbol_list  # 使用symbol_list作为指数代码列表
+        index_code_list = None if _is_symbols_all(symbol_list) else symbol_list
 
-        if not quiet:
-            console.print("[bold]智能下载策略:[/bold]")
-            console.print("  - 指数成分和权重数据（月度数据，沪深300、中证500等）")
-            if index_code_list:
-                console.print(f"  - 将更新 {len(index_code_list)} 个指数")
-            else:
-                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_WEIGHT_CODES)} 个指数")
-            console.print("")
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            resolved_index_codes = (
+                updater.resolve_index_weight_codes()
+                if index_code_list is None
+                else index_code_list
+            )
 
-        # 确定要更新的指数列表
-        index_count = len(index_code_list) if index_code_list else len(SUPPORTED_INDEX_WEIGHT_CODES)
+            if not quiet:
+                console.print("[bold]智能下载策略:[/bold]")
+                console.print("  - 指数成分和权重数据（月度数据，来自 Tushare 指数目录）")
+                console.print(f"  - 将更新 {len(resolved_index_codes)} 个指数")
+                console.print("")
 
-        with Progress(
-            get_spinner(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            SymbolCountColumn("指数"),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("正在获取指数成分权重数据...", total=index_count)
+            index_count = len(resolved_index_codes)
 
-            async with DataUpdater(settings, config_path="sources.yml") as updater:
+            with Progress(
+                get_spinner(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                SymbolCountColumn("指数"),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("正在获取指数成分权重数据...", total=index_count)
+
                 def progress_callback(current, total):
                     progress.update(task, completed=current, total=total)
 
                 try:
                     count = await updater.update_index_weight(
-                        index_list=index_code_list if index_code_list else SUPPORTED_INDEX_WEIGHT_CODES,
+                        index_list=resolved_index_codes,
                         start_date=start_date,  # 智能下载时为None
                         end_date=end_date,
                         trade_date=None,  # 智能更新不使用trade_date
@@ -1756,37 +1776,40 @@ async def _run_force_update(
 
     # 指数日线行情数据处理
     if data_type == "index_daily":
-        ts_code_list = symbol_list
+        ts_code_list = None if _is_symbols_all(symbol_list) else symbol_list
 
-        if not quiet:
-            console.print("[bold]强制更新策略:[/bold]")
-            console.print("  - 指数日线行情数据（沪深300、中证500、上证50、上证综指等）")
-            console.print("  - 使用指定的日期范围")
-            if ts_code_list:
-                console.print(f"  - 将更新 {len(ts_code_list)} 个指数")
-            else:
-                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_CODES)} 个指数")
-            console.print("")
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            resolved_ts_codes = (
+                updater.resolve_index_daily_codes()
+                if ts_code_list is None
+                else ts_code_list
+            )
 
-        index_count = len(ts_code_list) if ts_code_list else len(SUPPORTED_INDEX_CODES)
+            if not quiet:
+                console.print("[bold]强制更新策略:[/bold]")
+                console.print("  - 指数日线行情数据（全部 Tushare 指数目录，申万行业指数请使用 sw_daily）")
+                console.print("  - 使用指定的日期范围")
+                console.print(f"  - 将更新 {len(resolved_ts_codes)} 个指数")
+                console.print("")
 
-        with Progress(
-            get_spinner(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            SymbolCountColumn("指数"),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("正在获取指数日线行情数据...", total=index_count)
+            index_count = len(resolved_ts_codes)
 
-            async with DataUpdater(settings, config_path="sources.yml") as updater:
+            with Progress(
+                get_spinner(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                SymbolCountColumn("指数"),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("正在获取指数日线行情数据...", total=index_count)
+
                 def progress_callback(current, total):
                     progress.update(task, completed=current, total=total)
 
                 try:
                     count = await updater.update_index_daily(
-                        ts_code_list=ts_code_list if ts_code_list else SUPPORTED_INDEX_CODES,
+                        ts_code_list=resolved_ts_codes,
                         start_date=start_date,
                         end_date=end_date,
                         force_update=True,
@@ -1857,38 +1880,40 @@ async def _run_force_update(
     # 指数成分权重数据处理
     if data_type == "index_weight":
         # 获取指数代码列表
-        index_code_list = symbol_list  # 使用symbol_list作为指数代码列表
+        index_code_list = None if _is_symbols_all(symbol_list) else symbol_list
 
-        if not quiet:
-            console.print("[bold]强制更新策略:[/bold]")
-            console.print("  - 指数成分和权重数据（月度数据，沪深300、中证500等）")
-            console.print("  - 使用指定的日期范围")
-            if index_code_list:
-                console.print(f"  - 将更新 {len(index_code_list)} 个指数")
-            else:
-                console.print(f"  - 将更新 {len(SUPPORTED_INDEX_WEIGHT_CODES)} 个指数")
-            console.print("")
+        async with DataUpdater(settings, config_path="sources.yml") as updater:
+            resolved_index_codes = (
+                updater.resolve_index_weight_codes()
+                if index_code_list is None
+                else index_code_list
+            )
 
-        # 确定要更新的指数列表
-        index_count = len(index_code_list) if index_code_list else len(SUPPORTED_INDEX_WEIGHT_CODES)
+            if not quiet:
+                console.print("[bold]强制更新策略:[/bold]")
+                console.print("  - 指数成分和权重数据（月度数据，来自 Tushare 指数目录）")
+                console.print("  - 使用指定的日期范围")
+                console.print(f"  - 将更新 {len(resolved_index_codes)} 个指数")
+                console.print("")
 
-        with Progress(
-            get_spinner(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            SymbolCountColumn("指数"),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("正在获取指数成分权重数据...", total=index_count)
+            index_count = len(resolved_index_codes)
 
-            async with DataUpdater(settings, config_path="sources.yml") as updater:
+            with Progress(
+                get_spinner(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                SymbolCountColumn("指数"),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("正在获取指数成分权重数据...", total=index_count)
+
                 def progress_callback(current, total):
                     progress.update(task, completed=current, total=total)
 
                 try:
                     count = await updater.update_index_weight(
-                        index_list=index_code_list if index_code_list else SUPPORTED_INDEX_WEIGHT_CODES,
+                        index_list=resolved_index_codes,
                         start_date=start_date,
                         end_date=end_date,
                         trade_date=None,  # 强制更新不使用trade_date

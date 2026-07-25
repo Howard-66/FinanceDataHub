@@ -350,6 +350,96 @@ def test_cli_update_future_minute_trade_date_passed_to_updater():
     )
 
 
+def test_cli_update_index_daily_default_uses_full_index_catalog():
+    fake_updater = Mock()
+    fake_updater.resolve_index_daily_codes.return_value = [
+        "000300.CSI",
+        "000905.CSI",
+        "399107.SZ",
+    ]
+    fake_updater.update_index_daily = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--dataset",
+                "index_daily",
+            ],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.resolve_index_daily_codes.assert_called_once_with()
+    fake_updater.update_index_daily.assert_awaited_once_with(
+        ts_code_list=["000300.CSI", "000905.CSI", "399107.SZ"],
+        start_date=None,
+        end_date=ANY,
+        force_update=False,
+        progress_callback=ANY,
+    )
+
+
+def test_cli_update_index_weight_symbols_all_uses_full_index_catalog():
+    fake_updater = Mock()
+    fake_updater.resolve_index_weight_codes.return_value = [
+        "000300.CSI",
+        "000905.CSI",
+    ]
+    fake_updater.update_index_weight = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--dataset",
+                "index_weight",
+                "--symbols",
+                "all",
+                "--start-date",
+                "2024-01-01",
+                "--end-date",
+                "2024-01-31",
+            ],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.resolve_index_weight_codes.assert_called_once_with()
+    fake_updater.update_index_weight.assert_awaited_once_with(
+        index_list=["000300.CSI", "000905.CSI"],
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        trade_date=None,
+        force_update=True,
+        progress_callback=ANY,
+    )
+
+
+def test_cli_update_index_symbols_all_cannot_mix_with_other_codes():
+    result = runner.invoke(
+        app,
+        [
+            "update",
+            "--dataset",
+            "index_daily",
+            "--symbols",
+            "all,000300.SH",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--symbols all 不能与其他代码混用" in result.output
+
+
 def test_cli_update_future_minute_partial_failure_shows_error_sample():
     fake_updater = Mock()
     fake_updater.update_futures_minute = AsyncMock(return_value=0)

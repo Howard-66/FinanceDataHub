@@ -548,7 +548,7 @@ EOF
 | `minute_1` | 1分钟数据 | `fdh-cli update --dataset minute_1 --symbols 600519.SH` |
 | `minute_5` | 5分钟数据 | `fdh-cli update --dataset minute_5 --symbols 600519.SH` |
 | `adj_factor` | 复权因子 | `fdh-cli update --dataset adj_factor` |
-| `index_daily` | 指数日线行情 | `fdh-cli update --dataset index_daily --symbols 000300.SH` |
+| `index_daily` | 指数日线行情 | `fdh-cli update --dataset index_daily --symbols all` |
 
 ### A 股估值缺失补值
 
@@ -1109,9 +1109,9 @@ fdh-cli update --dataset m   [--force] [--start-date 2020-01-31 --end-date 2024-
 fdh-cli update --dataset pmi [--force] [--start-date 2020-01-31 --end-date 2024-12-31]
 
 # 指数行情 / 指标 / 成分权重
-fdh-cli update --dataset index_daily       [--symbols 000300.SH] [--start-date ... --end-date ...]
+fdh-cli update --dataset index_daily       [--symbols all|000300.SH] [--start-date ... --end-date ...]
 fdh-cli update --dataset index_dailybasic  [--symbols 000001.SH] [--trade-date 2024-11-27]
-fdh-cli update --dataset index_weight      [--symbols 000300.SH,000905.SH] [--trade-date 2024-06-30]
+fdh-cli update --dataset index_weight      [--symbols all|000300.SH,000905.SH] [--trade-date 2024-06-30]
 
 # 财务三大报表 / 财务指标（按股票）
 fdh-cli update --dataset fina_indicator --symbols 600519.SH,000858.SZ

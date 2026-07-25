@@ -276,8 +276,9 @@ fdh-cli preprocess run --all --category technical --market HK \
 
 #### 4.2 更新指数日线行情
 ```bash
-# 更新项目支持的指数日线行情（智能增量）
+# 更新 Tushare 指数目录中的全部指数日线行情（智能增量）
 fdh-cli update --dataset index_daily
+fdh-cli update --dataset index_daily --symbols all
 
 # 更新指定指数
 fdh-cli update --dataset index_daily --symbols 000300.SH

@@ -55,6 +55,34 @@ def test_call_api_returns_dataframe_after_successful_call():
     assert list(result["ts_code"]) == ["RB2405.SHF"]
 
 
+def test_index_basic_codes_resolves_catalog_and_excludes_markets():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        side_effect=[
+            pd.DataFrame(
+                {
+                    "ts_code": ["000300.CSI", "000905.CSI"],
+                    "market": ["CSI", "CSI"],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "ts_code": ["801010.SI", "801020.SI"],
+                    "market": ["SW", "SW"],
+                }
+            ),
+        ]
+    )
+
+    result = provider.get_index_basic_codes(
+        markets=["CSI", "SW"],
+        exclude_markets=["SW"],
+    )
+
+    assert result == ["000300.CSI", "000905.CSI"]
+    assert provider._call_api.call_count == 2
+
+
 def test_futures_monthly_normalizes_period_end_and_deduplicates():
     provider = TushareProvider(config={"token": "test-token"})
     provider._call_api = Mock(

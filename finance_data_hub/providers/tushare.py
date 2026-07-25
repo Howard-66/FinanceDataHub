@@ -6,7 +6,7 @@ Tushare数据提供者
 
 import time
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import pandas as pd
 import tushare as ts
@@ -73,6 +73,16 @@ SUPPORTED_INDEX_CODES = [
     "399006.SZ",  # 创业板指
     "399300.SZ",  # 沪深300
     "399905.SZ",  # 中证500
+]
+
+TUSHARE_INDEX_MARKETS = [
+    "MSCI",
+    "CSI",
+    "SSE",
+    "SZSE",
+    "CICC",
+    "SW",
+    "OTH",
 ]
 
 # 支持的交易所列表（用于交易日历）
@@ -2073,6 +2083,81 @@ class TushareProvider(BaseDataProvider):
 
         logger.info(f"Total fetched {len(final_df)} index daily records")
         return final_df
+
+    def get_index_basic(
+        self,
+        market: Optional[str] = None,
+        markets: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        """
+        获取指数基础信息。
+
+        Args:
+            market: 单个指数市场代码
+            markets: 多个指数市场代码；未指定时拉取 Tushare 支持的全部市场
+
+        Returns:
+            pd.DataFrame: 指数基础信息
+        """
+        if market and markets:
+            raise ValueError("market cannot be used with markets")
+
+        index_markets = markets or ([market] if market else TUSHARE_INDEX_MARKETS)
+        fields = (
+            "ts_code,name,fullname,market,publisher,index_type,category,"
+            "base_date,base_point,list_date,weight_rule,desc,exp_date"
+        )
+        all_dataframes = []
+
+        for index_market in index_markets:
+            logger.info(f"Fetching index_basic for market={index_market}")
+            df = self._call_api("index_basic", market=index_market, fields=fields)
+            if df is None or df.empty:
+                logger.debug(f"No index_basic data for market={index_market}")
+                continue
+            all_dataframes.append(df)
+
+        if not all_dataframes:
+            logger.warning("No index_basic data returned from Tushare")
+            return pd.DataFrame(columns=fields.split(","))
+
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        if "ts_code" not in final_df.columns:
+            logger.warning("index_basic response missing ts_code column")
+            return pd.DataFrame(columns=fields.split(","))
+
+        final_df = final_df.dropna(subset=["ts_code"])
+        final_df["ts_code"] = final_df["ts_code"].astype(str).str.strip()
+        final_df = final_df[final_df["ts_code"] != ""]
+        final_df = final_df.drop_duplicates(subset=["ts_code"]).reset_index(drop=True)
+        return final_df
+
+    def get_index_basic_codes(
+        self,
+        market: Optional[str] = None,
+        markets: Optional[List[str]] = None,
+        exclude_markets: Optional[List[str]] = None,
+    ) -> List[str]:
+        """
+        获取指数基础信息中的 TS 指数代码列表。
+
+        Args:
+            market: 单个指数市场代码
+            markets: 多个指数市场代码；未指定时拉取 Tushare 支持的全部市场
+            exclude_markets: 需要排除的市场代码
+
+        Returns:
+            List[str]: 去重后的指数代码列表
+        """
+        df = self.get_index_basic(market=market, markets=markets)
+        if df.empty or "ts_code" not in df.columns:
+            return []
+
+        if exclude_markets and "market" in df.columns:
+            excluded = {item.upper() for item in exclude_markets}
+            df = df[~df["market"].astype(str).str.upper().isin(excluded)]
+
+        return df["ts_code"].dropna().astype(str).str.strip().drop_duplicates().tolist()
 
     def get_index_dailybasic(
         self,

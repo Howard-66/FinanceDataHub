@@ -297,8 +297,9 @@ fdh-cli preprocess run --all --category fundamental
 # 更新复权因子
 fdh-cli update --dataset adj_factor
 
-# 更新指数日线行情（项目支持指数）
+# 更新指数日线行情（默认更新 Tushare 指数目录中的全部指数）
 fdh-cli update --dataset index_daily
+fdh-cli update --dataset index_daily --symbols all
 fdh-cli update --dataset index_daily --symbols 000300.SH
 ```
 

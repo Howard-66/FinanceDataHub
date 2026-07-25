@@ -26,7 +26,6 @@ from finance_data_hub.config import Settings
 from finance_data_hub.providers.tushare import (
     SUPPORTED_INDEX_CODES,
     SUPPORTED_EXCHANGES,
-    SUPPORTED_INDEX_WEIGHT_CODES,
     SUPPORTED_FUTURES_EXCHANGES,
     SUPPORTED_FUTURES_INDEX_CODES,
 )
@@ -44,6 +43,22 @@ FUTURES_PERIOD_LOOKBACK_DAYS = {
 }
 FUTURES_MINUTE_TRADING_DAY_START = datetime_time(21, 0, 0)
 FUTURES_MINUTE_TRADING_DAY_END = datetime_time(15, 0, 0)
+INDEX_DAILY_EXCLUDED_CATALOG_MARKETS = {"SW"}
+
+
+def _is_all_symbol_request(symbols: Optional[List[str]]) -> bool:
+    if not symbols:
+        return False
+    lowered = {symbol.lower() for symbol in symbols}
+    return lowered == {"all"}
+
+
+def _validate_no_mixed_all(symbols: Optional[List[str]], scope_name: str) -> None:
+    if not symbols:
+        return
+    lowered = {symbol.lower() for symbol in symbols}
+    if "all" in lowered and len(lowered) > 1:
+        raise ValueError(f"{scope_name} --symbols all 不能与其他代码混用")
 
 
 def _as_positive_float(value: Any) -> Optional[float]:
@@ -406,6 +421,45 @@ class DataUpdater:
             for symbol in symbols
             if infer_market_from_symbol(symbol, default="CN") == market
         ]
+
+    def _resolve_index_catalog_codes(
+        self,
+        data_type: str,
+        exclude_markets: Optional[set[str]] = None,
+    ) -> List[str]:
+        """Resolve all index codes from Tushare index_basic."""
+        if not self.router:
+            raise RuntimeError("DataUpdater is not initialized")
+
+        try:
+            codes = self.router.route(
+                asset_class="index",
+                data_type=data_type,
+                method_name="get_index_basic_codes",
+                exclude_markets=sorted(exclude_markets or []),
+            )
+            if codes:
+                logger.info(f"Resolved {len(codes)} index codes from index_basic")
+                return list(codes)
+        except Exception as exc:
+            raise ValueError(
+                f"无法从 index_basic 解析全量指数列表，请检查 Tushare 配置或权限: {exc}"
+            ) from exc
+
+        raise ValueError("index_basic 未返回任何指数代码，无法执行全量指数更新")
+
+    def resolve_index_daily_codes(self) -> List[str]:
+        """Resolve all index codes suitable for index_daily updates."""
+        return self._resolve_index_catalog_codes(
+            data_type="daily",
+            exclude_markets=INDEX_DAILY_EXCLUDED_CATALOG_MARKETS,
+        )
+
+    def resolve_index_weight_codes(self) -> List[str]:
+        """Resolve all index codes suitable for index_weight updates."""
+        return self._resolve_index_catalog_codes(
+            data_type="index_weight",
+        )
 
     @staticmethod
     def _expand_hk_adj_factor_to_daily(
@@ -1605,8 +1659,9 @@ class DataUpdater:
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
-        if ts_code_list is None:
-            ts_code_list = SUPPORTED_INDEX_CODES
+        _validate_no_mixed_all(ts_code_list, "指数日线")
+        if ts_code_list is None or _is_all_symbol_request(ts_code_list):
+            ts_code_list = self.resolve_index_daily_codes()
 
         logger.info(
             f"Updating index_daily for {len(ts_code_list)} indexes "
@@ -2592,8 +2647,9 @@ class DataUpdater:
             raise ValueError("trade_date 不能与 start_date/end_date 同时指定")
 
         # 默认使用所有支持的指数
-        if index_list is None:
-            index_list = SUPPORTED_INDEX_WEIGHT_CODES
+        _validate_no_mixed_all(index_list, "指数成分权重")
+        if index_list is None or _is_all_symbol_request(index_list):
+            index_list = self.resolve_index_weight_codes()
 
         logger.info(
             f"Updating index_weight for {len(index_list)} indexes "
