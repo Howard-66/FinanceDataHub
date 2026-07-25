@@ -1069,6 +1069,43 @@ class FinanceDataHub:
         """
         return await self.ops.get_cn_pmi(start_date, end_date)
 
+    def get_index_basic(
+        self,
+        ts_code: Optional[str] = None,
+        market: Optional[str] = None,
+        publisher: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的指数基本信息（同步方法）。
+
+        Args:
+            ts_code: TS 指数代码，如 ``000300.SH``；None 表示不按代码过滤。
+            market: Tushare 指数市场代码，如 ``SSE``、``CSI``、``SW``。
+            publisher: 指数发布商。
+            category: 指数类别。
+
+        Returns:
+            指数基本信息，字段与 Tushare ``index_basic`` 保持一致。
+        """
+        return asyncio.run(
+            self.get_index_basic_async(ts_code, market, publisher, category)
+        )
+
+    async def get_index_basic_async(
+        self,
+        ts_code: Optional[str] = None,
+        market: Optional[str] = None,
+        publisher: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的指数基本信息（异步方法）。"""
+        return await self.ops.get_index_basic(
+            ts_code=ts_code,
+            market=market,
+            publisher=publisher,
+            category=category,
+        )
+
     def get_index_daily(
         self,
         ts_code: Optional[str] = None,

@@ -10,32 +10,119 @@ from finance_data_hub.update.updater import DataUpdater
 async def test_update_index_daily_default_resolves_full_catalog():
     updater = DataUpdater(settings=Mock())
     updater.router = Mock()
-    updater.router.route.side_effect = [
-        ["000300.CSI", "000905.CSI"],
-        pd.DataFrame(
-            {
-                "ts_code": ["000300.CSI"],
-                "trade_date": [pd.Timestamp("2024-01-02")],
-            }
-        ),
-        pd.DataFrame(
-            {
-                "ts_code": ["000905.CSI"],
-                "trade_date": [pd.Timestamp("2024-01-02")],
-            }
-        ),
-    ]
+    updater.router.route.return_value = pd.DataFrame(
+        {
+            "ts_code": ["000300.CSI", "000905.CSI", "801010.SI"],
+            "trade_date": [pd.Timestamp("2024-01-02")] * 3,
+        }
+    )
     updater.data_ops = Mock()
+    updater.data_ops.get_index_basic_codes = AsyncMock(
+        return_value=["000300.CSI", "000905.CSI"]
+    )
     updater.data_ops.get_latest_index_daily_date = AsyncMock(return_value=None)
-    updater.data_ops.insert_index_daily_batch = AsyncMock(side_effect=[1, 1])
+    updater.data_ops.get_earliest_index_basic_list_date = AsyncMock(
+        return_value="2024-01-01"
+    )
+    updater.data_ops.get_trade_dates = AsyncMock(return_value=["2024-01-02"])
+    updater.data_ops.insert_index_daily_batch = AsyncMock(return_value=2)
 
     result = await updater.update_index_daily(end_date="2024-01-31")
 
     assert result == 2
-    first_call = updater.router.route.call_args_list[0]
-    assert first_call.kwargs["method_name"] == "get_index_basic_codes"
-    assert first_call.kwargs["exclude_markets"] == ["SW"]
-    assert updater.data_ops.get_latest_index_daily_date.await_count == 2
+    updater.data_ops.get_index_basic_codes.assert_awaited_once_with(
+        exclude_markets=["SW"],
+        active_date="2024-01-31",
+    )
+    updater.data_ops.get_latest_index_daily_date.assert_awaited_once_with()
+    updater.router.route.assert_called_once_with(
+        asset_class="index",
+        data_type="daily",
+        method_name="get_index_daily",
+        trade_date="2024-01-02",
+    )
+    inserted = updater.data_ops.insert_index_daily_batch.await_args.args[0]
+    assert list(inserted["ts_code"]) == ["000300.CSI", "000905.CSI"]
+
+
+@pytest.mark.asyncio
+async def test_update_index_daily_force_all_uses_earliest_list_date_and_trade_dates():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.router.route.side_effect = [
+        pd.DataFrame(
+            {
+                "ts_code": ["000300.CSI"],
+                "trade_date": [pd.Timestamp("2005-04-08")],
+            }
+        ),
+        pd.DataFrame(
+            {
+                "ts_code": ["000300.CSI"],
+                "trade_date": [pd.Timestamp("2005-04-11")],
+            }
+        ),
+    ]
+    updater.data_ops = Mock()
+    updater.data_ops.get_index_basic_codes = AsyncMock(return_value=["000300.CSI"])
+    updater.data_ops.get_earliest_index_basic_list_date = AsyncMock(
+        return_value="2005-04-08"
+    )
+    updater.data_ops.get_trade_dates = AsyncMock(
+        return_value=["2005-04-08", "2005-04-11"]
+    )
+    updater.data_ops.insert_index_daily_batch = AsyncMock(side_effect=[1, 1])
+
+    result = await updater.update_index_daily(
+        ts_code_list=["all"],
+        end_date="2005-04-30",
+        force_update=True,
+    )
+
+    assert result == 2
+    updater.data_ops.get_index_basic_codes.assert_awaited_once_with(
+        exclude_markets=["SW"],
+        active_date=None,
+    )
+    updater.data_ops.get_earliest_index_basic_list_date.assert_awaited_once_with(
+        exclude_markets=["SW"],
+    )
+    updater.data_ops.get_trade_dates.assert_awaited_once_with(
+        exchange="SSE",
+        start_date="2005-04-08",
+        end_date="2005-04-30",
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_index_daily_trade_date_fetches_once_and_filters_catalog():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.router.route.return_value = pd.DataFrame(
+        {
+            "ts_code": ["000300.CSI", "801010.SI"],
+            "trade_date": [pd.Timestamp("2024-06-30")] * 2,
+        }
+    )
+    updater.data_ops = Mock()
+    updater.data_ops.get_index_basic_codes = AsyncMock(return_value=["000300.CSI"])
+    updater.data_ops.insert_index_daily_batch = AsyncMock(return_value=1)
+
+    result = await updater.update_index_daily(trade_date="2024-06-30")
+
+    assert result == 1
+    updater.data_ops.get_index_basic_codes.assert_awaited_once_with(
+        exclude_markets=["SW"],
+        active_date="2024-06-30",
+    )
+    updater.router.route.assert_called_once_with(
+        asset_class="index",
+        data_type="daily",
+        method_name="get_index_daily",
+        trade_date="2024-06-30",
+    )
+    inserted = updater.data_ops.insert_index_daily_batch.await_args.args[0]
+    assert list(inserted["ts_code"]) == ["000300.CSI"]
 
 
 @pytest.mark.asyncio
@@ -43,7 +130,6 @@ async def test_update_index_weight_symbols_all_resolves_full_catalog():
     updater = DataUpdater(settings=Mock())
     updater.router = Mock()
     updater.router.route.side_effect = [
-        ["000300.CSI", "000905.CSI"],
         pd.DataFrame(
             {
                 "index_code": ["000300.CSI"],
@@ -62,6 +148,9 @@ async def test_update_index_weight_symbols_all_resolves_full_catalog():
         ),
     ]
     updater.data_ops = Mock()
+    updater.data_ops.get_index_basic_codes = AsyncMock(
+        return_value=["000300.CSI", "000905.CSI"]
+    )
     updater.data_ops.get_latest_index_weight_date = AsyncMock(return_value=None)
     updater.data_ops.insert_index_weight_batch = AsyncMock(side_effect=[1, 1])
 
@@ -71,7 +160,34 @@ async def test_update_index_weight_symbols_all_resolves_full_catalog():
     )
 
     assert result == 2
-    first_call = updater.router.route.call_args_list[0]
-    assert first_call.kwargs["method_name"] == "get_index_basic_codes"
-    assert first_call.kwargs["data_type"] == "index_weight"
+    updater.data_ops.get_index_basic_codes.assert_awaited_once_with(
+        exclude_markets=[],
+        active_date="2024-01-31",
+    )
     assert updater.data_ops.get_latest_index_weight_date.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_update_index_basic_refreshes_selected_markets():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.router.route.return_value = pd.DataFrame(
+        {
+            "ts_code": ["000001.SH"],
+            "name": ["上证综指"],
+            "market": ["SSE"],
+        }
+    )
+    updater.data_ops = Mock()
+    updater.data_ops.insert_index_basic_batch = AsyncMock(return_value=1)
+
+    result = await updater.update_index_basic(markets=["sse"])
+
+    assert result == 1
+    updater.router.route.assert_called_once_with(
+        asset_class="index",
+        data_type="basic",
+        method_name="get_index_basic",
+        markets=["SSE"],
+    )
+    updater.data_ops.insert_index_basic_batch.assert_awaited_once()

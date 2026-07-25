@@ -352,11 +352,6 @@ def test_cli_update_future_minute_trade_date_passed_to_updater():
 
 def test_cli_update_index_daily_default_uses_full_index_catalog():
     fake_updater = Mock()
-    fake_updater.resolve_index_daily_codes.return_value = [
-        "000300.CSI",
-        "000905.CSI",
-        "399107.SZ",
-    ]
     fake_updater.update_index_daily = AsyncMock(return_value=0)
 
     fake_context = Mock()
@@ -374,9 +369,8 @@ def test_cli_update_index_daily_default_uses_full_index_catalog():
         )
 
     assert result.exit_code == 0
-    fake_updater.resolve_index_daily_codes.assert_called_once_with()
     fake_updater.update_index_daily.assert_awaited_once_with(
-        ts_code_list=["000300.CSI", "000905.CSI", "399107.SZ"],
+        ts_code_list=None,
         start_date=None,
         end_date=ANY,
         force_update=False,
@@ -384,12 +378,55 @@ def test_cli_update_index_daily_default_uses_full_index_catalog():
     )
 
 
+def test_cli_update_index_basic_defaults_to_all_tushare_markets():
+    fake_updater = Mock()
+    fake_updater.update_index_basic = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(app, ["update", "--dataset", "index_basic"])
+
+    assert result.exit_code == 0
+    fake_updater.update_index_basic.assert_awaited_once_with(markets=None)
+
+
+def test_cli_update_index_basic_uses_symbols_as_markets():
+    fake_updater = Mock()
+    fake_updater.update_index_basic = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            ["update", "--dataset", "index_basic", "--symbols", "sse,sw"],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.update_index_basic.assert_awaited_once_with(markets=["SSE", "SW"])
+
+
+def test_cli_update_index_basic_rejects_date_arguments():
+    result = runner.invoke(
+        app,
+        ["update", "--dataset", "index_basic", "--trade-date", "2024-01-02"],
+    )
+
+    assert result.exit_code != 0
+    assert "index_basic 是非时间序列数据" in result.output
+
+
 def test_cli_update_index_weight_symbols_all_uses_full_index_catalog():
     fake_updater = Mock()
-    fake_updater.resolve_index_weight_codes.return_value = [
+    fake_updater.resolve_index_weight_codes = AsyncMock(return_value=[
         "000300.CSI",
         "000905.CSI",
-    ]
+    ])
     fake_updater.update_index_weight = AsyncMock(return_value=0)
 
     fake_context = Mock()
@@ -413,7 +450,7 @@ def test_cli_update_index_weight_symbols_all_uses_full_index_catalog():
         )
 
     assert result.exit_code == 0
-    fake_updater.resolve_index_weight_codes.assert_called_once_with()
+    fake_updater.resolve_index_weight_codes.assert_awaited_once_with(active_date="2024-01-01")
     fake_updater.update_index_weight.assert_awaited_once_with(
         index_list=["000300.CSI", "000905.CSI"],
         start_date="2024-01-01",
@@ -438,6 +475,98 @@ def test_cli_update_index_symbols_all_cannot_mix_with_other_codes():
 
     assert result.exit_code != 0
     assert "--symbols all 不能与其他代码混用" in result.output
+
+
+def test_cli_update_index_daily_trade_date_uses_batch_updater():
+    fake_updater = Mock()
+    fake_updater.initialize = AsyncMock()
+    fake_updater.close = AsyncMock()
+    fake_updater.update_index_daily = AsyncMock(return_value=0)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_updater):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--dataset",
+                "index_daily",
+                "--trade-date",
+                "2024-06-30",
+            ],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.update_index_daily.assert_awaited_once_with(
+        trade_date="2024-06-30",
+        force_update=True,
+        progress_callback=ANY,
+    )
+    fake_updater.close.assert_awaited_once()
+
+
+def test_cli_update_index_daily_force_all_keeps_catalog_request_for_date_batch():
+    fake_updater = Mock()
+    fake_updater.update_index_daily = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--dataset",
+                "index_daily",
+                "--symbols",
+                "all",
+                "--force",
+            ],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.update_index_daily.assert_awaited_once_with(
+        ts_code_list=None,
+        start_date=None,
+        end_date=ANY,
+        force_update=True,
+        progress_callback=ANY,
+    )
+
+
+def test_cli_update_index_weight_trade_date_uses_local_index_catalog():
+    fake_updater = Mock()
+    fake_updater.initialize = AsyncMock()
+    fake_updater.close = AsyncMock()
+    fake_updater.resolve_index_weight_codes = AsyncMock(
+        return_value=["000300.CSI", "000905.CSI"]
+    )
+    fake_updater.update_index_weight = AsyncMock(return_value=0)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_updater):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--dataset",
+                "index_weight",
+                "--trade-date",
+                "2024-06-30",
+            ],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.resolve_index_weight_codes.assert_awaited_once_with(
+        active_date="2024-06-30"
+    )
+    fake_updater.update_index_weight.assert_awaited_once_with(
+        index_list=["000300.CSI", "000905.CSI"],
+        trade_date="2024-06-30",
+        force_update=True,
+        progress_callback=ANY,
+    )
+    fake_updater.close.assert_awaited_once()
 
 
 def test_cli_update_future_minute_partial_failure_shows_error_sample():

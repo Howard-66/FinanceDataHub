@@ -179,6 +179,7 @@ class DatabaseInitializer:
             'symbol_minute',
             'daily_basic',
             'adj_factor',
+            'index_basic',
             'index_daily',
             'symbol_weekly',       # 连续聚合视图
             'symbol_monthly',      # 连续聚合视图

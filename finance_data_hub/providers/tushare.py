@@ -30,6 +30,7 @@ from finance_data_hub.providers.schema import (
     CNPPISchema,
     CNMSchema,
     CNPMISchema,
+    IndexBasicSchema,
     IndexDailySchema,
     IndexDailybasicSchema,
     IndexWeightSchema,
@@ -1960,7 +1961,7 @@ class TushareProvider(BaseDataProvider):
 
         Args:
             ts_code: 指数代码（如000300.SH），支持多值（逗号分隔），None 表示使用项目支持的指数列表
-            trade_date: 交易日期（YYYY-MM-DD 或 YYYYMMDD），注意：不支持仅 trade_date 全指数批量模式
+            trade_date: 交易日期（YYYY-MM-DD 或 YYYYMMDD），未指定 ts_code 时按交易日获取全量指数
             start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD）
             end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD）
 
@@ -1973,10 +1974,6 @@ class TushareProvider(BaseDataProvider):
             f"Fetching index daily data (ts_code={ts_code}, trade_date={trade_date}, "
             f"start_date={start_date}, end_date={end_date})"
         )
-
-        # 参数约束：index_daily 接口不支持仅 trade_date 拉取全部指数
-        if trade_date and not ts_code:
-            raise ValueError("index_daily does not support trade_date-only full-index query; please specify ts_code")
 
         # 参数约束：trade_date 与日期范围互斥
         if trade_date and (start_date or end_date):
@@ -2005,6 +2002,23 @@ class TushareProvider(BaseDataProvider):
             "vol": "vol",
             "amount": "amount",
         }
+
+        if trade_date and not ts_code:
+            api_params = {
+                "trade_date": trade_date,
+                "fields": "ts_code,trade_date,close,open,high,low,pre_close,change,pct_chg,vol,amount",
+            }
+            df = self._call_api("index_daily", **api_params)
+            if df is None or df.empty:
+                logger.warning(f"No index daily data returned for trade_date={trade_date}")
+                return pd.DataFrame(columns=IndexDailySchema.get_required_columns())
+
+            df = convert_to_standard_columns(df, column_mapping)
+            df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
+            df = df.drop_duplicates(subset=["trade_date", "ts_code"]).sort_values(
+                ["trade_date", "ts_code"]
+            ).reset_index(drop=True)
+            return validate_dataframe(df, IndexDailySchema, provider_name=self.name)
 
         if ts_code:
             index_codes = [c.strip() for c in ts_code.split(",") if c.strip()]
@@ -2088,6 +2102,11 @@ class TushareProvider(BaseDataProvider):
         self,
         market: Optional[str] = None,
         markets: Optional[List[str]] = None,
+        ts_code: Optional[str] = None,
+        symbol: Optional[str] = None,
+        name: Optional[str] = None,
+        publisher: Optional[str] = None,
+        category: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         获取指数基础信息。
@@ -2095,14 +2114,26 @@ class TushareProvider(BaseDataProvider):
         Args:
             market: 单个指数市场代码
             markets: 多个指数市场代码；未指定时拉取 Tushare 支持的全部市场
+            ts_code: TS 指数代码
+            symbol: 指数代码，支持逗号分隔的多个代码
+            name: 指数简称
+            publisher: 指数发布商
+            category: 指数类别
 
         Returns:
             pd.DataFrame: 指数基础信息
         """
+        # SmartRouter 会将宽市场（CN/HK/ALL）自动传给具有 ``market``
+        # 形参的 Provider 方法。index_basic 的 market 则是 Tushare 专用的
+        # 指数市场枚举，两者语义不同；宽市场仅用于路由，不应传给接口。
+        if market and str(market).upper() in {"CN", "HK", "ALL"}:
+            market = None
+
         if market and markets:
             raise ValueError("market cannot be used with markets")
 
         index_markets = markets or ([market] if market else TUSHARE_INDEX_MARKETS)
+        index_markets = [str(index_market).upper() for index_market in index_markets]
         fields = (
             "ts_code,name,fullname,market,publisher,index_type,category,"
             "base_date,base_point,list_date,weight_rule,desc,exp_date"
@@ -2111,7 +2142,18 @@ class TushareProvider(BaseDataProvider):
 
         for index_market in index_markets:
             logger.info(f"Fetching index_basic for market={index_market}")
-            df = self._call_api("index_basic", market=index_market, fields=fields)
+            api_params = {"market": index_market, "fields": fields}
+            for param_name, param_value in {
+                "ts_code": ts_code,
+                "symbol": symbol,
+                "name": name,
+                "publisher": publisher,
+                "category": category,
+            }.items():
+                if param_value:
+                    api_params[param_name] = param_value
+
+            df = self._call_api("index_basic", **api_params)
             if df is None or df.empty:
                 logger.debug(f"No index_basic data for market={index_market}")
                 continue
@@ -2129,8 +2171,31 @@ class TushareProvider(BaseDataProvider):
         final_df = final_df.dropna(subset=["ts_code"])
         final_df["ts_code"] = final_df["ts_code"].astype(str).str.strip()
         final_df = final_df[final_df["ts_code"] != ""]
-        final_df = final_df.drop_duplicates(subset=["ts_code"]).reset_index(drop=True)
-        return final_df
+        final_df = final_df.drop_duplicates(subset=["ts_code"], keep="last")
+        final_df = validate_dataframe(
+            final_df,
+            IndexBasicSchema,
+            provider_name=self.name,
+        )
+        # validate_dataframe 将 object 列转换为字符串；恢复接口中真正的空值，
+        # 防止数据库写入字面量 "None" 或 "nan"。
+        for column in (
+            "name",
+            "fullname",
+            "market",
+            "publisher",
+            "index_type",
+            "category",
+            "weight_rule",
+            "desc",
+        ):
+            if column in final_df.columns:
+                final_df[column] = final_df[column].replace(
+                    {"None": None, "nan": None, "<NA>": None}
+                )
+        return final_df.sort_values(["market", "ts_code"], na_position="last").reset_index(
+            drop=True
+        )
 
     def get_index_basic_codes(
         self,

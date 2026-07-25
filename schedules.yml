@@ -661,6 +661,20 @@ jobs:
       max_retries: 2
       delay: 600
 
+  index_basic_update:
+    enabled: true
+    type: download
+    dataset: index_basic
+    schedule:
+      type: cron
+      hour: 21
+      minute: 20
+      day_of_week: "mon-fri"
+    # 静态元数据：每次刷新全部 Tushare 指数市场目录。
+    retry:
+      max_retries: 3
+      delay: 600
+
   index_daily_update:
     enabled: true
     type: download

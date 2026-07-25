@@ -156,6 +156,11 @@ routing_strategy:
 
   # 指数数据路由
   index:
+    # 指数基本信息
+    basic:
+      providers: [tushare]
+      fallback: false
+
     daily:
       providers: [tushare]
       fallback: false

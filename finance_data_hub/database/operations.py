@@ -2047,6 +2047,223 @@ class DataOperations:
         data = pd.DataFrame([row._asdict() for row in rows])
         return data
 
+    async def insert_index_basic_batch(self, data: pd.DataFrame) -> int:
+        """批量写入指数基本信息，并按 TS 指数代码执行 upsert。"""
+        if data is None or data.empty:
+            return 0
+
+        columns = [
+            "ts_code",
+            "name",
+            "fullname",
+            "market",
+            "publisher",
+            "index_type",
+            "category",
+            "base_date",
+            "base_point",
+            "list_date",
+            "weight_rule",
+            "desc",
+            "exp_date",
+        ]
+        prepared = data.copy()
+        for column in columns:
+            if column not in prepared.columns:
+                prepared[column] = None
+        prepared = prepared[columns].dropna(subset=["ts_code"])
+        if prepared.empty:
+            return 0
+
+        insert_sql = """
+            INSERT INTO index_basic (
+                ts_code, name, fullname, market, publisher, index_type, category,
+                base_date, base_point, list_date, weight_rule, description, exp_date,
+                updated_at, created_at
+            ) VALUES (
+                :ts_code, :name, :fullname, :market, :publisher, :index_type, :category,
+                :base_date, :base_point, :list_date, :weight_rule, :desc, :exp_date,
+                NOW(), NOW()
+            )
+            ON CONFLICT (ts_code) DO UPDATE SET
+                name = EXCLUDED.name,
+                fullname = EXCLUDED.fullname,
+                market = EXCLUDED.market,
+                publisher = EXCLUDED.publisher,
+                index_type = EXCLUDED.index_type,
+                category = EXCLUDED.category,
+                base_date = EXCLUDED.base_date,
+                base_point = EXCLUDED.base_point,
+                list_date = EXCLUDED.list_date,
+                weight_rule = EXCLUDED.weight_rule,
+                description = EXCLUDED.description,
+                exp_date = EXCLUDED.exp_date,
+                updated_at = NOW()
+        """
+
+        records = prepared.to_dict(orient="records")
+        for record in records:
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+                elif key in {"base_date", "list_date", "exp_date"}:
+                    record[key] = pd.Timestamp(value).date()
+
+        async with self.db_manager._engine.begin() as conn:
+            await conn.execute(text(insert_sql), records)
+
+        logger.info(f"Inserted/updated {len(records)} index_basic records")
+        return len(records)
+
+    async def get_index_basic(
+        self,
+        ts_code: Optional[str] = None,
+        market: Optional[str] = None,
+        publisher: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """查询已同步的 Tushare 指数基本信息。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        query = """
+            SELECT ts_code, name, fullname, market, publisher, index_type, category,
+                   base_date, base_point, list_date, weight_rule,
+                   description AS desc, exp_date
+            FROM index_basic
+            WHERE 1=1
+        """
+        params = {}
+        for column, value in {
+            "ts_code": ts_code,
+            "market": market,
+            "publisher": publisher,
+            "category": category,
+        }.items():
+            if value:
+                query += f" AND {column} = :{column}"
+                params[column] = value
+
+        query += " ORDER BY market, ts_code"
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+        return pd.DataFrame([row._asdict() for row in rows])
+
+    async def get_index_basic_codes(
+        self,
+        exclude_markets: Optional[List[str]] = None,
+        active_date: Optional[str] = None,
+    ) -> List[str]:
+        """查询本地 index_basic 中可用于更新任务的指数代码列表。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        query = """
+            SELECT ts_code
+            FROM index_basic
+            WHERE ts_code IS NOT NULL
+        """
+        params: Dict[str, Any] = {}
+
+        normalized_excluded_markets = []
+        for market in exclude_markets or []:
+            if market is None:
+                continue
+            normalized_market = str(market).strip().upper()
+            if normalized_market:
+                normalized_excluded_markets.append(normalized_market)
+        if normalized_excluded_markets:
+            query += """
+                AND (
+                    market IS NULL
+                    OR NOT (UPPER(market) = ANY(:exclude_markets))
+                )
+            """
+            params["exclude_markets"] = normalized_excluded_markets
+
+        if active_date:
+            params["active_date"] = pd.Timestamp(active_date).date()
+            query += " AND (exp_date IS NULL OR exp_date >= :active_date)"
+
+        query += " ORDER BY market, ts_code"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        codes: List[str] = []
+        for row in rows:
+            if hasattr(row, "_mapping"):
+                value = row._mapping["ts_code"]
+            elif hasattr(row, "_asdict"):
+                value = row._asdict()["ts_code"]
+            else:
+                value = row[0]
+
+            if value:
+                code = str(value).strip()
+                if code:
+                    codes.append(code)
+
+        return list(dict.fromkeys(codes))
+
+    async def get_earliest_index_basic_list_date(
+        self,
+        exclude_markets: Optional[List[str]] = None,
+        active_date: Optional[str] = None,
+    ) -> Optional[str]:
+        """查询本地 index_basic 中可更新指数的最早发布日期。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        query = """
+            SELECT MIN(list_date) AS earliest_date
+            FROM index_basic
+            WHERE ts_code IS NOT NULL
+              AND list_date IS NOT NULL
+        """
+        params: Dict[str, Any] = {}
+
+        normalized_excluded_markets = []
+        for market in exclude_markets or []:
+            if market is None:
+                continue
+            normalized_market = str(market).strip().upper()
+            if normalized_market:
+                normalized_excluded_markets.append(normalized_market)
+        if normalized_excluded_markets:
+            query += """
+                AND (
+                    market IS NULL
+                    OR NOT (UPPER(market) = ANY(:exclude_markets))
+                )
+            """
+            params["exclude_markets"] = normalized_excluded_markets
+
+        if active_date:
+            params["active_date"] = pd.Timestamp(active_date).date()
+            query += " AND (exp_date IS NULL OR exp_date >= :active_date)"
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row is None:
+            return None
+        if hasattr(row, "_mapping"):
+            value = row._mapping["earliest_date"]
+        elif hasattr(row, "_asdict"):
+            value = row._asdict()["earliest_date"]
+        else:
+            value = row[0]
+        if value is None:
+            return None
+        return pd.Timestamp(value).strftime("%Y-%m-%d")
+
     async def insert_index_dailybasic_batch(
         self, data: pd.DataFrame, batch_size: int = 1000
     ) -> int:
@@ -5174,6 +5391,28 @@ class DataOperations:
                 pass
 
         return data
+
+    async def get_trade_dates(
+        self,
+        exchange: str = "SSE",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[str]:
+        """查询指定交易所开市交易日列表。"""
+        trade_cal = await self.get_trade_cal(
+            exchange=exchange,
+            start_date=start_date,
+            end_date=end_date,
+            is_open=1,
+        )
+        if trade_cal is None or trade_cal.empty:
+            return []
+
+        dates = pd.to_datetime(trade_cal["cal_date"], errors="coerce").dropna()
+        if getattr(dates.dt, "tz", None) is not None:
+            dates = dates.dt.tz_convert("Asia/Shanghai")
+
+        return dates.dt.strftime("%Y-%m-%d").drop_duplicates().tolist()
 
     async def get_latest_trade_cal_date(self, exchange: str) -> Optional[str]:
         """

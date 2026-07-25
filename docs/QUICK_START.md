@@ -274,9 +274,21 @@ fdh-cli preprocess run --all --category technical --market HK \
 - 港股当前仅支持 `technical`；其他预处理类别仍然仅支持 A 股
 - 如果通过 `schedules.yml` 调度，A 股股票类任务建议显式写 `market: CN`，港股使用独立的 `hk_*` 任务
 
-#### 4.2 更新指数日线行情
+#### 4.2 更新指数基本信息
 ```bash
-# 更新 Tushare 指数目录中的全部指数日线行情（智能增量）
+# 刷新 Tushare 支持的全部指数市场目录
+fdh-cli update --dataset index_basic
+fdh-cli update --dataset index_basic --symbols all
+
+# 仅刷新指定市场（支持 MSCI, CSI, SSE, SZSE, CICC, SW, OTH）
+fdh-cli update --dataset index_basic --symbols SSE,SW
+
+# index_basic 为非时间序列数据，不支持 --trade-date、--start-date 或 --end-date
+```
+
+#### 4.3 更新指数日线行情
+```bash
+# 使用本地 index_basic 中的有效指数目录更新指数日线行情（智能增量）
 fdh-cli update --dataset index_daily
 fdh-cli update --dataset index_daily --symbols all
 
@@ -286,7 +298,8 @@ fdh-cli update --dataset index_daily --symbols 000300.SH
 # 指定日期范围
 fdh-cli update --dataset index_daily --start-date 2024-01-01 --end-date 2024-12-31
 
-# 注意：index_daily 不支持 --trade-date 全指数单日批量更新
+# 指定交易日批量更新所有有效指数
+fdh-cli update --dataset index_daily --trade-date 2024-11-18
 ```
 
 ### 查看状态

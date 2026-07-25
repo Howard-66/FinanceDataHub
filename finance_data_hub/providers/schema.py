@@ -269,6 +269,28 @@ CNPMISchema = DataFrameSchema(
 
 
 # 大盘指数每日指标数据 Schema
+IndexBasicSchema = DataFrameSchema(
+    name="index_basic",
+    description="指数基本信息",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "TS 指数代码"),
+        ColumnSchema("name", "object", True, "指数简称"),
+        ColumnSchema("fullname", "object", True, "指数全称"),
+        ColumnSchema("market", "object", True, "指数市场或服务商"),
+        ColumnSchema("publisher", "object", True, "发布方"),
+        ColumnSchema("index_type", "object", True, "指数风格"),
+        ColumnSchema("category", "object", True, "指数类别"),
+        ColumnSchema("base_date", "datetime64[ns]", True, "基期"),
+        ColumnSchema("base_point", "float64", True, "基点"),
+        ColumnSchema("list_date", "datetime64[ns]", True, "发布日期"),
+        ColumnSchema("weight_rule", "object", True, "加权方式"),
+        ColumnSchema("desc", "object", True, "指数描述"),
+        ColumnSchema("exp_date", "datetime64[ns]", True, "终止日期"),
+    ],
+)
+
+
+# 大盘指数每日指标数据 Schema
 IndexDailySchema = DataFrameSchema(
     name="index_daily",
     description="大盘指数日线行情数据",

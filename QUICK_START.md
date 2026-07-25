@@ -297,7 +297,7 @@ fdh-cli preprocess run --all --category fundamental
 # 更新复权因子
 fdh-cli update --dataset adj_factor
 
-# 更新指数日线行情（默认更新 Tushare 指数目录中的全部指数）
+# 更新指数日线行情（默认使用本地 index_basic 中的有效指数目录）
 fdh-cli update --dataset index_daily
 fdh-cli update --dataset index_daily --symbols all
 fdh-cli update --dataset index_daily --symbols 000300.SH
@@ -390,8 +390,7 @@ print(df)
 
 2. **智能下载**: 默认使用智能模式，避免重复获取
 
-3. **批量更新**: 使用 `--trade-date` 批量更新单个交易日（股票 `daily/daily_basic/adj_factor` 等）
-   `index_daily` 不支持 `--trade-date` 全指数单日批量模式
+3. **批量更新**: 使用 `--trade-date` 批量更新单个交易日（股票 `daily/daily_basic/adj_factor`、指数 `index_daily/index_weight` 等）
 
 4. **并行处理**: 系统自动批量插入 (每批1000条)，无需手动处理
 

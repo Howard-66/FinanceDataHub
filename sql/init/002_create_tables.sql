@@ -245,6 +245,36 @@ COMMENT ON COLUMN cn_pmi.time IS '月份末日期，格式如2024-01-31表示202
 COMMENT ON COLUMN cn_pmi.month IS '月份，格式如202401表示2024年1月';
 COMMENT ON COLUMN cn_pmi.pmi010000 IS '制造业PMI';
 
+-- 指数基本信息表
+CREATE TABLE IF NOT EXISTS index_basic (
+    ts_code VARCHAR(20) PRIMARY KEY,                -- TS 指数代码
+    name VARCHAR(100),                              -- 指数简称
+    fullname TEXT,                                  -- 指数全称
+    market VARCHAR(20),                             -- 市场或服务商
+    publisher VARCHAR(100),                         -- 发布方
+    index_type VARCHAR(100),                        -- 指数风格
+    category VARCHAR(100),                          -- 指数类别
+    base_date DATE,                                 -- 基期
+    base_point DECIMAL(20,6),                       -- 基点
+    list_date DATE,                                 -- 发布日期
+    weight_rule TEXT,                               -- 加权方式
+    description TEXT,                               -- 指数描述
+    exp_date DATE,                                  -- 终止日期
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_index_basic_market ON index_basic(market);
+CREATE INDEX IF NOT EXISTS idx_index_basic_publisher ON index_basic(publisher);
+CREATE INDEX IF NOT EXISTS idx_index_basic_category ON index_basic(category);
+
+COMMENT ON TABLE index_basic IS 'Tushare 指数基本信息表';
+COMMENT ON COLUMN index_basic.ts_code IS 'TS 指数代码';
+COMMENT ON COLUMN index_basic.base_date IS '基期';
+COMMENT ON COLUMN index_basic.base_point IS '基点';
+COMMENT ON COLUMN index_basic.list_date IS '发布日期';
+COMMENT ON COLUMN index_basic.exp_date IS '终止日期';
+
 -- 指数日线行情数据表
 CREATE TABLE IF NOT EXISTS index_daily (
     ts_code VARCHAR(20) NOT NULL,                   -- 指数代码，如 000300.SH（沪深300）

@@ -419,6 +419,10 @@ fdh-cli update --dataset adj_factor --market HK
 fdh-cli update --dataset basic --market ALL
 fdh-cli update --dataset daily --market ALL
 
+# 刷新 Tushare 指数基本信息（默认全部市场，也可按市场筛选）
+fdh-cli update --dataset index_basic
+fdh-cli update --dataset index_basic --symbols SSE,SW
+
 # 强制更新模式 - 忽略数据库状态
 fdh-cli update --dataset daily --force      # 强制全量更新所有股票
 fdh-cli update --dataset daily --force --start-date 2024-01-01 # 指定日期范围
@@ -441,7 +445,7 @@ fdh-cli update --dataset daily --trade-date 2024-11-18
 fdh-cli update --dataset daily_basic --trade-date 2024-11-18
 fdh-cli update --dataset daily --market HK --trade-date 2024-11-18
 fdh-cli update --dataset adj_factor --market HK --trade-date 2024-11-18
-# 注意: index_daily 不支持 --trade-date 全指数单日批量模式
+fdh-cli update --dataset index_daily --trade-date 2024-11-18
 
 # 估值缺失补值预处理（A股）
 # 前置: daily_basic + income + balancesheet + fina_indicator 已更新
@@ -548,6 +552,7 @@ EOF
 | `minute_1` | 1分钟数据 | `fdh-cli update --dataset minute_1 --symbols 600519.SH` |
 | `minute_5` | 5分钟数据 | `fdh-cli update --dataset minute_5 --symbols 600519.SH` |
 | `adj_factor` | 复权因子 | `fdh-cli update --dataset adj_factor` |
+| `index_basic` | 指数基本信息 | `fdh-cli update --dataset index_basic --symbols SSE,SW` |
 | `index_daily` | 指数日线行情 | `fdh-cli update --dataset index_daily --symbols all` |
 
 ### A 股估值缺失补值
@@ -1017,6 +1022,7 @@ Phase 4 核心能力已完成，仍在持续补充端到端集成测试与下游
 | PPI | `get_cn_ppi()` / `get_cn_ppi_async()` | start_date, end_date（月份末日期） |
 | 货币供应量 | `get_cn_m()` / `get_cn_m_async()` | start_date, end_date（月份末日期） |
 | PMI | `get_cn_pmi()` / `get_cn_pmi_async()` | start_date, end_date（月份末日期） |
+| 指数基本信息 | `get_index_basic()` / `get_index_basic_async()` | ts_code, market, publisher, category |
 | 指数日线行情 | `get_index_daily()` / `get_index_daily_async()` | ts_code, start_date, end_date |
 | 指数每日指标 | `get_index_dailybasic()` / `get_index_dailybasic_async()` | ts_code, start_date, end_date |
 | 财务指标 | `get_fina_indicator()` / `get_fina_indicator_async()` | ts_code, start_date, end_date（报告期） |
@@ -1108,7 +1114,8 @@ fdh-cli update --dataset ppi [--force] [--start-date 2020-01-31 --end-date 2024-
 fdh-cli update --dataset m   [--force] [--start-date 2020-01-31 --end-date 2024-12-31]
 fdh-cli update --dataset pmi [--force] [--start-date 2020-01-31 --end-date 2024-12-31]
 
-# 指数行情 / 指标 / 成分权重
+# 指数基本信息 / 行情 / 指标 / 成分权重
+fdh-cli update --dataset index_basic       [--symbols all|MSCI,CSI,SSE,SZSE,CICC,SW,OTH]
 fdh-cli update --dataset index_daily       [--symbols all|000300.SH] [--start-date ... --end-date ...]
 fdh-cli update --dataset index_dailybasic  [--symbols 000001.SH] [--trade-date 2024-11-27]
 fdh-cli update --dataset index_weight      [--symbols all|000300.SH,000905.SH] [--trade-date 2024-06-30]

@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from finance_data_hub.providers.base import ProviderRateLimitError
-from finance_data_hub.providers.tushare import TushareProvider
+from finance_data_hub.providers.tushare import TUSHARE_INDEX_MARKETS, TushareProvider
 
 
 def test_fut_settle_rate_limit_uses_endpoint_specific_interval():
@@ -81,6 +81,94 @@ def test_index_basic_codes_resolves_catalog_and_excludes_markets():
 
     assert result == ["000300.CSI", "000905.CSI"]
     assert provider._call_api.call_count == 2
+
+
+def test_index_daily_trade_date_fetches_all_indexes_without_ts_code():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        return_value=pd.DataFrame(
+            {
+                "ts_code": ["000300.CSI", "000905.CSI"],
+                "trade_date": ["20240102", "20240102"],
+                "close": [1.0, 2.0],
+                "open": [1.0, 2.0],
+                "high": [1.1, 2.1],
+                "low": [0.9, 1.9],
+                "pre_close": [0.95, 1.95],
+                "change": [0.05, 0.05],
+                "pct_chg": [5.0, 2.5],
+                "vol": [100.0, 200.0],
+                "amount": [1000.0, 2000.0],
+            }
+        )
+    )
+
+    result = provider.get_index_daily(trade_date="2024-01-02")
+
+    assert list(result["ts_code"]) == ["000300.CSI", "000905.CSI"]
+    provider._call_api.assert_called_once()
+    assert "ts_code" not in provider._call_api.call_args.kwargs
+    assert provider._call_api.call_args.kwargs["trade_date"] == "20240102"
+
+
+def test_index_basic_normalizes_dates_and_returns_tushare_fields():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        return_value=pd.DataFrame(
+            {
+                "ts_code": ["000300.SH"],
+                "name": ["沪深300"],
+                "fullname": ["沪深300指数"],
+                "market": ["SSE"],
+                "publisher": ["中证指数有限公司"],
+                "index_type": ["规模指数"],
+                "category": ["规模指数"],
+                "base_date": ["20041231"],
+                "base_point": [1000],
+                "list_date": ["20050408"],
+                "weight_rule": ["市值加权"],
+                "desc": ["测试数据"],
+                "exp_date": [None],
+            }
+        )
+    )
+
+    result = provider.get_index_basic(markets=["sse"])
+
+    assert result.iloc[0]["ts_code"] == "000300.SH"
+    assert result.iloc[0]["base_date"] == pd.Timestamp("2004-12-31")
+    assert result.iloc[0]["list_date"] == pd.Timestamp("2005-04-08")
+    assert pd.isna(result.iloc[0]["exp_date"])
+    provider._call_api.assert_called_once()
+    assert provider._call_api.call_args.kwargs["market"] == "SSE"
+
+
+def test_index_basic_ignores_router_market_when_markets_are_explicit():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        return_value=pd.DataFrame(
+            {"ts_code": ["000001.SH"], "name": ["上证综指"], "market": ["SSE"]}
+        )
+    )
+
+    provider.get_index_basic(market="CN", markets=["SSE"])
+
+    provider._call_api.assert_called_once()
+    assert provider._call_api.call_args.kwargs["market"] == "SSE"
+
+
+def test_index_basic_uses_all_tushare_markets_when_router_passes_cn():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        return_value=pd.DataFrame(
+            {"ts_code": ["000001.SH"], "name": ["上证综指"], "market": ["SSE"]}
+        )
+    )
+
+    result = provider.get_index_basic(market="CN")
+
+    assert len(result) == 1
+    assert provider._call_api.call_count == len(TUSHARE_INDEX_MARKETS)
 
 
 def test_futures_monthly_normalizes_period_end_and_deduplicates():

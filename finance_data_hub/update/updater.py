@@ -28,6 +28,7 @@ from finance_data_hub.providers.tushare import (
     SUPPORTED_EXCHANGES,
     SUPPORTED_FUTURES_EXCHANGES,
     SUPPORTED_FUTURES_INDEX_CODES,
+    TUSHARE_INDEX_MARKETS,
 )
 from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
 from finance_data_hub.utils.futures import is_xtquant_downloadable_futures_symbol
@@ -422,43 +423,220 @@ class DataUpdater:
             if infer_market_from_symbol(symbol, default="CN") == market
         ]
 
-    def _resolve_index_catalog_codes(
+    async def _resolve_index_catalog_codes(
         self,
         data_type: str,
         exclude_markets: Optional[set[str]] = None,
+        active_date: Optional[str] = None,
     ) -> List[str]:
-        """Resolve all index codes from Tushare index_basic."""
-        if not self.router:
+        """Resolve all index codes from the local index_basic table."""
+        if not self.data_ops:
             raise RuntimeError("DataUpdater is not initialized")
 
-        try:
-            codes = self.router.route(
-                asset_class="index",
-                data_type=data_type,
-                method_name="get_index_basic_codes",
-                exclude_markets=sorted(exclude_markets or []),
+        codes = await self.data_ops.get_index_basic_codes(
+            exclude_markets=sorted(exclude_markets or []),
+            active_date=active_date,
+        )
+        if codes:
+            logger.info(
+                f"Resolved {len(codes)} {data_type} index codes from local index_basic"
             )
-            if codes:
-                logger.info(f"Resolved {len(codes)} index codes from index_basic")
-                return list(codes)
-        except Exception as exc:
-            raise ValueError(
-                f"无法从 index_basic 解析全量指数列表，请检查 Tushare 配置或权限: {exc}"
-            ) from exc
+            return list(codes)
 
-        raise ValueError("index_basic 未返回任何指数代码，无法执行全量指数更新")
-
-    def resolve_index_daily_codes(self) -> List[str]:
-        """Resolve all index codes suitable for index_daily updates."""
-        return self._resolve_index_catalog_codes(
-            data_type="daily",
-            exclude_markets=INDEX_DAILY_EXCLUDED_CATALOG_MARKETS,
+        active_hint = f"（active_date={active_date}）" if active_date else ""
+        raise ValueError(
+            f"本地 index_basic 未返回任何可更新指数代码{active_hint}，"
+            "请先执行 fdh-cli update --dataset index_basic"
         )
 
-    def resolve_index_weight_codes(self) -> List[str]:
+    async def resolve_index_daily_codes(
+        self,
+        active_date: Optional[str] = None,
+    ) -> List[str]:
+        """Resolve all index codes suitable for index_daily updates."""
+        return await self._resolve_index_catalog_codes(
+            data_type="daily",
+            exclude_markets=INDEX_DAILY_EXCLUDED_CATALOG_MARKETS,
+            active_date=active_date,
+        )
+
+    async def resolve_index_weight_codes(
+        self,
+        active_date: Optional[str] = None,
+    ) -> List[str]:
         """Resolve all index codes suitable for index_weight updates."""
-        return self._resolve_index_catalog_codes(
+        return await self._resolve_index_catalog_codes(
             data_type="index_weight",
+            active_date=active_date,
+        )
+
+    @staticmethod
+    def _index_catalog_active_date(
+        start_date: Optional[str],
+        end_date: Optional[str],
+        force_update: bool,
+        trade_date: Optional[str] = None,
+    ) -> Optional[str]:
+        """Return the date used to exclude expired indexes from the local catalog."""
+        if trade_date:
+            return trade_date
+        if start_date:
+            return start_date
+        if force_update:
+            return None
+        return end_date
+
+    async def update_index_basic(
+        self,
+        markets: Optional[List[str]] = None,
+    ) -> int:
+        """刷新 Tushare 指数基本信息目录。
+
+        该数据集是静态元数据，不使用日期增量。每次调用均会对所选市场
+        的完整目录执行 upsert，使新发布和更新后的指数信息可被及时覆盖。
+
+        Args:
+            markets: Tushare 指数市场代码列表；None 表示全部支持市场。
+
+        Returns:
+            插入或更新的记录数。
+        """
+        normalized_markets = None
+        if markets:
+            normalized_markets = [str(item).upper() for item in markets]
+            invalid_markets = sorted(
+                set(normalized_markets) - set(TUSHARE_INDEX_MARKETS)
+            )
+            if invalid_markets:
+                raise ValueError(
+                    "不支持的指数市场代码: "
+                    f"{', '.join(invalid_markets)}。支持: {', '.join(TUSHARE_INDEX_MARKETS)}"
+                )
+
+        try:
+            data = self.router.route(
+                asset_class="index",
+                data_type="basic",
+                method_name="get_index_basic",
+                markets=normalized_markets,
+            )
+            if data is None or data.empty:
+                logger.warning("No index_basic data received")
+                return 0
+
+            inserted_count = await self.data_ops.insert_index_basic_batch(data)
+            logger.info(f"Updated {inserted_count} index_basic records")
+            return inserted_count
+        except Exception:
+            logger.exception("Failed to update index_basic")
+            raise
+
+    @staticmethod
+    def _filter_index_daily_to_catalog(
+        data: pd.DataFrame,
+        ts_code_list: List[str],
+    ) -> pd.DataFrame:
+        """Keep only index_daily rows that belong to the selected local catalog."""
+        if data is None or data.empty:
+            return data
+        selected_codes = {str(code).strip() for code in ts_code_list if str(code).strip()}
+        if not selected_codes or "ts_code" not in data.columns:
+            return data.iloc[0:0].copy()
+        return data[data["ts_code"].astype(str).isin(selected_codes)].reset_index(drop=True)
+
+    async def _resolve_index_daily_batch_start_date(
+        self,
+        start_date: Optional[str],
+        end_date: str,
+        force_update: bool,
+    ) -> Optional[str]:
+        """Resolve the date-batch start for full-catalog index_daily updates."""
+        if start_date:
+            return start_date
+
+        if force_update:
+            return await self.data_ops.get_earliest_index_basic_list_date(
+                exclude_markets=sorted(INDEX_DAILY_EXCLUDED_CATALOG_MARKETS),
+            )
+
+        latest_date = await self.data_ops.get_latest_index_daily_date()
+        if latest_date:
+            next_day = datetime.strptime(latest_date, "%Y-%m-%d") + timedelta(days=1)
+            return next_day.strftime("%Y-%m-%d")
+
+        return await self.data_ops.get_earliest_index_basic_list_date(
+            exclude_markets=sorted(INDEX_DAILY_EXCLUDED_CATALOG_MARKETS),
+            active_date=end_date,
+        )
+
+    async def _update_index_daily_for_trade_dates(
+        self,
+        ts_code_list: List[str],
+        trade_dates: List[str],
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """Fetch index_daily by trade_date and filter to the local index catalog."""
+        total_records = 0
+        total_dates = len(trade_dates)
+
+        for idx, trade_date in enumerate(trade_dates):
+            try:
+                data = self.router.route(
+                    asset_class="index",
+                    data_type="daily",
+                    method_name="get_index_daily",
+                    trade_date=trade_date,
+                )
+                data = self._filter_index_daily_to_catalog(data, ts_code_list)
+
+                if data is not None and not data.empty:
+                    inserted = await self.data_ops.insert_index_daily_batch(data)
+                    total_records += inserted
+                    logger.info(f"Inserted {inserted} index_daily records for {trade_date}")
+                else:
+                    logger.debug(f"No index_daily data for {trade_date}")
+
+                if progress_callback:
+                    progress_callback(idx + 1, total_dates)
+            except Exception as e:
+                logger.error(f"Failed to fetch index_daily for {trade_date}: {str(e)}")
+                if progress_callback:
+                    progress_callback(idx + 1, total_dates)
+                continue
+
+        return total_records
+
+    async def _update_index_daily_by_trade_date_range(
+        self,
+        ts_code_list: List[str],
+        start_date: str,
+        end_date: str,
+        progress_callback: Optional[callable] = None,
+    ) -> int:
+        """Fetch index_daily by each local SSE trading day in a date range."""
+        if start_date > end_date:
+            logger.info("index_daily is already up to date")
+            return 0
+
+        trade_dates = await self.data_ops.get_trade_dates(
+            exchange="SSE",
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if not trade_dates:
+            logger.info(
+                f"No open SSE trading days found for index_daily range {start_date} to {end_date}"
+            )
+            return 0
+
+        logger.info(
+            f"Updating index_daily by {len(trade_dates)} trade dates "
+            f"(start={start_date}, end={end_date})"
+        )
+        return await self._update_index_daily_for_trade_dates(
+            ts_code_list=ts_code_list,
+            trade_dates=trade_dates,
+            progress_callback=progress_callback,
         )
 
     @staticmethod
@@ -1635,6 +1813,7 @@ class DataUpdater:
     async def update_index_daily(
         self,
         ts_code_list: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         force_update: bool = False,
@@ -1643,11 +1822,12 @@ class DataUpdater:
         """
         更新指数日线行情数据
 
-        index_daily 接口不支持仅通过 trade_date 获取全部指数当日数据，
-        因此该方法采用“逐指数”模式进行智能增量或全量更新。
+        默认或指定 all 时优先使用 trade_date 单日批量接口；
+        指定具体指数列表时采用逐指数模式。
 
         Args:
             ts_code_list: 指数代码列表，None 表示项目支持的全部指数
+            trade_date: 交易日期（YYYY-MM-DD 格式），与 start_date/end_date 互斥
             start_date: 开始日期（YYYY-MM-DD 格式）
             end_date: 结束日期（YYYY-MM-DD 格式），None 表示到最新
             force_update: 是否强制更新（忽略数据库状态）
@@ -1656,19 +1836,56 @@ class DataUpdater:
         Returns:
             int: 更新的记录数
         """
+        if trade_date and (start_date or end_date):
+            raise ValueError("trade_date cannot be used with start_date or end_date")
+
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
 
         _validate_no_mixed_all(ts_code_list, "指数日线")
-        if ts_code_list is None or _is_all_symbol_request(ts_code_list):
-            ts_code_list = self.resolve_index_daily_codes()
+        is_full_catalog_request = ts_code_list is None or _is_all_symbol_request(ts_code_list)
+        if is_full_catalog_request:
+            active_date = self._index_catalog_active_date(
+                start_date=start_date,
+                end_date=end_date,
+                force_update=force_update,
+                trade_date=trade_date,
+            )
+            ts_code_list = await self.resolve_index_daily_codes(
+                active_date=active_date,
+            )
 
         logger.info(
             f"Updating index_daily for {len(ts_code_list)} indexes "
-            f"(start={start_date or 'smart/full'}, end={end_date}, force={force_update})"
+            f"(trade_date={trade_date}, start={start_date or 'smart/full'}, end={end_date}, force={force_update})"
         )
 
         try:
+            if trade_date:
+                return await self._update_index_daily_for_trade_dates(
+                    ts_code_list=ts_code_list,
+                    trade_dates=[trade_date],
+                    progress_callback=progress_callback,
+                )
+
+            if is_full_catalog_request:
+                batch_start_date = await self._resolve_index_daily_batch_start_date(
+                    start_date=start_date,
+                    end_date=end_date,
+                    force_update=force_update,
+                )
+                if not batch_start_date:
+                    raise ValueError(
+                        "本地 index_basic 缺少可用于 index_daily 全量更新的 list_date，"
+                        "请先刷新 index_basic"
+                    )
+                return await self._update_index_daily_by_trade_date_range(
+                    ts_code_list=ts_code_list,
+                    start_date=batch_start_date,
+                    end_date=end_date,
+                    progress_callback=progress_callback,
+                )
+
             total_records = 0
             total_indexes = len(ts_code_list)
 
@@ -2649,7 +2866,15 @@ class DataUpdater:
         # 默认使用所有支持的指数
         _validate_no_mixed_all(index_list, "指数成分权重")
         if index_list is None or _is_all_symbol_request(index_list):
-            index_list = self.resolve_index_weight_codes()
+            active_date = self._index_catalog_active_date(
+                start_date=start_date,
+                end_date=end_date,
+                force_update=force_update,
+                trade_date=trade_date,
+            )
+            index_list = await self.resolve_index_weight_codes(
+                active_date=active_date,
+            )
 
         logger.info(
             f"Updating index_weight for {len(index_list)} indexes "
