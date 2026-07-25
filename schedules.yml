@@ -58,6 +58,114 @@ jobs:
       max_retries: 3
       delay: 300
 
+  fund_basic_update:
+    enabled: true
+    type: download
+    dataset: fund_basic
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 7
+      minute: 10
+    # 基金目录为非时间序列数据：同步场内 E 和场外 O 的完整列表。
+    retry:
+      max_retries: 3
+      delay: 600
+
+  fund_company_update:
+    enabled: true
+    type: download
+    dataset: fund_company
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 7
+      minute: 15
+    retry:
+      max_retries: 3
+      delay: 600
+
+  fund_manager_update:
+    enabled: true
+    type: download
+    dataset: fund_manager
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 7
+      minute: 25
+    retry:
+      max_retries: 3
+      delay: 600
+
+  mkt_idx_bmk_update:
+    enabled: true
+    type: download
+    dataset: mkt_idx_bmk
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 7
+      minute: 20
+    retry:
+      max_retries: 3
+      delay: 600
+
+  fund_nav_update:
+    enabled: true
+    type: download
+    dataset: fund_nav
+    schedule:
+      type: cron
+      hour: 19
+      minute: 0
+    params:
+      # fund_nav 需要基金代码或净值日；latest 由调度执行器解析为最近日期。
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
+
+  # 规模与分红接口需要运行时指定基金代码或日期；保留可启用的调度模板。
+  fund_share_update:
+    enabled: false
+    type: download
+    dataset: fund_share
+    schedule:
+      type: cron
+      hour: 19
+      minute: 10
+    retry:
+      max_retries: 3
+      delay: 600
+
+  fund_div_update:
+    enabled: false
+    type: download
+    dataset: fund_div
+    schedule:
+      type: cron
+      hour: 19
+      minute: 20
+    retry:
+      max_retries: 3
+      delay: 600
+
+  # 基金持仓按季度披露；调度系统应在运行时提供报告期（trade_date）或基金代码。
+  fund_portfolio_update:
+    enabled: false
+    type: download
+    dataset: fund_portfolio
+    schedule:
+      type: cron
+      month: "1,4,7,10"
+      day: "20"
+      hour: 8
+      minute: 0
+    retry:
+      max_retries: 3
+      delay: 600
+
   # 每月 1 / 15 号：财务 -> 申万分类 -> 申万成分 -> 季度基本面预处理
   financial_update:
     enabled: true

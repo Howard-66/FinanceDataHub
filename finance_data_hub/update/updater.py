@@ -29,6 +29,7 @@ from finance_data_hub.providers.tushare import (
     SUPPORTED_FUTURES_EXCHANGES,
     SUPPORTED_FUTURES_INDEX_CODES,
     TUSHARE_INDEX_MARKETS,
+    TUSHARE_FUND_MARKETS,
 )
 from finance_data_hub.utils.market import infer_market_from_symbol, normalize_market
 from finance_data_hub.utils.futures import is_xtquant_downloadable_futures_symbol
@@ -530,6 +531,535 @@ class DataUpdater:
         except Exception:
             logger.exception("Failed to update index_basic")
             raise
+
+    async def update_fund_basic(
+        self,
+        markets: Optional[List[str]] = None,
+        status: Optional[str] = None,
+    ) -> int:
+        """刷新 Tushare 公募基金基础信息目录。
+
+        基金目录是非时间序列数据。每次同步会获取指定场内/场外市场的完整
+        列表并执行 upsert；分页由 Provider 在接口返回 15,000 条时处理。
+        """
+        normalized_markets = None
+        if markets:
+            normalized_markets = [str(item).upper() for item in markets]
+            invalid_markets = sorted(
+                set(normalized_markets) - set(TUSHARE_FUND_MARKETS)
+            )
+            if invalid_markets:
+                raise ValueError(
+                    "不支持的基金市场代码: "
+                    f"{', '.join(invalid_markets)}。支持: {', '.join(TUSHARE_FUND_MARKETS)}"
+                )
+
+        try:
+            data = self.router.route(
+                asset_class="fund",
+                data_type="basic",
+                method_name="get_fund_basic",
+                markets=normalized_markets,
+                status=status,
+            )
+            if data is None or data.empty:
+                logger.warning("No fund_basic data received")
+                return 0
+
+            inserted_count = await self.data_ops.insert_fund_basic_batch(data)
+            logger.info(f"Updated {inserted_count} fund_basic records")
+            return inserted_count
+        except Exception:
+            logger.exception("Failed to update fund_basic")
+            raise
+
+    async def update_fund_share(
+        self, ts_code: Optional[str] = None, trade_date: Optional[str] = None,
+        start_date: Optional[str] = None, end_date: Optional[str] = None,
+        market: Optional[str] = None,
+        all_funds: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """同步 Tushare 基金规模数据。
+
+        ``all_funds=True`` 时按交易日请求全市场基金规模，避免逐基金代码
+        下载。Provider 会在单个交易日返回满 2,000 条记录时自动按 offset
+        继续分页。
+        """
+        if all_funds:
+            if ts_code:
+                raise ValueError("fund_share 全量模式不能同时指定 ts_code")
+            if trade_date and (start_date or end_date):
+                raise ValueError(
+                    "fund_share 全量模式中 --trade-date 不能与 --start-date/--end-date 同时使用"
+                )
+
+            if trade_date:
+                resolved_start_date = trade_date
+                resolved_end_date = trade_date
+            else:
+                resolved_start_date = (
+                    start_date or await self.data_ops.get_earliest_fund_basic_date()
+                )
+                resolved_end_date = end_date or datetime.now().strftime("%Y-%m-%d")
+
+            if not resolved_start_date:
+                raise ValueError(
+                    "fund_share 全量下载需要本地 fund_basic 基金目录；"
+                    "请先执行 `fdh-cli update --dataset fund_basic --symbols all`"
+                )
+
+            resolved_start_date = pd.Timestamp(resolved_start_date).strftime("%Y-%m-%d")
+            resolved_end_date = pd.Timestamp(resolved_end_date).strftime("%Y-%m-%d")
+            if resolved_start_date > resolved_end_date:
+                raise ValueError("fund_share 的开始日期不能晚于结束日期")
+
+            return await self._update_fund_share_by_dates(
+                start_date=resolved_start_date,
+                end_date=resolved_end_date,
+                market=market,
+                progress_callback=progress_callback,
+            )
+
+        data = self.router.route(
+            asset_class="fund", data_type="share", method_name="get_fund_share",
+            ts_code=ts_code, trade_date=trade_date, start_date=start_date,
+            end_date=end_date, market=market,
+        )
+        return await self.data_ops.insert_fund_share_batch(data) if data is not None else 0
+
+    async def _resolve_fund_share_dates(
+        self,
+        start_date: str,
+        end_date: str,
+    ) -> List[str]:
+        """返回完整可用的基金规模交易日，优先使用本地 SSE 交易日历。"""
+        trade_cal = await self.data_ops.get_trade_cal(
+            exchange="SSE",
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if trade_cal is not None and not trade_cal.empty and {
+            "cal_date", "is_open"
+        }.issubset(trade_cal.columns):
+            calendar_dates = pd.to_datetime(trade_cal["cal_date"], errors="coerce").dropna()
+            if not calendar_dates.empty:
+                calendar_start = calendar_dates.min().strftime("%Y-%m-%d")
+                calendar_end = calendar_dates.max().strftime("%Y-%m-%d")
+                if calendar_start <= start_date and calendar_end >= end_date:
+                    open_dates = pd.to_datetime(
+                        trade_cal.loc[trade_cal["is_open"] == 1, "cal_date"],
+                        errors="coerce",
+                    ).dropna()
+                    resolved_dates = (
+                        open_dates.dt.strftime("%Y-%m-%d").drop_duplicates().tolist()
+                    )
+                    if resolved_dates:
+                        return resolved_dates
+
+        logger.warning(
+            "SSE trade_cal does not fully cover fund_share range {} to {}; "
+            "falling back to weekdays",
+            start_date,
+            end_date,
+        )
+        return pd.bdate_range(start=start_date, end=end_date).strftime("%Y-%m-%d").tolist()
+
+    async def _update_fund_share_by_dates(
+        self,
+        start_date: str,
+        end_date: str,
+        market: Optional[str] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """按交易日拉取基金规模全量，并逐日写入本地库。"""
+        trade_dates = await self._resolve_fund_share_dates(start_date, end_date)
+        if not trade_dates:
+            logger.info("No fund_share dates found between {} and {}", start_date, end_date)
+            return 0
+
+        total = 0
+        total_dates = len(trade_dates)
+        logger.info(
+            "Updating fund_share for {} trade dates (start={}, end={}, market={})",
+            total_dates,
+            start_date,
+            end_date,
+            market or "all",
+        )
+        if progress_callback:
+            progress_callback(0, total_dates)
+
+        for index, current_trade_date in enumerate(trade_dates, start=1):
+            try:
+                data = self.router.route(
+                    asset_class="fund",
+                    data_type="share",
+                    method_name="get_fund_share",
+                    trade_date=current_trade_date,
+                    market=market,
+                )
+                if data is not None and not data.empty:
+                    total += await self.data_ops.insert_fund_share_batch(data)
+                else:
+                    logger.debug("No fund_share data for {}", current_trade_date)
+            except Exception:
+                logger.exception("Failed to update fund_share for {}", current_trade_date)
+                raise
+            finally:
+                if progress_callback:
+                    progress_callback(index, total_dates)
+
+        logger.info("Updated {} fund_share records across {} dates", total, total_dates)
+        return total
+
+    async def update_fund_nav(
+        self, ts_code: Optional[str] = None, nav_date: Optional[str] = None,
+        market: Optional[str] = None, start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        all_funds: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """同步 Tushare 公募基金净值数据。
+
+        ``all_funds=True`` 时，按净值日而不是逐基金代码请求数据。起始日期
+        默认取本地 ``fund_basic`` 目录中最早基金日期，显著减少全量下载的
+        请求次数；每个净值日的 10,500 行分页由 Provider 处理。
+        """
+        if all_funds:
+            if ts_code:
+                raise ValueError("fund_nav 全量模式不能同时指定 ts_code")
+            if nav_date and (start_date or end_date):
+                raise ValueError(
+                    "fund_nav 全量模式中 --trade-date 不能与 --start-date/--end-date 同时使用"
+                )
+
+            if nav_date:
+                resolved_start_date = nav_date
+                resolved_end_date = nav_date
+            else:
+                resolved_start_date = (
+                    start_date or await self.data_ops.get_earliest_fund_basic_date()
+                )
+                resolved_end_date = end_date or datetime.now().strftime("%Y-%m-%d")
+
+            if not resolved_start_date:
+                raise ValueError(
+                    "fund_nav 全量下载需要本地 fund_basic 基金目录；"
+                    "请先执行 `fdh-cli update --dataset fund_basic --symbols all`"
+                )
+
+            resolved_start_date = pd.Timestamp(resolved_start_date).strftime("%Y-%m-%d")
+            resolved_end_date = pd.Timestamp(resolved_end_date).strftime("%Y-%m-%d")
+            if resolved_start_date > resolved_end_date:
+                raise ValueError("fund_nav 的开始日期不能晚于结束日期")
+
+            return await self._update_fund_nav_by_dates(
+                start_date=resolved_start_date,
+                end_date=resolved_end_date,
+                market=market,
+                progress_callback=progress_callback,
+            )
+
+        data = self.router.route(
+            asset_class="fund", data_type="nav", method_name="get_fund_nav",
+            ts_code=ts_code, nav_date=nav_date, market=market,
+            start_date=start_date, end_date=end_date,
+        )
+        return await self.data_ops.insert_fund_nav_batch(data) if data is not None else 0
+
+    async def _resolve_fund_nav_dates(
+        self,
+        start_date: str,
+        end_date: str,
+    ) -> List[str]:
+        """返回完整可用的净值日期列表，优先使用本地 SSE 交易日历。"""
+        trade_cal = await self.data_ops.get_trade_cal(
+            exchange="SSE",
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if trade_cal is not None and not trade_cal.empty and {
+            "cal_date", "is_open"
+        }.issubset(trade_cal.columns):
+            calendar_dates = pd.to_datetime(trade_cal["cal_date"], errors="coerce").dropna()
+            if not calendar_dates.empty:
+                calendar_start = calendar_dates.min().strftime("%Y-%m-%d")
+                calendar_end = calendar_dates.max().strftime("%Y-%m-%d")
+                if calendar_start <= start_date and calendar_end >= end_date:
+                    open_dates = pd.to_datetime(
+                        trade_cal.loc[trade_cal["is_open"] == 1, "cal_date"],
+                        errors="coerce",
+                    ).dropna()
+                    resolved_dates = (
+                        open_dates.dt.strftime("%Y-%m-%d").drop_duplicates().tolist()
+                    )
+                    if resolved_dates:
+                        return resolved_dates
+
+        logger.warning(
+            "SSE trade_cal does not fully cover fund_nav range {} to {}; "
+            "falling back to weekdays",
+            start_date,
+            end_date,
+        )
+        return pd.bdate_range(start=start_date, end=end_date).strftime("%Y-%m-%d").tolist()
+
+    async def _update_fund_nav_by_dates(
+        self,
+        start_date: str,
+        end_date: str,
+        market: Optional[str] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """按净值日拉取基金净值全量，并逐日写入本地库。"""
+        nav_dates = await self._resolve_fund_nav_dates(start_date, end_date)
+        if not nav_dates:
+            logger.info("No fund_nav dates found between {} and {}", start_date, end_date)
+            return 0
+
+        total = 0
+        total_dates = len(nav_dates)
+        logger.info(
+            "Updating fund_nav for {} net-value dates (start={}, end={}, market={})",
+            total_dates,
+            start_date,
+            end_date,
+            market or "all",
+        )
+        if progress_callback:
+            progress_callback(0, total_dates)
+
+        for index, current_nav_date in enumerate(nav_dates, start=1):
+            try:
+                data = self.router.route(
+                    asset_class="fund",
+                    data_type="nav",
+                    method_name="get_fund_nav",
+                    nav_date=current_nav_date,
+                    market=market,
+                )
+                if data is not None and not data.empty:
+                    total += await self.data_ops.insert_fund_nav_batch(data)
+                else:
+                    logger.debug("No fund_nav data for {}", current_nav_date)
+            except Exception:
+                logger.exception("Failed to update fund_nav for {}", current_nav_date)
+                raise
+            finally:
+                if progress_callback:
+                    progress_callback(index, total_dates)
+
+        logger.info("Updated {} fund_nav records across {} dates", total, total_dates)
+        return total
+
+    async def update_fund_div(
+        self, ts_code: Optional[str] = None, ann_date: Optional[str] = None,
+        ex_date: Optional[str] = None, pay_date: Optional[str] = None,
+        start_date: Optional[str] = None, end_date: Optional[str] = None,
+        all_funds: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """同步 Tushare 公募基金分红数据。
+
+        ``all_funds=True`` 时按公告日逐日下载全市场分红数据。公告可能发生在
+        非交易日，故全量范围覆盖每一个自然日；每个公告日的 1,000 行分页由
+        Provider 处理。
+        """
+        if all_funds:
+            if ts_code or ex_date or pay_date:
+                raise ValueError(
+                    "fund_div 全量模式不能同时指定 ts_code、ex_date 或 pay_date"
+                )
+            if ann_date and (start_date or end_date):
+                raise ValueError(
+                    "fund_div 全量模式中 ann_date 不能与 start_date/end_date 同时使用"
+                )
+
+            if ann_date:
+                resolved_start_date = ann_date
+                resolved_end_date = ann_date
+            else:
+                resolved_start_date = (
+                    start_date or await self.data_ops.get_earliest_fund_basic_date()
+                )
+                resolved_end_date = end_date or datetime.now().strftime("%Y-%m-%d")
+
+            if not resolved_start_date:
+                raise ValueError(
+                    "fund_div 全量下载需要本地 fund_basic 基金目录；"
+                    "请先执行 `fdh-cli update --dataset fund_basic --symbols all`"
+                )
+
+            resolved_start_date = pd.Timestamp(resolved_start_date).strftime("%Y-%m-%d")
+            resolved_end_date = pd.Timestamp(resolved_end_date).strftime("%Y-%m-%d")
+            if resolved_start_date > resolved_end_date:
+                raise ValueError("fund_div 的开始日期不能晚于结束日期")
+
+            return await self._update_fund_div_by_dates(
+                start_date=resolved_start_date,
+                end_date=resolved_end_date,
+                progress_callback=progress_callback,
+            )
+
+        data = self.router.route(
+            asset_class="fund", data_type="div", method_name="get_fund_div",
+            ts_code=ts_code, ann_date=ann_date, ex_date=ex_date, pay_date=pay_date,
+        )
+        return await self.data_ops.insert_fund_div_batch(data) if data is not None else 0
+
+    async def _update_fund_div_by_dates(
+        self,
+        start_date: str,
+        end_date: str,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """按公告日拉取全市场基金分红，并逐日写入本地库。"""
+        ann_dates = pd.date_range(
+            start=start_date,
+            end=end_date,
+            freq="D",
+        ).strftime("%Y-%m-%d").tolist()
+        if not ann_dates:
+            logger.info("No fund_div dates found between {} and {}", start_date, end_date)
+            return 0
+
+        total = 0
+        total_dates = len(ann_dates)
+        logger.info(
+            "Updating fund_div for {} announcement dates (start={}, end={})",
+            total_dates,
+            start_date,
+            end_date,
+        )
+        if progress_callback:
+            progress_callback(0, total_dates)
+
+        for index, current_ann_date in enumerate(ann_dates, start=1):
+            try:
+                data = self.router.route(
+                    asset_class="fund",
+                    data_type="div",
+                    method_name="get_fund_div",
+                    ann_date=current_ann_date,
+                )
+                if data is not None and not data.empty:
+                    total += await self.data_ops.insert_fund_div_batch(data)
+                else:
+                    logger.debug("No fund_div data for {}", current_ann_date)
+            except Exception:
+                logger.exception("Failed to update fund_div for {}", current_ann_date)
+                raise
+            finally:
+                if progress_callback:
+                    progress_callback(index, total_dates)
+
+        logger.info("Updated {} fund_div records across {} dates", total, total_dates)
+        return total
+
+    async def update_fund_company(self) -> int:
+        """刷新 Tushare 公募基金管理人目录（全量、非时间序列）。"""
+        try:
+            data = self.router.route(
+                asset_class="fund",
+                data_type="company",
+                method_name="get_fund_company",
+            )
+            if data is None or data.empty:
+                logger.warning("No fund_company data received")
+                return 0
+            inserted_count = await self.data_ops.insert_fund_company_batch(data)
+            logger.info(f"Updated {inserted_count} fund_company records")
+            return inserted_count
+        except Exception:
+            logger.exception("Failed to update fund_company")
+            raise
+
+    async def update_fund_manager(
+        self,
+        fund_codes: Optional[List[str]] = None,
+        ann_date: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> int:
+        """刷新基金经理任职与简历数据；未指定基金代码时全量分页同步。"""
+        ts_code = ",".join(fund_codes) if fund_codes else None
+        try:
+            data = self.router.route(
+                asset_class="fund",
+                data_type="manager",
+                method_name="get_fund_manager",
+                ts_code=ts_code,
+                ann_date=ann_date,
+                name=name,
+            )
+            if data is None or data.empty:
+                logger.warning("No fund_manager data received")
+                return 0
+            inserted_count = await self.data_ops.insert_fund_manager_batch(data)
+            logger.info(f"Updated {inserted_count} fund_manager records")
+            return inserted_count
+        except Exception:
+            logger.exception("Failed to update fund_manager")
+            raise
+
+    async def update_mkt_idx_bmk(
+        self,
+        ts_code: Optional[str] = None,
+        bmk_type: Optional[str] = None,
+        bmk_level: Optional[str] = None,
+    ) -> int:
+        """刷新 Tushare ETF 业绩比较基准库。"""
+        try:
+            data = self.router.route(
+                asset_class="fund",
+                data_type="mkt_idx_bmk",
+                method_name="get_mkt_idx_bmk",
+                ts_code=ts_code,
+                bmk_type=bmk_type,
+                bmk_level=bmk_level,
+            )
+            if data is None or data.empty:
+                logger.warning("No mkt_idx_bmk data received")
+                return 0
+            return await self.data_ops.insert_mkt_idx_bmk_batch(data)
+        except Exception:
+            logger.exception("Failed to update mkt_idx_bmk")
+            raise
+
+    async def update_fund_portfolio(
+        self,
+        fund_codes: Optional[List[str]] = None,
+        symbol: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        period: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> int:
+        """同步指定基金或报告期的 Tushare 公募基金季度持仓。"""
+        if not any((fund_codes, ann_date, period)):
+            raise ValueError("fund_portfolio 需要 --symbols、--trade-date 或报告期参数")
+        total = 0
+        codes = fund_codes or [None]
+        for ts_code in codes:
+            try:
+                data = self.router.route(
+                    asset_class="fund",
+                    data_type="portfolio",
+                    method_name="get_fund_portfolio",
+                    ts_code=ts_code,
+                    symbol=symbol,
+                    ann_date=ann_date,
+                    period=period,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                if data is not None and not data.empty:
+                    total += await self.data_ops.insert_fund_portfolio_batch(data)
+            except Exception:
+                logger.exception("Failed to update fund_portfolio for {}", ts_code or period)
+                raise
+        logger.info("Updated {} fund_portfolio records", total)
+        return total
 
     @staticmethod
     def _filter_index_daily_to_catalog(

@@ -23,6 +23,14 @@ from finance_data_hub.providers.base import (
 from finance_data_hub.providers.registry import register_provider
 from finance_data_hub.providers.schema import (
     StockBasicSchema,
+    FundBasicSchema,
+    FundCompanySchema,
+    FundManagerSchema,
+    FundShareSchema,
+    FundNavSchema,
+    FundDivSchema,
+    MktIdxBmkSchema,
+    FundPortfolioSchema,
     DailyDataSchema,
     MinuteDataSchema,
     DailyBasicSchema,
@@ -100,6 +108,12 @@ SUPPORTED_EXCHANGES = [
 
 SUPPORTED_FUTURES_EXCHANGES = supported_futures_exchanges()
 FUTURES_WEEKLY_MONTHLY_MAX_RECORDS = 6000
+FUND_BASIC_MAX_RECORDS = 15000
+FUND_MANAGER_MAX_RECORDS = 5000
+FUND_SERIES_MAX_RECORDS = 2000
+FUND_NAV_MAX_RECORDS = 10500
+FUND_DIV_MAX_RECORDS = 1000
+TUSHARE_FUND_MARKETS = ["E", "O"]
 SUPPORTED_FUTURES_INDEX_CODES = [
     "NHCI.NH",  # 南华商品指数
     "NHAI.NH",  # 南华农产品指数
@@ -457,6 +471,325 @@ class TushareProvider(BaseDataProvider):
 
         logger.info(f"Fetched {len(df)} stocks from Tushare")
         return df
+
+    def get_fund_basic(
+        self,
+        ts_code: Optional[str] = None,
+        market: Optional[str] = None,
+        markets: Optional[List[str]] = None,
+        status: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取公募基金列表，并在命中 15,000 条上限时按 offset 继续分页。
+
+        默认同时同步场内（E）与场外（O）基金，避免 Tushare ``fund_basic``
+        接口默认仅返回场内基金而遗漏场外基金。
+        """
+        if market and str(market).upper() in {"CN", "HK", "ALL"}:
+            market = None
+        if market and markets:
+            raise ValueError("market cannot be used with markets")
+
+        selected_markets = markets or ([market] if market else TUSHARE_FUND_MARKETS)
+        selected_markets = [str(item).upper() for item in selected_markets]
+        invalid_markets = sorted(set(selected_markets) - set(TUSHARE_FUND_MARKETS))
+        if invalid_markets:
+            raise ValueError(
+                "Unsupported fund market: "
+                f"{', '.join(invalid_markets)}. Supported: {', '.join(TUSHARE_FUND_MARKETS)}"
+            )
+
+        fields = ",".join(FundBasicSchema.get_required_columns())
+        all_dataframes = []
+        for fund_market in selected_markets:
+            offset = 0
+            batch_number = 0
+            while True:
+                batch_number += 1
+                api_params: Dict[str, Any] = {
+                    "market": fund_market,
+                    "offset": offset,
+                }
+                if ts_code:
+                    api_params["ts_code"] = ts_code
+                if status:
+                    api_params["status"] = status
+
+                logger.info(
+                    "Fetching fund_basic for market={}, offset={} (batch {})",
+                    fund_market,
+                    offset,
+                    batch_number,
+                )
+                df = self._call_api("fund_basic", fields=fields, **api_params)
+                if df is None or df.empty:
+                    break
+
+                all_dataframes.append(df)
+                batch_records = len(df)
+                logger.info(
+                    "fund_basic market={} batch={} fetched {} records",
+                    fund_market,
+                    batch_number,
+                    batch_records,
+                )
+                if batch_records < FUND_BASIC_MAX_RECORDS:
+                    break
+                offset += batch_records
+
+        if not all_dataframes:
+            logger.warning("No fund_basic data returned from Tushare")
+            return pd.DataFrame(columns=FundBasicSchema.get_required_columns())
+
+        final_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        if "ts_code" not in final_df.columns:
+            logger.warning("fund_basic response missing ts_code column")
+            return pd.DataFrame(columns=FundBasicSchema.get_required_columns())
+
+        final_df = final_df.dropna(subset=["ts_code"])
+        final_df["ts_code"] = final_df["ts_code"].astype(str).str.strip()
+        final_df = final_df[final_df["ts_code"] != ""]
+        final_df = final_df.drop_duplicates(subset=["ts_code"], keep="last")
+        final_df = validate_dataframe(final_df, FundBasicSchema, provider_name=self.name)
+        for column in (
+            "name", "management", "custodian", "fund_type", "benchmark", "status",
+            "invest_type", "type", "trustee", "market",
+        ):
+            if column in final_df.columns:
+                final_df[column] = final_df[column].replace(
+                    {"None": None, "nan": None, "<NA>": None}
+                )
+        return final_df.sort_values(["market", "ts_code"], na_position="last").reset_index(
+            drop=True
+        )
+
+    def _get_fund_series(
+        self,
+        api_name: str,
+        schema,
+        api_params: Dict[str, Any],
+        duplicate_columns: List[str],
+        max_records: int = FUND_SERIES_MAX_RECORDS,
+    ) -> pd.DataFrame:
+        """获取受单次记录数限制的公募基金时间序列接口。"""
+        fields = ",".join(schema.get_required_columns())
+        frames = []
+        offset = 0
+        while True:
+            params = {key: value for key, value in api_params.items() if value is not None}
+            params["offset"] = offset
+            df = self._call_api(api_name, fields=fields, **params)
+            if df is None or df.empty:
+                break
+            frames.append(df)
+            fetched = len(df)
+            logger.info("{} offset={} fetched {} records", api_name, offset, fetched)
+            if fetched < max_records:
+                break
+            offset += fetched
+
+        if not frames:
+            return pd.DataFrame(columns=schema.get_required_columns())
+
+        result = pd.concat(frames, ignore_index=True, sort=False)
+        result = validate_dataframe(result, schema, provider_name=self.name)
+        result = result.dropna(subset=[column for column in duplicate_columns if column in result])
+        return result.drop_duplicates(subset=duplicate_columns, keep="last").reset_index(drop=True)
+
+    def get_fund_share(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        market: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取基金规模（含沪深 ETF）；接口每次最多返回 2,000 行。"""
+        return self._get_fund_series(
+            "fund_share", FundShareSchema,
+            {"ts_code": ts_code, "trade_date": trade_date, "start_date": start_date,
+             "end_date": end_date, "market": market},
+            ["ts_code", "trade_date"],
+        )
+
+    def get_fund_nav(
+        self,
+        ts_code: Optional[str] = None,
+        nav_date: Optional[str] = None,
+        market: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取公募基金净值，并在单日满 10,500 行时按 offset 分页。"""
+        return self._get_fund_series(
+            "fund_nav", FundNavSchema,
+            {"ts_code": ts_code, "nav_date": nav_date, "market": market,
+             "start_date": start_date, "end_date": end_date},
+            ["ts_code", "nav_date"],
+            max_records=FUND_NAV_MAX_RECORDS,
+        )
+
+    def get_fund_div(
+        self,
+        ann_date: Optional[str] = None,
+        ex_date: Optional[str] = None,
+        pay_date: Optional[str] = None,
+        ts_code: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取公募基金分红，并在单日满 1,000 行时按 offset 分页。"""
+        return self._get_fund_series(
+            "fund_div", FundDivSchema,
+            {"ann_date": ann_date, "ex_date": ex_date, "pay_date": pay_date,
+             "ts_code": ts_code},
+            ["ts_code", "ann_date"],
+            max_records=FUND_DIV_MAX_RECORDS,
+        )
+
+    def get_mkt_idx_bmk(
+        self,
+        ts_code: Optional[str] = None,
+        bmk_type: Optional[str] = None,
+        bmk_level: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取 ETF 业绩比较基准库（Tushare ``mkt_idx_bmk``）。
+
+        接口单次最多返回 500 条，足以返回完整的当前基准列表。
+        """
+        params = {
+            key: value for key, value in {
+                "ts_code": ts_code,
+                "bmk_type": bmk_type,
+                "bmk_level": bmk_level,
+            }.items() if value
+        }
+        df = self._call_api(
+            "mkt_idx_bmk",
+            fields=",".join(MktIdxBmkSchema.get_required_columns()),
+            **params,
+        )
+        if df is None or df.empty:
+            return pd.DataFrame(columns=MktIdxBmkSchema.get_required_columns())
+        df = df.dropna(subset=["ts_code"]).drop_duplicates(subset=["ts_code"], keep="last")
+        return validate_dataframe(df, MktIdxBmkSchema, provider_name=self.name).sort_values(
+            "ts_code"
+        ).reset_index(drop=True)
+
+    def get_fund_portfolio(
+        self,
+        ts_code: Optional[str] = None,
+        symbol: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        period: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取公募基金季度持仓（Tushare ``fund_portfolio``）。"""
+        if not any((ts_code, ann_date, period)):
+            raise ValueError("fund_portfolio 至少需要 ts_code、ann_date 或 period 之一")
+        params = {
+            key: value.replace("-", "") if isinstance(value, str) and key in {
+                "ann_date", "period", "start_date", "end_date"
+            } else value
+            for key, value in {
+                "ts_code": ts_code,
+                "symbol": symbol,
+                "ann_date": ann_date,
+                "period": period,
+                "start_date": start_date,
+                "end_date": end_date,
+            }.items() if value is not None
+        }
+        df = self._call_api(
+            "fund_portfolio",
+            fields=",".join(FundPortfolioSchema.get_required_columns()),
+            **params,
+        )
+        if df is None or df.empty:
+            return pd.DataFrame(columns=FundPortfolioSchema.get_required_columns())
+        df = df.dropna(subset=["ts_code", "ann_date", "end_date", "symbol"])
+        df = df.drop_duplicates(
+            subset=["ts_code", "ann_date", "end_date", "symbol"], keep="last"
+        )
+        return validate_dataframe(df, FundPortfolioSchema, provider_name=self.name).sort_values(
+            ["ts_code", "end_date", "ann_date", "symbol"]
+        ).reset_index(drop=True)
+
+    def get_fund_company(self) -> pd.DataFrame:
+        """获取全部公募基金管理人信息（Tushare ``fund_company``）。"""
+        fields = ",".join(FundCompanySchema.get_required_columns())
+        df = self._call_api("fund_company", fields=fields)
+        if df is None or df.empty:
+            logger.warning("No fund_company data returned from Tushare")
+            return pd.DataFrame(columns=FundCompanySchema.get_required_columns())
+
+        if "name" not in df.columns:
+            logger.warning("fund_company response missing name column")
+            return pd.DataFrame(columns=FundCompanySchema.get_required_columns())
+
+        df = df.dropna(subset=["name"]).copy()
+        df["name"] = df["name"].astype(str).str.strip()
+        df = df[df["name"] != ""].drop_duplicates(subset=["name"], keep="last")
+        df = validate_dataframe(df, FundCompanySchema, provider_name=self.name)
+        for column in FundCompanySchema.get_required_columns():
+            if column in df.columns and column not in {"reg_capital", "employees", "setup_date", "end_date"}:
+                df[column] = df[column].replace({"None": None, "nan": None, "<NA>": None})
+        return df.sort_values("name").reset_index(drop=True)
+
+    def get_fund_manager(
+        self,
+        ts_code: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取基金经理任职与简历数据，并在 5,000 条上限时按 offset 分页。"""
+        fields = ",".join(FundManagerSchema.get_required_columns())
+        dataframes = []
+        offset = 0
+        batch_number = 0
+        while True:
+            batch_number += 1
+            api_params: Dict[str, Any] = {
+                "offset": offset,
+                "limit": FUND_MANAGER_MAX_RECORDS,
+            }
+            if ts_code:
+                api_params["ts_code"] = ts_code
+            if ann_date:
+                api_params["ann_date"] = ann_date
+            if name:
+                api_params["name"] = name
+
+            logger.info(
+                "Fetching fund_manager for offset={} (batch {})", offset, batch_number
+            )
+            df = self._call_api("fund_manager", fields=fields, **api_params)
+            if df is None or df.empty:
+                break
+            dataframes.append(df)
+            batch_records = len(df)
+            logger.info("fund_manager batch={} fetched {} records", batch_number, batch_records)
+            if batch_records < FUND_MANAGER_MAX_RECORDS:
+                break
+            offset += batch_records
+
+        if not dataframes:
+            logger.warning("No fund_manager data returned from Tushare")
+            return pd.DataFrame(columns=FundManagerSchema.get_required_columns())
+
+        final_df = pd.concat(dataframes, ignore_index=True, sort=False)
+        primary_columns = ["ts_code", "ann_date", "name", "begin_date"]
+        missing_columns = set(primary_columns) - set(final_df.columns)
+        if missing_columns:
+            logger.warning("fund_manager response missing key columns: {}", missing_columns)
+            return pd.DataFrame(columns=FundManagerSchema.get_required_columns())
+
+        for column in ("ts_code", "name"):
+            final_df[column] = final_df[column].astype(str).str.strip()
+        final_df = final_df.replace({"None": None, "nan": None, "<NA>": None})
+        final_df = final_df.dropna(subset=primary_columns)
+        final_df = final_df[(final_df["ts_code"] != "") & (final_df["name"] != "")]
+        final_df = final_df.drop_duplicates(subset=primary_columns, keep="last")
+        final_df = validate_dataframe(final_df, FundManagerSchema, provider_name=self.name)
+        return final_df.sort_values(primary_columns).reset_index(drop=True)
 
     def get_daily_data(
         self,

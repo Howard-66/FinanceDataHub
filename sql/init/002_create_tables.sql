@@ -30,6 +30,156 @@ COMMENT ON COLUMN asset_basic.exchange IS '交易所代码：SH/SZ/BJ/HK等';
 COMMENT ON COLUMN asset_basic.list_status IS '上市状态：L-上市，D-退市，P-暂停上市';
 COMMENT ON COLUMN asset_basic.is_hs IS '沪深港通：N-否，H-沪股通，S-深股通';
 
+-- 公募基金基础信息表（Tushare fund_basic）
+CREATE TABLE IF NOT EXISTS fund_basic (
+    ts_code VARCHAR(20) PRIMARY KEY,               -- TS 基金代码
+    name VARCHAR(200),                             -- 基金简称
+    management VARCHAR(200),                       -- 管理人
+    custodian VARCHAR(200),                        -- 托管人
+    fund_type VARCHAR(100),                        -- 投资类型
+    found_date DATE,                               -- 成立日期
+    due_date DATE,                                 -- 到期日期
+    list_date DATE,                                -- 上市日期
+    issue_date DATE,                               -- 发行日期
+    delist_date DATE,                              -- 退市日期
+    issue_amount DECIMAL(20,6),                    -- 发行份额（亿）
+    m_fee DECIMAL(20,6),                           -- 管理费
+    c_fee DECIMAL(20,6),                           -- 托管费
+    duration_year DECIMAL(20,6),                   -- 存续期
+    p_value DECIMAL(20,6),                         -- 面值
+    min_amount DECIMAL(20,6),                      -- 起点金额（万元）
+    exp_return DECIMAL(20,6),                      -- 预期收益率
+    benchmark TEXT,                                -- 业绩比较基准
+    status VARCHAR(10),                            -- 存续状态：D/I/L
+    invest_type VARCHAR(100),                      -- 投资风格
+    type VARCHAR(100),                             -- 基金类型
+    trustee VARCHAR(200),                          -- 受托人
+    purc_startdate DATE,                           -- 日常申购起始日
+    redm_startdate DATE,                           -- 日常赎回起始日
+    market VARCHAR(10),                            -- E 场内 / O 场外
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fund_basic_market ON fund_basic(market);
+CREATE INDEX IF NOT EXISTS idx_fund_basic_status ON fund_basic(status);
+CREATE INDEX IF NOT EXISTS idx_fund_basic_fund_type ON fund_basic(fund_type);
+CREATE INDEX IF NOT EXISTS idx_fund_basic_management ON fund_basic(management);
+
+COMMENT ON TABLE fund_basic IS 'Tushare 公募基金基础信息表';
+COMMENT ON COLUMN fund_basic.ts_code IS 'TS 基金代码';
+COMMENT ON COLUMN fund_basic.market IS '交易市场：E 场内，O 场外';
+COMMENT ON COLUMN fund_basic.status IS '存续状态：D 摘牌，I 发行，L 已上市';
+
+-- 公募基金管理人表（Tushare fund_company）
+CREATE TABLE IF NOT EXISTS fund_company (
+    name VARCHAR(300) PRIMARY KEY,
+    shortname VARCHAR(200),
+    short_enname VARCHAR(200),
+    province VARCHAR(100),
+    city VARCHAR(100),
+    address TEXT,
+    phone VARCHAR(100),
+    office TEXT,
+    website TEXT,
+    chairman VARCHAR(200),
+    manager VARCHAR(200),
+    reg_capital DECIMAL(20,6),
+    setup_date DATE,
+    end_date DATE,
+    employees DECIMAL(20,6),
+    main_business TEXT,
+    org_code VARCHAR(100),
+    credit_code VARCHAR(100),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_fund_company_province ON fund_company(province);
+CREATE INDEX IF NOT EXISTS idx_fund_company_city ON fund_company(city);
+CREATE INDEX IF NOT EXISTS idx_fund_company_shortname ON fund_company(shortname);
+COMMENT ON TABLE fund_company IS 'Tushare 公募基金管理人信息表';
+
+-- 基金经理表（Tushare fund_manager）
+CREATE TABLE IF NOT EXISTS fund_manager (
+    ts_code VARCHAR(20) NOT NULL,
+    ann_date DATE NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    gender VARCHAR(10),
+    birth_year VARCHAR(20),
+    edu VARCHAR(100),
+    nationality VARCHAR(100),
+    begin_date DATE NOT NULL,
+    end_date DATE,
+    resume TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts_code, ann_date, name, begin_date)
+);
+CREATE INDEX IF NOT EXISTS idx_fund_manager_name ON fund_manager(name);
+CREATE INDEX IF NOT EXISTS idx_fund_manager_ann_date ON fund_manager(ann_date);
+COMMENT ON TABLE fund_manager IS 'Tushare 公募基金经理任职与简历信息表';
+
+-- ETF 业绩比较基准库（Tushare mkt_idx_bmk）
+CREATE TABLE IF NOT EXISTS mkt_idx_bmk (
+    ts_code VARCHAR(20) PRIMARY KEY,
+    symbol VARCHAR(20),
+    name VARCHAR(200),
+    fullname VARCHAR(500),
+    bmk_level VARCHAR(50),
+    bmk_type VARCHAR(100),
+    bmk_src VARCHAR(200),
+    idx_type VARCHAR(100),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mkt_idx_bmk_level ON mkt_idx_bmk(bmk_level);
+CREATE INDEX IF NOT EXISTS idx_mkt_idx_bmk_type ON mkt_idx_bmk(bmk_type);
+COMMENT ON TABLE mkt_idx_bmk IS 'Tushare ETF业绩比较基准库';
+
+-- 公募基金季度持仓（Tushare fund_portfolio）
+CREATE TABLE IF NOT EXISTS fund_portfolio (
+    ts_code VARCHAR(20) NOT NULL,
+    ann_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    symbol VARCHAR(20) NOT NULL,
+    mkv DECIMAL(24,6),
+    amount DECIMAL(24,6),
+    stk_mkv_ratio DECIMAL(20,6),
+    stk_float_ratio DECIMAL(20,6),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts_code, ann_date, end_date, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_fund_portfolio_symbol_end_date ON fund_portfolio(symbol, end_date);
+CREATE INDEX IF NOT EXISTS idx_fund_portfolio_end_date ON fund_portfolio(end_date);
+COMMENT ON TABLE fund_portfolio IS 'Tushare 公募基金季度持仓';
+
+-- 公募基金规模、净值和分红（Tushare fund_share/fund_nav/fund_div）
+CREATE TABLE IF NOT EXISTS fund_share (
+    ts_code VARCHAR(20) NOT NULL, trade_date DATE NOT NULL,
+    fd_share DECIMAL(24,6), updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (ts_code, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_fund_share_trade_date ON fund_share(trade_date);
+CREATE TABLE IF NOT EXISTS fund_nav (
+    ts_code VARCHAR(20) NOT NULL, ann_date DATE, nav_date DATE NOT NULL,
+    unit_nav DECIMAL(24,8), accum_nav DECIMAL(24,8), accum_div DECIMAL(24,8),
+    net_asset DECIMAL(28,6), total_netasset DECIMAL(28,6), adj_nav DECIMAL(24,8),
+    updated_at TIMESTAMPTZ DEFAULT NOW(), created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts_code, nav_date)
+);
+CREATE INDEX IF NOT EXISTS idx_fund_nav_nav_date ON fund_nav(nav_date);
+CREATE TABLE IF NOT EXISTS fund_div (
+    ts_code VARCHAR(20) NOT NULL, ann_date DATE NOT NULL, imp_anndate DATE,
+    base_date DATE, div_proc VARCHAR(50), record_date DATE, ex_date DATE,
+    pay_date DATE, earpay_date DATE, net_ex_date DATE, div_cash DECIMAL(24,8),
+    base_unit DECIMAL(28,6), ear_distr DECIMAL(28,6), ear_amount DECIMAL(28,6),
+    account_date DATE, base_year VARCHAR(20), updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (ts_code, ann_date)
+);
+CREATE INDEX IF NOT EXISTS idx_fund_div_ann_date ON fund_div(ann_date);
+CREATE INDEX IF NOT EXISTS idx_fund_div_ex_date ON fund_div(ex_date);
+
 -- 每日指标表
 CREATE TABLE IF NOT EXISTS daily_basic (
     time TIMESTAMPTZ NOT NULL,                -- 交易日期

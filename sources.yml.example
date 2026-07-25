@@ -139,6 +139,33 @@ routing_strategy:
       providers: [akshare]
       fallback: false
 
+  # 公募基金数据路由
+  fund:
+    basic:
+      providers: [tushare]
+      fallback: false
+    company:
+      providers: [tushare]
+      fallback: false
+    manager:
+      providers: [tushare]
+      fallback: false
+    share:
+      providers: [tushare]
+      fallback: false
+    nav:
+      providers: [tushare]
+      fallback: false
+    div:
+      providers: [tushare]
+      fallback: false
+    mkt_idx_bmk:
+      providers: [tushare]
+      fallback: false
+    portfolio:
+      providers: [tushare]
+      fallback: false
+
   # 宏观经济数据路由
   macro:
     gdp:

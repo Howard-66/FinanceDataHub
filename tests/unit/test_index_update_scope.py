@@ -7,6 +7,37 @@ from finance_data_hub.update.updater import DataUpdater
 
 
 @pytest.mark.asyncio
+async def test_update_fund_company_and_manager_route_to_their_fund_endpoints():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.router.route.side_effect = [
+        pd.DataFrame({"name": ["示例基金管理有限公司"]}),
+        pd.DataFrame(
+            {
+                "ts_code": ["150018.SZ"], "ann_date": ["20100508"],
+                "name": ["周毅"], "begin_date": ["20100507"],
+            }
+        ),
+    ]
+    updater.data_ops = Mock()
+    updater.data_ops.insert_fund_company_batch = AsyncMock(return_value=1)
+    updater.data_ops.insert_fund_manager_batch = AsyncMock(return_value=1)
+
+    assert await updater.update_fund_company() == 1
+    assert await updater.update_fund_manager(
+        fund_codes=["150018.SZ"], ann_date="20100508"
+    ) == 1
+
+    assert updater.router.route.call_args_list[0].kwargs == {
+        "asset_class": "fund", "data_type": "company", "method_name": "get_fund_company"
+    }
+    assert updater.router.route.call_args_list[1].kwargs == {
+        "asset_class": "fund", "data_type": "manager", "method_name": "get_fund_manager",
+        "ts_code": "150018.SZ", "ann_date": "20100508", "name": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_update_index_daily_default_resolves_full_catalog():
     updater = DataUpdater(settings=Mock())
     updater.router = Mock()
@@ -191,3 +222,26 @@ async def test_update_index_basic_refreshes_selected_markets():
         markets=["SSE"],
     )
     updater.data_ops.insert_index_basic_batch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_fund_basic_refreshes_selected_markets():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.router.route.return_value = pd.DataFrame(
+        {"ts_code": ["510300.SH"], "name": ["沪深300ETF"], "market": ["E"]}
+    )
+    updater.data_ops = Mock()
+    updater.data_ops.insert_fund_basic_batch = AsyncMock(return_value=1)
+
+    result = await updater.update_fund_basic(markets=["e"])
+
+    assert result == 1
+    updater.router.route.assert_called_once_with(
+        asset_class="fund",
+        data_type="basic",
+        method_name="get_fund_basic",
+        markets=["E"],
+        status=None,
+    )
+    updater.data_ops.insert_fund_basic_batch.assert_awaited_once()

@@ -138,7 +138,7 @@ def update(
         None,
         "--dataset",
         "-d",
-        help="数据类型 (daily, minute_1, minute_5, minute_15, minute_30, minute_60, daily_basic, adj_factor, basic, index_basic, gdp)。"
+        help="数据类型 (daily, minute_1, minute_5, minute_15, minute_30, minute_60, daily_basic, adj_factor, basic, fund_basic, fund_company, fund_manager, fund_share, fund_nav, fund_div, mkt_idx_bmk, fund_portfolio, index_basic, gdp)。"
              "取代 --frequency 参数，提供更准确的描述。"
     ),
     frequency: Optional[str] = typer.Option(
@@ -216,6 +216,14 @@ def update(
       - ppi: 中国PPI工业生产者出厂价格指数数据
       - m: 中国货币供应量数据（M0、M1、M2）
       - pmi: 中国PMI采购经理人指数数据
+      - fund_basic: 公募基金基础信息（非时间序列，按场内/场外市场全量刷新）
+      - fund_company: 公募基金管理人目录（非时间序列，全量刷新）
+      - fund_manager: 基金经理任职与简历（支持全量分页或按基金代码、公告日筛选）
+      - fund_share: 公募基金规模（支持基金代码、交易日或日期区间）
+      - fund_nav: 公募基金净值（支持基金代码、净值日或日期区间）
+      - fund_div: 公募基金分红（支持基金代码或公告/除息/派息日）
+      - mkt_idx_bmk: ETF业绩比较基准库（非时间序列）
+      - fund_portfolio: 公募基金季度持仓（需指定基金代码或报告期）
       - index_basic: 指数基本信息（非时间序列，按 Tushare 指数市场全量刷新）
       - index_daily: 指数日线行情数据（沪深300、中证500、上证50、上证综指等）
       - index_dailybasic: 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）
@@ -254,6 +262,35 @@ def update(
         - 指定--symbols时：按 Tushare 市场代码筛选，如 --symbols SSE,SW
         - 支持的市场代码：MSCI, CSI, SSE, SZSE, CICC, SW, OTH
         - 基础信息不是时间序列，不支持 --trade-date、--start-date 或 --end-date
+
+        fund_basic使用说明:
+        - 不指定--symbols或指定--symbols all时：同步场内 E 和场外 O 的全部公募基金
+        - 指定--symbols时：按基金交易市场筛选，如 --symbols E,O
+        - 基础信息不是时间序列，不支持 --trade-date、--start-date 或 --end-date
+
+        fund_company使用说明:
+        - 不指定--symbols或指定--symbols all时：同步全部基金管理人
+        - 非时间序列，不支持 --trade-date、--start-date 或 --end-date
+
+        fund_manager使用说明:
+        - 不指定--symbols或指定--symbols all时：分页同步全部基金经理
+        - 指定--symbols时：按基金 TS 代码筛选，可逗号分隔多个代码
+        - --trade-date 可指定公告日期（YYYY-MM-DD 或 YYYYMMDD）
+
+        fund_share/fund_nav/fund_div使用说明:
+        - --symbols 可传基金代码（逗号分隔）；--trade-date 分别映射交易日、净值日和公告日
+        - fund_share 与 fund_nav 支持 --start-date、--end-date；fund_div 全量模式也支持日期范围
+        - 三者均支持 --symbols all：从本地 fund_basic 最早基金日期按对应日期字段全量下载；可用日期范围缩小范围
+
+        mkt_idx_bmk使用说明:
+        - 不指定--symbols或指定--symbols all时：同步全部ETF业绩比较基准
+        - 指定--symbols时：按指数TS代码筛选，如 --symbols 000300.SH
+        - 基准库不是时间序列，不支持 --trade-date、--start-date 或 --end-date
+
+        fund_portfolio使用说明:
+        - 指定基金代码：--symbols 001753.OF（可逗号分隔多个基金）
+        - 按报告期同步：--trade-date 2024-06-30
+        - 支持 --start-date、--end-date 缩小报告期范围
 
         index_weight使用说明:
         - 不指定--symbols或指定--symbols all时：从本地 index_basic 获取有效指数目录（智能更新）
@@ -379,7 +416,10 @@ def _is_timeseries_data(data_type: str) -> bool:
         bool: True表示时间序列数据，False表示非时间序列数据
     """
     # 非时间序列数据类型
-    non_timeseries_types = {"basic", "asset_basic", "index_basic"}
+    non_timeseries_types = {
+        "basic", "asset_basic", "fund_basic", "fund_company", "fund_manager",
+        "mkt_idx_bmk", "index_basic",
+    }
     return data_type not in non_timeseries_types
 
 
@@ -439,13 +479,18 @@ async def _run_update(
         symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
     if asset_class == "future" and symbol_list:
         _validate_symbols_all(symbol_list, "期货模式下")
-    if data_type in {"index_basic", "index_daily", "index_weight"} and symbol_list:
-        _validate_symbols_all(symbol_list, "指数模式下")
+    if data_type in {
+        "index_basic", "index_daily", "index_weight", "fund_basic", "fund_company",
+        "fund_manager", "mkt_idx_bmk",
+    } and symbol_list:
+        _validate_symbols_all(symbol_list, "指数/基金模式下")
 
-    if data_type == "index_basic" and (trade_date or start_date or end_date):
+    if data_type in {"index_basic", "fund_basic", "fund_company", "mkt_idx_bmk"} and (trade_date or start_date or end_date):
         raise ValueError(
-            "index_basic 是非时间序列数据，不支持 --trade-date、--start-date 或 --end-date"
+            f"{data_type} 是非时间序列数据，不支持 --trade-date、--start-date 或 --end-date"
         )
+    if data_type == "fund_manager" and (start_date or end_date):
+        raise ValueError("fund_manager 不支持 --start-date 或 --end-date；可使用 --trade-date 指定公告日")
 
     # 设置默认日期；trade_date 模式不能自动注入 end_date，否则会破坏互斥参数。
     if not end_date and not trade_date and data_type != "trade_cal":
@@ -464,8 +509,17 @@ async def _run_update(
             quiet,
         )
 
+    # 公募基金规模/净值/分红使用接口自己的筛选与分页，不能走股票智能下载。
+    if data_type in {
+        "fund_company", "fund_manager", "fund_share", "fund_nav", "fund_div",
+        "fund_portfolio",
+    }:
+        return await _run_force_update(
+            settings, asset_class, data_type, symbol_list,
+            start_date, end_date, adj, trade_date, market, verbose, quiet,
+        )
     # 更新策略矩阵：根据参数组合自动选择最优策略
-    if trade_date:
+    elif trade_date:
         # 策略 1: trade_date 批量更新（Tushare专用）
         console.print("\n[bold yellow]使用交易日批量更新模式[/bold yellow]")
         await _run_trade_date_update(
@@ -1650,6 +1704,213 @@ async def _run_force_update(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新股票基本信息失败: {str(e)}")
+                    raise
+
+    if data_type == "fund_basic":
+        selected_markets = None if _is_symbols_all(symbol_list) else symbol_list
+        if selected_markets:
+            selected_markets = [item.upper() for item in selected_markets]
+            supported_markets = {"E", "O"}
+            invalid_markets = sorted(set(selected_markets) - supported_markets)
+            if invalid_markets:
+                raise ValueError(
+                    "fund_basic 的 --symbols 仅支持基金交易市场代码 (E,O)；无效值: "
+                    f"{', '.join(invalid_markets)}"
+                )
+
+        if not quiet:
+            scope = ", ".join(selected_markets) if selected_markets else "场内 E 和场外 O"
+            console.print("[bold]强制更新策略:[/bold]")
+            console.print("  - 公募基金基础信息为非时间序列数据，按市场全量刷新")
+            console.print(f"  - 更新范围: {scope}")
+            console.print("")
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在更新公募基金基本信息...", total=1)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_fund_basic(markets=selected_markets)
+                    progress.update(task, completed=1)
+                    console.print(f"[green][OK][/green] 已更新 {count} 条公募基金基本信息")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新公募基金基本信息失败: {str(e)}")
+                    raise
+
+    if data_type == "fund_company":
+        if symbol_list and not _is_symbols_all(symbol_list):
+            raise ValueError("fund_company 不接受 --symbols；请省略或使用 --symbols all")
+        with Progress(
+            get_spinner(), TextColumn("[bold blue]{task.description}"), BarColumn(),
+            TimeElapsedColumn(), console=console,
+        ) as progress:
+            task = progress.add_task("正在更新公募基金管理人...", total=1)
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_fund_company()
+                    progress.update(task, completed=1)
+                    console.print(f"[green][OK][/green] 已更新 {count} 条公募基金管理人")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新公募基金管理人失败: {str(e)}")
+                    raise
+
+    if data_type == "fund_manager":
+        selected_codes = None if _is_symbols_all(symbol_list) else symbol_list
+        with Progress(
+            get_spinner(), TextColumn("[bold blue]{task.description}"), BarColumn(),
+            TimeElapsedColumn(), console=console,
+        ) as progress:
+            task = progress.add_task("正在更新基金经理信息...", total=1)
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_fund_manager(
+                        fund_codes=selected_codes,
+                        ann_date=trade_date,
+                    )
+                    progress.update(task, completed=1)
+                    console.print(f"[green][OK][/green] 已更新 {count} 条基金经理信息")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新基金经理信息失败: {str(e)}")
+                    raise
+
+    if data_type == "mkt_idx_bmk":
+        selected_codes = None if _is_symbols_all(symbol_list) else symbol_list
+        if selected_codes and len(selected_codes) != 1:
+            raise ValueError("mkt_idx_bmk 的 --symbols 最多指定一个指数 TS 代码")
+        with Progress(
+            get_spinner(), TextColumn("[bold blue]{task.description}"), BarColumn(),
+            TimeElapsedColumn(), console=console,
+        ) as progress:
+            task = progress.add_task("正在更新 ETF 业绩比较基准库...", total=1)
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_mkt_idx_bmk(
+                        ts_code=selected_codes[0] if selected_codes else None
+                    )
+                    progress.update(task, completed=1)
+                    console.print(f"[green][OK][/green] 已更新 {count} 条 ETF 业绩比较基准")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新 ETF 业绩比较基准失败: {str(e)}")
+                    raise
+
+    if data_type in {"fund_share", "fund_nav", "fund_div"}:
+        all_fund_dataset = (
+            data_type in {"fund_share", "fund_nav", "fund_div"}
+            and _is_symbols_all(symbol_list)
+        )
+        if _is_symbols_all(symbol_list) and not all_fund_dataset:
+            raise ValueError(f"{data_type} 不支持 --symbols all")
+        fund_codes = (
+            None if all_fund_dataset else (",".join(symbol_list) if symbol_list else None)
+        )
+        full_date_label = "公告日" if data_type == "fund_div" else "交易日"
+        progress_columns = [
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+        ]
+        if all_fund_dataset:
+            progress_columns.append(
+                TextColumn(
+                    f"[bold cyan]已下载 {{task.completed:.0f}}/{{task.total:.0f}} {full_date_label}"
+                )
+            )
+        progress_columns.append(TimeElapsedColumn())
+
+        with Progress(*progress_columns, console=console) as progress:
+            task_description = (
+                f"正在按日期全量下载 {data_type} ..."
+                if all_fund_dataset
+                else f"正在更新 {data_type} ..."
+            )
+            task = progress.add_task(task_description, total=1)
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    full_update_kwargs = {}
+                    if all_fund_dataset:
+                        def update_progress(completed: int, total: int) -> None:
+                            progress.update(task, completed=completed, total=total)
+
+                        full_update_kwargs = {
+                            "all_funds": True,
+                            "progress_callback": update_progress,
+                        }
+
+                    if data_type == "fund_share":
+                        share_kwargs = dict(
+                            ts_code=fund_codes, trade_date=trade_date,
+                            start_date=start_date, end_date=end_date,
+                            market=market if market in {"SH", "SZ"} else None,
+                        )
+                        share_kwargs.update(full_update_kwargs)
+                        count = await updater.update_fund_share(**share_kwargs)
+                    elif data_type == "fund_nav":
+                        nav_kwargs = dict(
+                            ts_code=fund_codes, nav_date=trade_date,
+                            market=market if market in {"E", "O"} else None,
+                            start_date=start_date, end_date=end_date,
+                        )
+                        nav_kwargs.update(full_update_kwargs)
+                        count = await updater.update_fund_nav(**nav_kwargs)
+                    else:
+                        div_kwargs = dict(
+                            ts_code=fund_codes, ann_date=trade_date,
+                        )
+                        if all_fund_dataset:
+                            div_kwargs.update(
+                                start_date=start_date,
+                                end_date=end_date,
+                            )
+                        div_kwargs.update(full_update_kwargs)
+                        count = await updater.update_fund_div(**div_kwargs)
+                    if not all_fund_dataset:
+                        progress.update(task, completed=1)
+                    console.print(f"[green][OK][/green] 已更新 {count} 条 {data_type} 数据")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新 {data_type} 失败: {str(e)}")
+                    raise
+
+    if data_type == "fund_portfolio":
+        selected_codes = None if _is_symbols_all(symbol_list) else symbol_list
+        if _is_symbols_all(symbol_list):
+            raise ValueError("fund_portfolio 不支持 --symbols all；请指定基金代码或 --trade-date 报告期")
+        if not selected_codes and not trade_date:
+            raise ValueError("fund_portfolio 需要 --symbols 基金代码或 --trade-date 报告期")
+        with Progress(
+            get_spinner(), TextColumn("[bold blue]{task.description}"), BarColumn(),
+            TimeElapsedColumn(), console=console,
+        ) as progress:
+            task = progress.add_task("正在更新公募基金持仓...", total=1)
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_fund_portfolio(
+                        fund_codes=selected_codes,
+                        period=trade_date,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    progress.update(task, completed=1)
+                    console.print(f"[green][OK][/green] 已更新 {count} 条公募基金持仓")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新公募基金持仓失败: {str(e)}")
                     raise
 
     if data_type == "index_basic":

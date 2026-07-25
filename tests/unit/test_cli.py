@@ -421,6 +421,82 @@ def test_cli_update_index_basic_rejects_date_arguments():
     assert "index_basic 是非时间序列数据" in result.output
 
 
+def test_cli_update_fund_basic_defaults_to_both_fund_markets():
+    fake_updater = Mock()
+    fake_updater.update_fund_basic = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(app, ["update", "--dataset", "fund_basic"])
+
+    assert result.exit_code == 0
+    fake_updater.update_fund_basic.assert_awaited_once_with(markets=None)
+
+
+def test_cli_update_fund_basic_uses_symbols_as_markets():
+    fake_updater = Mock()
+    fake_updater.update_fund_basic = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            ["update", "--dataset", "fund_basic", "--symbols", "e,o"],
+        )
+
+    assert result.exit_code == 0
+    fake_updater.update_fund_basic.assert_awaited_once_with(markets=["E", "O"])
+
+
+def test_cli_updates_fund_company_and_manager():
+    fake_updater = Mock()
+    fake_updater.update_fund_company = AsyncMock(return_value=1)
+    fake_updater.update_fund_manager = AsyncMock(return_value=2)
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(app, ["update", "--dataset", "fund_company"])
+        assert result.exit_code == 0
+        result = runner.invoke(
+            app,
+            ["update", "--dataset", "fund_manager", "--symbols", "150018.SZ", "--trade-date", "20100508"],
+        )
+        assert result.exit_code == 0
+
+    fake_updater.update_fund_company.assert_awaited_once_with()
+    fake_updater.update_fund_manager.assert_awaited_once_with(
+        fund_codes=["150018.SZ"], ann_date="20100508"
+    )
+
+
+def test_cli_updates_fund_benchmark_and_portfolio():
+    fake_updater = Mock()
+    fake_updater.update_mkt_idx_bmk = AsyncMock(return_value=1)
+    fake_updater.update_fund_portfolio = AsyncMock(return_value=2)
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(app, ["update", "--dataset", "mkt_idx_bmk"])
+        assert result.exit_code == 0
+        result = runner.invoke(
+            app, ["update", "--dataset", "fund_portfolio", "--symbols", "001753.OF"]
+        )
+    assert result.exit_code == 0
+    fake_updater.update_mkt_idx_bmk.assert_awaited_once_with(ts_code=None)
+    fake_updater.update_fund_portfolio.assert_awaited_once()
+    assert fake_updater.update_fund_portfolio.call_args.kwargs["fund_codes"] == ["001753.OF"]
+
+
 def test_cli_update_index_weight_symbols_all_uses_full_index_catalog():
     fake_updater = Mock()
     fake_updater.resolve_index_weight_codes = AsyncMock(return_value=[

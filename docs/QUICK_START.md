@@ -274,7 +274,36 @@ fdh-cli preprocess run --all --category technical --market HK \
 - 港股当前仅支持 `technical`；其他预处理类别仍然仅支持 A 股
 - 如果通过 `schedules.yml` 调度，A 股股票类任务建议显式写 `market: CN`，港股使用独立的 `hk_*` 任务
 
-#### 4.2 更新指数基本信息
+#### 4.2 更新公募基金基本信息
+
+```bash
+# 默认同步场内（E）和场外（O）公募基金完整目录
+fdh-cli update --dataset fund_basic
+fdh-cli update --dataset fund_basic --symbols all
+
+# 仅同步场内或场外基金
+fdh-cli update --dataset fund_basic --symbols E
+fdh-cli update --dataset fund_basic --symbols O
+
+# ETF业绩比较基准库和公募基金季度持仓
+fdh-cli update --dataset mkt_idx_bmk
+fdh-cli update --dataset fund_portfolio --symbols 001753.OF
+
+# 公募基金规模、净值与分红
+fdh-cli update --dataset fund_share --symbols 150018.SZ --start-date 2024-01-01
+fdh-cli update --dataset fund_nav --symbols 165509.SZ --start-date 2024-01-01
+# 先同步基金目录后，可按日期回补全市场基金数据
+fdh-cli update --dataset fund_share --symbols all --force
+fdh-cli update --dataset fund_nav --symbols all --force
+fdh-cli update --dataset fund_div --symbols all --force
+fdh-cli update --dataset fund_div --symbols 161618.OF
+
+# fund_basic 为非时间序列数据，不支持 --trade-date、--start-date 或 --end-date
+```
+
+> 该 Tushare 接口需要至少 2000 积分。单个市场查询返回 15,000 条时，系统会自动通过 `offset` 获取后续页面，直至返回记录数低于 15,000 条。
+
+#### 4.3 更新指数基本信息
 ```bash
 # 刷新 Tushare 支持的全部指数市场目录
 fdh-cli update --dataset index_basic
@@ -286,7 +315,7 @@ fdh-cli update --dataset index_basic --symbols SSE,SW
 # index_basic 为非时间序列数据，不支持 --trade-date、--start-date 或 --end-date
 ```
 
-#### 4.3 更新指数日线行情
+#### 4.4 更新指数日线行情
 ```bash
 # 使用本地 index_basic 中的有效指数目录更新指数日线行情（智能增量）
 fdh-cli update --dataset index_daily

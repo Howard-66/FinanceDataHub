@@ -419,6 +419,24 @@ fdh-cli update --dataset adj_factor --market HK
 fdh-cli update --dataset basic --market ALL
 fdh-cli update --dataset daily --market ALL
 
+# 同步 Tushare 公募基金目录（默认同时包含场内 E 和场外 O）
+fdh-cli update --dataset fund_basic
+fdh-cli update --dataset fund_basic --symbols E
+
+# 同步 ETF 业绩比较基准和指定基金的季度持仓
+fdh-cli update --dataset mkt_idx_bmk
+fdh-cli update --dataset fund_portfolio --symbols 001753.OF
+
+# 同步公募基金规模、净值和分红
+fdh-cli update --dataset fund_share --symbols 150018.SZ --start-date 2024-01-01
+fdh-cli update --dataset fund_nav --symbols 165509.SZ --start-date 2024-01-01
+# 先同步基金目录，再按对应日期全量回补基金数据
+fdh-cli update --dataset fund_basic --symbols all
+fdh-cli update --dataset fund_share --symbols all --force
+fdh-cli update --dataset fund_nav --symbols all --force
+fdh-cli update --dataset fund_div --symbols all --force
+fdh-cli update --dataset fund_div --symbols 161618.OF
+
 # 刷新 Tushare 指数基本信息（默认全部市场，也可按市场筛选）
 fdh-cli update --dataset index_basic
 fdh-cli update --dataset index_basic --symbols SSE,SW
@@ -552,6 +570,12 @@ EOF
 | `minute_1` | 1分钟数据 | `fdh-cli update --dataset minute_1 --symbols 600519.SH` |
 | `minute_5` | 5分钟数据 | `fdh-cli update --dataset minute_5 --symbols 600519.SH` |
 | `adj_factor` | 复权因子 | `fdh-cli update --dataset adj_factor` |
+| `fund_basic` | 公募基金基本信息（场内/场外） | `fdh-cli update --dataset fund_basic --symbols E,O` |
+| `fund_share` | 公募基金规模（支持按交易日全量回补） | `fdh-cli update --dataset fund_share --symbols all --force` |
+| `fund_nav` | 公募基金净值（支持按净值日全量回补） | `fdh-cli update --dataset fund_nav --symbols all --force` |
+| `fund_div` | 公募基金分红（支持按公告日全量回补） | `fdh-cli update --dataset fund_div --symbols all --force` |
+| `mkt_idx_bmk` | ETF业绩比较基准库 | `fdh-cli update --dataset mkt_idx_bmk` |
+| `fund_portfolio` | 公募基金季度持仓 | `fdh-cli update --dataset fund_portfolio --symbols 001753.OF` |
 | `index_basic` | 指数基本信息 | `fdh-cli update --dataset index_basic --symbols SSE,SW` |
 | `index_daily` | 指数日线行情 | `fdh-cli update --dataset index_daily --symbols all` |
 
@@ -1022,6 +1046,12 @@ Phase 4 核心能力已完成，仍在持续补充端到端集成测试与下游
 | PPI | `get_cn_ppi()` / `get_cn_ppi_async()` | start_date, end_date（月份末日期） |
 | 货币供应量 | `get_cn_m()` / `get_cn_m_async()` | start_date, end_date（月份末日期） |
 | PMI | `get_cn_pmi()` / `get_cn_pmi_async()` | start_date, end_date（月份末日期） |
+| 公募基金基本信息 | `get_fund_basic()` / `get_fund_basic_async()` | ts_code, market (E/O), status, fund_type, management |
+| 公募基金规模 | `get_fund_share()` / `get_fund_share_async()` | ts_code, trade_date |
+| 公募基金净值 | `get_fund_nav()` / `get_fund_nav_async()` | ts_code, nav_date |
+| 公募基金分红 | `get_fund_div()` / `get_fund_div_async()` | ts_code, ann_date, ex_date, pay_date |
+| ETF业绩比较基准 | `get_mkt_idx_bmk()` / `get_mkt_idx_bmk_async()` | ts_code, bmk_type, bmk_level |
+| 公募基金持仓 | `get_fund_portfolio()` / `get_fund_portfolio_async()` | ts_code, symbol, ann_date, period, start_date, end_date |
 | 指数基本信息 | `get_index_basic()` / `get_index_basic_async()` | ts_code, market, publisher, category |
 | 指数日线行情 | `get_index_daily()` / `get_index_daily_async()` | ts_code, start_date, end_date |
 | 指数每日指标 | `get_index_dailybasic()` / `get_index_dailybasic_async()` | ts_code, start_date, end_date |
@@ -1115,6 +1145,10 @@ fdh-cli update --dataset m   [--force] [--start-date 2020-01-31 --end-date 2024-
 fdh-cli update --dataset pmi [--force] [--start-date 2020-01-31 --end-date 2024-12-31]
 
 # 指数基本信息 / 行情 / 指标 / 成分权重
+fdh-cli update --dataset fund_basic        [--symbols all|E,O]
+fdh-cli update --dataset fund_share        [--symbols FUND_CODE|all] [--trade-date ...] [--start-date ... --end-date ...]
+fdh-cli update --dataset fund_nav          [--symbols FUND_CODE|all] [--trade-date ...] [--start-date ... --end-date ...]
+fdh-cli update --dataset fund_div          [--symbols FUND_CODE|all] [--trade-date ANN_DATE] [--start-date ... --end-date ...]
 fdh-cli update --dataset index_basic       [--symbols all|MSCI,CSI,SSE,SZSE,CICC,SW,OTH]
 fdh-cli update --dataset index_daily       [--symbols all|000300.SH] [--start-date ... --end-date ...]
 fdh-cli update --dataset index_dailybasic  [--symbols 000001.SH] [--trade-date 2024-11-27]

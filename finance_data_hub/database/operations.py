@@ -461,6 +461,566 @@ class DataOperations:
         )
         return actual_count
 
+    async def insert_fund_basic_batch(self, data: pd.DataFrame) -> int:
+        """批量写入公募基金基础信息，并按 TS 基金代码执行 upsert。"""
+        if data is None or data.empty:
+            return 0
+
+        columns = [
+            "ts_code", "name", "management", "custodian", "fund_type",
+            "found_date", "due_date", "list_date", "issue_date", "delist_date",
+            "issue_amount", "m_fee", "c_fee", "duration_year", "p_value",
+            "min_amount", "exp_return", "benchmark", "status", "invest_type",
+            "type", "trustee", "purc_startdate", "redm_startdate", "market",
+        ]
+        prepared = data.copy()
+        for column in columns:
+            if column not in prepared.columns:
+                prepared[column] = None
+        prepared = prepared[columns].dropna(subset=["ts_code"])
+        if prepared.empty:
+            return 0
+
+        insert_sql = """
+            INSERT INTO fund_basic (
+                ts_code, name, management, custodian, fund_type,
+                found_date, due_date, list_date, issue_date, delist_date,
+                issue_amount, m_fee, c_fee, duration_year, p_value, min_amount,
+                exp_return, benchmark, status, invest_type, type, trustee,
+                purc_startdate, redm_startdate, market, updated_at, created_at
+            ) VALUES (
+                :ts_code, :name, :management, :custodian, :fund_type,
+                :found_date, :due_date, :list_date, :issue_date, :delist_date,
+                :issue_amount, :m_fee, :c_fee, :duration_year, :p_value, :min_amount,
+                :exp_return, :benchmark, :status, :invest_type, :type, :trustee,
+                :purc_startdate, :redm_startdate, :market, NOW(), NOW()
+            )
+            ON CONFLICT (ts_code) DO UPDATE SET
+                name = EXCLUDED.name,
+                management = EXCLUDED.management,
+                custodian = EXCLUDED.custodian,
+                fund_type = EXCLUDED.fund_type,
+                found_date = EXCLUDED.found_date,
+                due_date = EXCLUDED.due_date,
+                list_date = EXCLUDED.list_date,
+                issue_date = EXCLUDED.issue_date,
+                delist_date = EXCLUDED.delist_date,
+                issue_amount = EXCLUDED.issue_amount,
+                m_fee = EXCLUDED.m_fee,
+                c_fee = EXCLUDED.c_fee,
+                duration_year = EXCLUDED.duration_year,
+                p_value = EXCLUDED.p_value,
+                min_amount = EXCLUDED.min_amount,
+                exp_return = EXCLUDED.exp_return,
+                benchmark = EXCLUDED.benchmark,
+                status = EXCLUDED.status,
+                invest_type = EXCLUDED.invest_type,
+                type = EXCLUDED.type,
+                trustee = EXCLUDED.trustee,
+                purc_startdate = EXCLUDED.purc_startdate,
+                redm_startdate = EXCLUDED.redm_startdate,
+                market = EXCLUDED.market,
+                updated_at = NOW()
+        """
+
+        date_columns = {
+            "found_date", "due_date", "list_date", "issue_date", "delist_date",
+            "purc_startdate", "redm_startdate",
+        }
+        records = prepared.to_dict(orient="records")
+        for record in records:
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+                elif key in date_columns:
+                    record[key] = pd.Timestamp(value).date()
+
+        async with self.db_manager._engine.begin() as conn:
+            await conn.execute(text(insert_sql), records)
+
+        logger.info(f"Inserted/updated {len(records)} fund_basic records")
+        return len(records)
+
+    async def get_fund_basic(
+        self,
+        ts_code: Optional[str] = None,
+        market: Optional[str] = None,
+        status: Optional[str] = None,
+        fund_type: Optional[str] = None,
+        management: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """查询已同步的 Tushare 公募基金基础信息。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        query = """
+            SELECT ts_code, name, management, custodian, fund_type,
+                   found_date, due_date, list_date, issue_date, delist_date,
+                   issue_amount, m_fee, c_fee, duration_year, p_value, min_amount,
+                   exp_return, benchmark, status, invest_type, type, trustee,
+                   purc_startdate, redm_startdate, market
+            FROM fund_basic
+            WHERE 1=1
+        """
+        params: Dict[str, Any] = {}
+        for column, value in {
+            "ts_code": ts_code,
+            "market": market,
+            "status": status,
+            "fund_type": fund_type,
+            "management": management,
+        }.items():
+            if value:
+                query += f" AND {column} = :{column}"
+                params[column] = value
+
+        query += " ORDER BY market, ts_code"
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+        return pd.DataFrame([row._asdict() for row in rows])
+
+    async def get_earliest_fund_basic_date(self) -> Optional[str]:
+        """返回本地基金目录中最早的可用基金日期。
+
+        全量下载基金净值时，Tushare 可以按 ``nav_date`` 拉取当日全市场
+        数据。基金成立日最能代表需要覆盖的历史起点；部分记录没有成立日时，
+        以上市日或发行日作为兜底，避免因单条缺失而跳过全量同步。
+        """
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        query = """
+            SELECT MIN(COALESCE(found_date, list_date, issue_date)) AS earliest_date
+            FROM fund_basic
+            WHERE ts_code IS NOT NULL
+              AND COALESCE(found_date, list_date, issue_date) IS NOT NULL
+        """
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query))
+            row = result.fetchone()
+
+        if row is None:
+            return None
+        if hasattr(row, "_mapping"):
+            value = row._mapping["earliest_date"]
+        elif hasattr(row, "_asdict"):
+            value = row._asdict()["earliest_date"]
+        else:
+            value = row[0]
+        if value is None:
+            return None
+        return pd.Timestamp(value).strftime("%Y-%m-%d")
+
+    async def _insert_fund_dataset(
+        self,
+        data: pd.DataFrame,
+        table: str,
+        columns: List[str],
+        key_columns: List[str],
+        date_columns: set,
+    ) -> int:
+        """写入公募基金明细表的通用 upsert 实现。"""
+        if data is None or data.empty:
+            return 0
+        prepared = data.copy()
+        for column in columns:
+            if column not in prepared.columns:
+                prepared[column] = None
+        prepared = prepared[columns].dropna(subset=key_columns)
+        if prepared.empty:
+            return 0
+        update_columns = [column for column in columns if column not in key_columns]
+        insert_sql = f"""
+            INSERT INTO {table} ({', '.join(columns)}, updated_at, created_at)
+            VALUES ({', '.join(':' + column for column in columns)}, NOW(), NOW())
+            ON CONFLICT ({', '.join(key_columns)}) DO UPDATE SET
+                {', '.join(f'{column} = EXCLUDED.{column}' for column in update_columns)},
+                updated_at = NOW()
+        """
+        records = prepared.to_dict(orient="records")
+        for record in records:
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+                elif key in date_columns:
+                    record[key] = pd.Timestamp(value).date()
+        async with self.db_manager._engine.begin() as conn:
+            await conn.execute(text(insert_sql), records)
+        logger.info("Inserted/updated {} {} records", len(records), table)
+        return len(records)
+
+    async def insert_fund_share_batch(self, data: pd.DataFrame) -> int:
+        """批量写入 Tushare 基金规模数据。"""
+        return await self._insert_fund_dataset(
+            data, "fund_share", ["ts_code", "trade_date", "fd_share"],
+            ["ts_code", "trade_date"], {"trade_date"},
+        )
+
+    async def insert_fund_nav_batch(self, data: pd.DataFrame) -> int:
+        """批量写入 Tushare 基金净值数据。"""
+        return await self._insert_fund_dataset(
+            data, "fund_nav", [
+                "ts_code", "ann_date", "nav_date", "unit_nav", "accum_nav",
+                "accum_div", "net_asset", "total_netasset", "adj_nav",
+            ], ["ts_code", "nav_date"], {"ann_date", "nav_date"},
+        )
+
+    async def insert_fund_div_batch(self, data: pd.DataFrame) -> int:
+        """批量写入 Tushare 基金分红数据。"""
+        return await self._insert_fund_dataset(
+            data, "fund_div", [
+                "ts_code", "ann_date", "imp_anndate", "base_date", "div_proc",
+                "record_date", "ex_date", "pay_date", "earpay_date", "net_ex_date",
+                "div_cash", "base_unit", "ear_distr", "ear_amount", "account_date",
+                "base_year",
+            ], ["ts_code", "ann_date"], {
+                "ann_date", "imp_anndate", "base_date", "record_date", "ex_date",
+                "pay_date", "earpay_date", "net_ex_date", "account_date",
+            },
+        )
+
+    async def _get_fund_dataset(
+        self, table: str, columns: List[str], filters: Dict[str, Any], order_by: str
+    ) -> Optional[pd.DataFrame]:
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+        query = f"SELECT {', '.join(columns)} FROM {table} WHERE 1=1"
+        params: Dict[str, Any] = {}
+        for column, value in filters.items():
+            if value is not None:
+                query += f" AND {column} = :{column}"
+                params[column] = value
+        query += f" ORDER BY {order_by}"
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+        return pd.DataFrame([row._asdict() for row in rows]) if rows else None
+
+    async def get_fund_share(
+        self, ts_code: Optional[str] = None, trade_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        return await self._get_fund_dataset(
+            "fund_share", ["ts_code", "trade_date", "fd_share"],
+            {"ts_code": ts_code, "trade_date": trade_date}, "trade_date DESC, ts_code",
+        )
+
+    async def get_fund_nav(
+        self, ts_code: Optional[str] = None, nav_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        return await self._get_fund_dataset(
+            "fund_nav", ["ts_code", "ann_date", "nav_date", "unit_nav", "accum_nav",
+                         "accum_div", "net_asset", "total_netasset", "adj_nav"],
+            {"ts_code": ts_code, "nav_date": nav_date}, "nav_date DESC, ts_code",
+        )
+
+    async def get_fund_div(
+        self, ts_code: Optional[str] = None, ann_date: Optional[str] = None,
+        ex_date: Optional[str] = None, pay_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        return await self._get_fund_dataset(
+            "fund_div", [
+                "ts_code", "ann_date", "imp_anndate", "base_date", "div_proc",
+                "record_date", "ex_date", "pay_date", "earpay_date", "net_ex_date",
+                "div_cash", "base_unit", "ear_distr", "ear_amount", "account_date",
+                "base_year",
+            ], {"ts_code": ts_code, "ann_date": ann_date, "ex_date": ex_date,
+                "pay_date": pay_date}, "ann_date DESC, ts_code",
+        )
+
+    async def insert_fund_company_batch(self, data: pd.DataFrame) -> int:
+        """批量写入 Tushare 公募基金管理人信息。"""
+        if data is None or data.empty:
+            return 0
+
+        columns = [
+            "name", "shortname", "short_enname", "province", "city", "address",
+            "phone", "office", "website", "chairman", "manager", "reg_capital",
+            "setup_date", "end_date", "employees", "main_business", "org_code",
+            "credit_code",
+        ]
+        prepared = data.copy()
+        for column in columns:
+            if column not in prepared.columns:
+                prepared[column] = None
+        prepared = prepared[columns].dropna(subset=["name"])
+        if prepared.empty:
+            return 0
+
+        insert_sql = """
+            INSERT INTO fund_company (
+                name, shortname, short_enname, province, city, address, phone, office,
+                website, chairman, manager, reg_capital, setup_date, end_date, employees,
+                main_business, org_code, credit_code, updated_at, created_at
+            ) VALUES (
+                :name, :shortname, :short_enname, :province, :city, :address, :phone, :office,
+                :website, :chairman, :manager, :reg_capital, :setup_date, :end_date, :employees,
+                :main_business, :org_code, :credit_code, NOW(), NOW()
+            )
+            ON CONFLICT (name) DO UPDATE SET
+                shortname = EXCLUDED.shortname, short_enname = EXCLUDED.short_enname,
+                province = EXCLUDED.province, city = EXCLUDED.city, address = EXCLUDED.address,
+                phone = EXCLUDED.phone, office = EXCLUDED.office, website = EXCLUDED.website,
+                chairman = EXCLUDED.chairman, manager = EXCLUDED.manager,
+                reg_capital = EXCLUDED.reg_capital, setup_date = EXCLUDED.setup_date,
+                end_date = EXCLUDED.end_date, employees = EXCLUDED.employees,
+                main_business = EXCLUDED.main_business, org_code = EXCLUDED.org_code,
+                credit_code = EXCLUDED.credit_code, updated_at = NOW()
+        """
+        records = prepared.to_dict(orient="records")
+        for record in records:
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+                elif key in {"setup_date", "end_date"}:
+                    record[key] = pd.Timestamp(value).date()
+
+        async with self.db_manager._engine.begin() as conn:
+            await conn.execute(text(insert_sql), records)
+        logger.info(f"Inserted/updated {len(records)} fund_company records")
+        return len(records)
+
+    async def get_fund_company(
+        self,
+        name: Optional[str] = None,
+        province: Optional[str] = None,
+        city: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """查询已同步的 Tushare 公募基金管理人信息。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+        query = """
+            SELECT name, shortname, short_enname, province, city, address, phone, office,
+                   website, chairman, manager, reg_capital, setup_date, end_date, employees,
+                   main_business, org_code, credit_code
+            FROM fund_company WHERE 1=1
+        """
+        params: Dict[str, Any] = {}
+        for column, value in {"name": name, "province": province, "city": city}.items():
+            if value:
+                query += f" AND {column} = :{column}"
+                params[column] = value
+        query += " ORDER BY name"
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+        if not rows:
+            return None
+        return pd.DataFrame([row._asdict() for row in rows])
+
+    async def insert_fund_manager_batch(self, data: pd.DataFrame) -> int:
+        """批量写入 Tushare 基金经理任职与简历信息。"""
+        if data is None or data.empty:
+            return 0
+
+        columns = [
+            "ts_code", "ann_date", "name", "gender", "birth_year", "edu",
+            "nationality", "begin_date", "end_date", "resume",
+        ]
+        prepared = data.copy()
+        for column in columns:
+            if column not in prepared.columns:
+                prepared[column] = None
+        prepared = prepared[columns].dropna(
+            subset=["ts_code", "ann_date", "name", "begin_date"]
+        )
+        if prepared.empty:
+            return 0
+
+        insert_sql = """
+            INSERT INTO fund_manager (
+                ts_code, ann_date, name, gender, birth_year, edu, nationality,
+                begin_date, end_date, resume, updated_at, created_at
+            ) VALUES (
+                :ts_code, :ann_date, :name, :gender, :birth_year, :edu, :nationality,
+                :begin_date, :end_date, :resume, NOW(), NOW()
+            )
+            ON CONFLICT (ts_code, ann_date, name, begin_date) DO UPDATE SET
+                gender = EXCLUDED.gender, birth_year = EXCLUDED.birth_year,
+                edu = EXCLUDED.edu, nationality = EXCLUDED.nationality,
+                end_date = EXCLUDED.end_date, resume = EXCLUDED.resume, updated_at = NOW()
+        """
+        records = prepared.to_dict(orient="records")
+        for record in records:
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+                elif key in {"ann_date", "begin_date", "end_date"}:
+                    record[key] = pd.Timestamp(value).date()
+
+        async with self.db_manager._engine.begin() as conn:
+            await conn.execute(text(insert_sql), records)
+        logger.info(f"Inserted/updated {len(records)} fund_manager records")
+        return len(records)
+
+    async def get_fund_manager(
+        self,
+        ts_code: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """查询已同步的 Tushare 基金经理信息。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+        query = """
+            SELECT ts_code, ann_date, name, gender, birth_year, edu, nationality,
+                   begin_date, end_date, resume
+            FROM fund_manager WHERE 1=1
+        """
+        params: Dict[str, Any] = {}
+        for column, value in {"ts_code": ts_code, "ann_date": ann_date, "name": name}.items():
+            if value:
+                query += f" AND {column} = :{column}"
+                params[column] = value
+        query += " ORDER BY ts_code, ann_date, name, begin_date"
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+        if not rows:
+            return None
+        return pd.DataFrame([row._asdict() for row in rows])
+
+    async def insert_mkt_idx_bmk_batch(self, data: pd.DataFrame) -> int:
+        """批量写入 Tushare ETF 业绩比较基准库。"""
+        if data is None or data.empty:
+            return 0
+        columns = [
+            "ts_code", "symbol", "name", "fullname", "bmk_level", "bmk_type",
+            "bmk_src", "idx_type",
+        ]
+        prepared = data.copy()
+        for column in columns:
+            if column not in prepared.columns:
+                prepared[column] = None
+        records = prepared[columns].dropna(subset=["ts_code"]).to_dict(orient="records")
+        if not records:
+            return 0
+        for record in records:
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+        insert_sql = """
+            INSERT INTO mkt_idx_bmk (
+                ts_code, symbol, name, fullname, bmk_level, bmk_type, bmk_src,
+                idx_type, updated_at, created_at
+            ) VALUES (
+                :ts_code, :symbol, :name, :fullname, :bmk_level, :bmk_type, :bmk_src,
+                :idx_type, NOW(), NOW()
+            ) ON CONFLICT (ts_code) DO UPDATE SET
+                symbol = EXCLUDED.symbol, name = EXCLUDED.name,
+                fullname = EXCLUDED.fullname, bmk_level = EXCLUDED.bmk_level,
+                bmk_type = EXCLUDED.bmk_type, bmk_src = EXCLUDED.bmk_src,
+                idx_type = EXCLUDED.idx_type, updated_at = NOW()
+        """
+        async with self.db_manager._engine.begin() as conn:
+            await conn.execute(text(insert_sql), records)
+        return len(records)
+
+    async def get_mkt_idx_bmk(
+        self,
+        ts_code: Optional[str] = None,
+        bmk_type: Optional[str] = None,
+        bmk_level: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """查询已同步的 ETF 业绩比较基准库。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+        query = """
+            SELECT ts_code, symbol, name, fullname, bmk_level, bmk_type, bmk_src, idx_type
+            FROM mkt_idx_bmk WHERE 1=1
+        """
+        params: Dict[str, Any] = {}
+        for column, value in {
+            "ts_code": ts_code, "bmk_type": bmk_type, "bmk_level": bmk_level,
+        }.items():
+            if value:
+                query += f" AND {column} = :{column}"
+                params[column] = value
+        query += " ORDER BY ts_code"
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+        return pd.DataFrame([row._asdict() for row in rows]) if rows else None
+
+    async def insert_fund_portfolio_batch(self, data: pd.DataFrame) -> int:
+        """批量写入公募基金季度持仓。"""
+        if data is None or data.empty:
+            return 0
+        columns = [
+            "ts_code", "ann_date", "end_date", "symbol", "mkv", "amount",
+            "stk_mkv_ratio", "stk_float_ratio",
+        ]
+        prepared = data.copy()
+        for column in columns:
+            if column not in prepared.columns:
+                prepared[column] = None
+        prepared = prepared[columns].dropna(subset=["ts_code", "ann_date", "end_date", "symbol"])
+        if prepared.empty:
+            return 0
+        records = prepared.to_dict(orient="records")
+        for record in records:
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+                elif key in {"ann_date", "end_date"}:
+                    record[key] = pd.Timestamp(value).date()
+        insert_sql = """
+            INSERT INTO fund_portfolio (
+                ts_code, ann_date, end_date, symbol, mkv, amount, stk_mkv_ratio,
+                stk_float_ratio, updated_at, created_at
+            ) VALUES (
+                :ts_code, :ann_date, :end_date, :symbol, :mkv, :amount, :stk_mkv_ratio,
+                :stk_float_ratio, NOW(), NOW()
+            ) ON CONFLICT (ts_code, ann_date, end_date, symbol) DO UPDATE SET
+                mkv = EXCLUDED.mkv, amount = EXCLUDED.amount,
+                stk_mkv_ratio = EXCLUDED.stk_mkv_ratio,
+                stk_float_ratio = EXCLUDED.stk_float_ratio, updated_at = NOW()
+        """
+        async with self.db_manager._engine.begin() as conn:
+            await conn.execute(text(insert_sql), records)
+        return len(records)
+
+    async def get_fund_portfolio(
+        self,
+        ts_code: Optional[str] = None,
+        symbol: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        period: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """查询已同步的基金持仓；``period`` 对应报告期截止日期。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+        query = """
+            SELECT ts_code, ann_date, end_date, symbol, mkv, amount, stk_mkv_ratio,
+                   stk_float_ratio
+            FROM fund_portfolio WHERE 1=1
+        """
+        params: Dict[str, Any] = {}
+        direct = {"ts_code": ts_code, "symbol": symbol, "ann_date": ann_date}
+        for column, value in direct.items():
+            if value:
+                query += f" AND {column} = :{column}"
+                params[column] = pd.Timestamp(value).date() if column == "ann_date" else value
+        if period:
+            query += " AND end_date = :period"
+            params["period"] = pd.Timestamp(period).date()
+        if start_date:
+            query += " AND end_date >= :start_date"
+            params["start_date"] = pd.Timestamp(start_date).date()
+        if end_date:
+            query += " AND end_date <= :end_date"
+            params["end_date"] = pd.Timestamp(end_date).date()
+        query += " ORDER BY ts_code, end_date, ann_date, symbol"
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+        return pd.DataFrame([row._asdict() for row in rows]) if rows else None
+
     async def insert_daily_basic_batch(
         self, data: pd.DataFrame, batch_size: int = 1000
     ) -> int:

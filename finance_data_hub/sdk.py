@@ -1069,6 +1069,176 @@ class FinanceDataHub:
         """
         return await self.ops.get_cn_pmi(start_date, end_date)
 
+    def get_fund_basic(
+        self,
+        ts_code: Optional[str] = None,
+        market: Optional[str] = None,
+        status: Optional[str] = None,
+        fund_type: Optional[str] = None,
+        management: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的公募基金基础信息（同步方法）。
+
+        Args:
+            ts_code: TS 基金代码，如 ``510300.SH``。
+            market: 交易市场，``E`` 为场内、``O`` 为场外。
+            status: 存续状态，``D`` 摘牌、``I`` 发行、``L`` 已上市。
+            fund_type: Tushare 投资类型。
+            management: 基金管理人。
+        """
+        return asyncio.run(
+            self.get_fund_basic_async(
+                ts_code, market, status, fund_type, management
+            )
+        )
+
+    async def get_fund_basic_async(
+        self,
+        ts_code: Optional[str] = None,
+        market: Optional[str] = None,
+        status: Optional[str] = None,
+        fund_type: Optional[str] = None,
+        management: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的公募基金基础信息（异步方法）。"""
+        return await self.ops.get_fund_basic(
+            ts_code=ts_code,
+            market=market,
+            status=status,
+            fund_type=fund_type,
+            management=management,
+        )
+
+    def get_fund_share(
+        self, ts_code: Optional[str] = None, trade_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的基金规模数据。"""
+        return asyncio.run(self.get_fund_share_async(ts_code, trade_date))
+
+    async def get_fund_share_async(
+        self, ts_code: Optional[str] = None, trade_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """异步获取已同步的基金规模数据。"""
+        return await self.ops.get_fund_share(ts_code, trade_date)
+
+    def get_fund_nav(
+        self, ts_code: Optional[str] = None, nav_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的公募基金净值。"""
+        return asyncio.run(self.get_fund_nav_async(ts_code, nav_date))
+
+    async def get_fund_nav_async(
+        self, ts_code: Optional[str] = None, nav_date: Optional[str] = None
+    ) -> Optional[pd.DataFrame]:
+        """异步获取已同步的公募基金净值。"""
+        return await self.ops.get_fund_nav(ts_code, nav_date)
+
+    def get_fund_div(
+        self, ts_code: Optional[str] = None, ann_date: Optional[str] = None,
+        ex_date: Optional[str] = None, pay_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的公募基金分红。"""
+        return asyncio.run(self.get_fund_div_async(ts_code, ann_date, ex_date, pay_date))
+
+    async def get_fund_div_async(
+        self, ts_code: Optional[str] = None, ann_date: Optional[str] = None,
+        ex_date: Optional[str] = None, pay_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """异步获取已同步的公募基金分红。"""
+        return await self.ops.get_fund_div(ts_code, ann_date, ex_date, pay_date)
+
+    def get_fund_company(
+        self,
+        name: Optional[str] = None,
+        province: Optional[str] = None,
+        city: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的公募基金管理人信息（同步方法）。"""
+        return asyncio.run(self.get_fund_company_async(name, province, city))
+
+    async def get_fund_company_async(
+        self,
+        name: Optional[str] = None,
+        province: Optional[str] = None,
+        city: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的公募基金管理人信息（异步方法）。"""
+        return await self.ops.get_fund_company(
+            name=name,
+            province=province,
+            city=city,
+        )
+
+    def get_fund_manager(
+        self,
+        ts_code: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的基金经理任职与简历信息（同步方法）。"""
+        return asyncio.run(self.get_fund_manager_async(ts_code, ann_date, name))
+
+    async def get_fund_manager_async(
+        self,
+        ts_code: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的基金经理任职与简历信息（异步方法）。"""
+        return await self.ops.get_fund_manager(
+            ts_code=ts_code,
+            ann_date=ann_date,
+            name=name,
+        )
+
+    def get_mkt_idx_bmk(
+        self,
+        ts_code: Optional[str] = None,
+        bmk_type: Optional[str] = None,
+        bmk_level: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的 ETF 业绩比较基准库。"""
+        return asyncio.run(self.get_mkt_idx_bmk_async(ts_code, bmk_type, bmk_level))
+
+    async def get_mkt_idx_bmk_async(
+        self,
+        ts_code: Optional[str] = None,
+        bmk_type: Optional[str] = None,
+        bmk_level: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """异步获取已同步的 ETF 业绩比较基准库。"""
+        return await self.ops.get_mkt_idx_bmk(ts_code, bmk_type, bmk_level)
+
+    def get_fund_portfolio(
+        self,
+        ts_code: Optional[str] = None,
+        symbol: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        period: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的公募基金季度持仓。"""
+        return asyncio.run(
+            self.get_fund_portfolio_async(
+                ts_code, symbol, ann_date, period, start_date, end_date
+            )
+        )
+
+    async def get_fund_portfolio_async(
+        self,
+        ts_code: Optional[str] = None,
+        symbol: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        period: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """异步获取已同步的公募基金季度持仓。"""
+        return await self.ops.get_fund_portfolio(
+            ts_code, symbol, ann_date, period, start_date, end_date
+        )
+
     def get_index_basic(
         self,
         ts_code: Optional[str] = None,

@@ -4,7 +4,12 @@ import pandas as pd
 import pytest
 
 from finance_data_hub.providers.base import ProviderRateLimitError
-from finance_data_hub.providers.tushare import TUSHARE_INDEX_MARKETS, TushareProvider
+from finance_data_hub.providers.tushare import (
+    FUND_BASIC_MAX_RECORDS,
+    FUND_MANAGER_MAX_RECORDS,
+    TUSHARE_INDEX_MARKETS,
+    TushareProvider,
+)
 
 
 def test_fut_settle_rate_limit_uses_endpoint_specific_interval():
@@ -169,6 +174,119 @@ def test_index_basic_uses_all_tushare_markets_when_router_passes_cn():
 
     assert len(result) == 1
     assert provider._call_api.call_count == len(TUSHARE_INDEX_MARKETS)
+
+
+def test_fund_basic_paginates_with_offset_when_limit_is_reached():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        side_effect=[
+            pd.DataFrame(
+                {
+                    "ts_code": [f"{index:06d}.OF" for index in range(FUND_BASIC_MAX_RECORDS)],
+                    "market": ["E"] * FUND_BASIC_MAX_RECORDS,
+                }
+            ),
+            pd.DataFrame({"ts_code": ["999999.OF"], "market": ["E"]}),
+        ]
+    )
+
+    result = provider.get_fund_basic(markets=["E"], status="L")
+
+    assert len(result) == FUND_BASIC_MAX_RECORDS + 1
+    assert provider._call_api.call_count == 2
+    first_call, second_call = provider._call_api.call_args_list
+    assert first_call.kwargs["market"] == "E"
+    assert first_call.kwargs["status"] == "L"
+    assert first_call.kwargs["offset"] == 0
+    assert second_call.kwargs["offset"] == FUND_BASIC_MAX_RECORDS
+    assert set(first_call.kwargs["fields"].split(",")) >= {
+        "ts_code",
+        "management",
+        "benchmark",
+        "redm_startdate",
+    }
+
+
+def test_fund_company_requests_all_documented_output_fields():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        return_value=pd.DataFrame({"name": ["示例基金管理有限公司"]})
+    )
+
+    result = provider.get_fund_company()
+
+    assert len(result) == 1
+    call = provider._call_api.call_args
+    assert call.args[0] == "fund_company"
+    assert set(call.kwargs["fields"].split(",")) >= {
+        "name", "short_enname", "reg_capital", "credit_code",
+    }
+
+
+def test_fund_manager_paginates_with_offset_at_documented_limit():
+    provider = TushareProvider(config={"token": "test-token"})
+    first_batch = pd.DataFrame(
+        {
+            "ts_code": ["150018.SZ"] * FUND_MANAGER_MAX_RECORDS,
+            "ann_date": ["20100508"] * FUND_MANAGER_MAX_RECORDS,
+            "name": [f"经理{index}" for index in range(FUND_MANAGER_MAX_RECORDS)],
+            "begin_date": ["20100507"] * FUND_MANAGER_MAX_RECORDS,
+        }
+    )
+    provider._call_api = Mock(
+        side_effect=[
+            first_batch,
+            pd.DataFrame(
+                {
+                    "ts_code": ["150008.SZ"], "ann_date": ["20100508"],
+                    "name": ["另一位经理"], "begin_date": ["20100507"],
+                }
+            ),
+        ]
+    )
+
+    result = provider.get_fund_manager(ts_code="150018.SZ")
+
+    assert len(result) == FUND_MANAGER_MAX_RECORDS + 1
+    first_call, second_call = provider._call_api.call_args_list
+    assert first_call.kwargs["offset"] == 0
+    assert first_call.kwargs["limit"] == FUND_MANAGER_MAX_RECORDS
+    assert first_call.kwargs["ts_code"] == "150018.SZ"
+    assert second_call.kwargs["offset"] == FUND_MANAGER_MAX_RECORDS
+
+
+def test_mkt_idx_bmk_requests_all_documented_output_fields():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(return_value=pd.DataFrame({
+        "ts_code": ["000300.SH"], "symbol": ["000300"], "name": ["沪深300"],
+        "fullname": ["沪深300指数"], "bmk_level": ["一类库"], "bmk_type": ["宽基"],
+        "bmk_src": ["中证指数"], "idx_type": ["规模类指数"],
+    }))
+
+    result = provider.get_mkt_idx_bmk(bmk_level="一类库")
+
+    assert result.iloc[0]["ts_code"] == "000300.SH"
+    assert set(provider._call_api.call_args.kwargs["fields"].split(",")) == {
+        "ts_code", "symbol", "name", "fullname", "bmk_level", "bmk_type",
+        "bmk_src", "idx_type",
+    }
+    assert provider._call_api.call_args.kwargs["bmk_level"] == "一类库"
+
+
+def test_fund_portfolio_requires_documented_query_scope_and_normalizes_dates():
+    provider = TushareProvider(config={"token": "test-token"})
+    with pytest.raises(ValueError, match="至少需要"):
+        provider.get_fund_portfolio()
+
+    provider._call_api = Mock(return_value=pd.DataFrame({
+        "ts_code": ["001753.OF"], "ann_date": ["20240823"],
+        "end_date": ["20240630"], "symbol": ["603019.SH"], "mkv": [3130994.46],
+        "amount": [68258], "stk_mkv_ratio": [4.37], "stk_float_ratio": [0.01],
+    }))
+    result = provider.get_fund_portfolio(ts_code="001753.OF", start_date="2024-01-01")
+
+    assert result.iloc[0]["end_date"] == pd.Timestamp("2024-06-30")
+    assert provider._call_api.call_args.kwargs["start_date"] == "20240101"
 
 
 def test_futures_monthly_normalizes_period_end_and_deduplicates():

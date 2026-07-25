@@ -68,6 +68,175 @@ StockBasicSchema = DataFrameSchema(
 )
 
 
+# 公募基金基本信息 Schema
+FundBasicSchema = DataFrameSchema(
+    name="fund_basic",
+    description="公募基金基本信息",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "TS 基金代码"),
+        ColumnSchema("name", "object", True, "基金简称"),
+        ColumnSchema("management", "object", True, "基金管理人"),
+        ColumnSchema("custodian", "object", True, "基金托管人"),
+        ColumnSchema("fund_type", "object", True, "投资类型"),
+        ColumnSchema("found_date", "datetime64[ns]", True, "成立日期"),
+        ColumnSchema("due_date", "datetime64[ns]", True, "到期日期"),
+        ColumnSchema("list_date", "datetime64[ns]", True, "上市日期"),
+        ColumnSchema("issue_date", "datetime64[ns]", True, "发行日期"),
+        ColumnSchema("delist_date", "datetime64[ns]", True, "退市日期"),
+        ColumnSchema("issue_amount", "float64", True, "发行份额（亿）"),
+        ColumnSchema("m_fee", "float64", True, "管理费"),
+        ColumnSchema("c_fee", "float64", True, "托管费"),
+        ColumnSchema("duration_year", "float64", True, "存续期"),
+        ColumnSchema("p_value", "float64", True, "面值"),
+        ColumnSchema("min_amount", "float64", True, "起点金额（万元）"),
+        ColumnSchema("exp_return", "float64", True, "预期收益率"),
+        ColumnSchema("benchmark", "object", True, "业绩比较基准"),
+        ColumnSchema("status", "object", True, "存续状态（D/I/L）"),
+        ColumnSchema("invest_type", "object", True, "投资风格"),
+        ColumnSchema("type", "object", True, "基金类型"),
+        ColumnSchema("trustee", "object", True, "受托人"),
+        ColumnSchema("purc_startdate", "datetime64[ns]", True, "日常申购起始日"),
+        ColumnSchema("redm_startdate", "datetime64[ns]", True, "日常赎回起始日"),
+        ColumnSchema("market", "object", True, "交易市场（E 场内/O 场外）"),
+    ],
+)
+
+
+# 公募基金规模 Schema
+FundShareSchema = DataFrameSchema(
+    name="fund_share",
+    description="公募基金规模",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "TS 基金代码"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易（变动）日期"),
+        ColumnSchema("fd_share", "float64", True, "基金份额（万）"),
+    ],
+)
+
+
+# 公募基金净值 Schema
+FundNavSchema = DataFrameSchema(
+    name="fund_nav",
+    description="公募基金净值",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "TS 基金代码"),
+        ColumnSchema("ann_date", "datetime64[ns]", True, "公告日期"),
+        ColumnSchema("nav_date", "datetime64[ns]", False, "净值日期"),
+        ColumnSchema("unit_nav", "float64", True, "单位净值"),
+        ColumnSchema("accum_nav", "float64", True, "累计净值"),
+        ColumnSchema("accum_div", "float64", True, "累计分红"),
+        ColumnSchema("net_asset", "float64", True, "资产净值"),
+        ColumnSchema("total_netasset", "float64", True, "合计资产净值"),
+        ColumnSchema("adj_nav", "float64", True, "复权单位净值"),
+    ],
+)
+
+
+# 公募基金分红 Schema
+FundDivSchema = DataFrameSchema(
+    name="fund_div",
+    description="公募基金分红",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "TS 基金代码"),
+        ColumnSchema("ann_date", "datetime64[ns]", False, "公告日期"),
+        ColumnSchema("imp_anndate", "datetime64[ns]", True, "分红实施公告日"),
+        ColumnSchema("base_date", "datetime64[ns]", True, "分配收益基准日"),
+        ColumnSchema("div_proc", "object", True, "方案进度"),
+        ColumnSchema("record_date", "datetime64[ns]", True, "权益登记日"),
+        ColumnSchema("ex_date", "datetime64[ns]", True, "除息日"),
+        ColumnSchema("pay_date", "datetime64[ns]", True, "派息日"),
+        ColumnSchema("earpay_date", "datetime64[ns]", True, "收益支付日"),
+        ColumnSchema("net_ex_date", "datetime64[ns]", True, "净值除权日"),
+        ColumnSchema("div_cash", "float64", True, "每股派息（元）"),
+        ColumnSchema("base_unit", "float64", True, "基准基金份额（万份）"),
+        ColumnSchema("ear_distr", "float64", True, "可分配收益（元）"),
+        ColumnSchema("ear_amount", "float64", True, "收益分配金额（元）"),
+        ColumnSchema("account_date", "datetime64[ns]", True, "红利再投资到账日"),
+        ColumnSchema("base_year", "object", True, "份额基准年度"),
+    ],
+)
+
+
+# ETF 业绩比较基准 Schema（Tushare mkt_idx_bmk）
+MktIdxBmkSchema = DataFrameSchema(
+    name="mkt_idx_bmk",
+    description="ETF业绩比较基准库",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "TS 指数代码"),
+        ColumnSchema("symbol", "object", True, "指数代码"),
+        ColumnSchema("name", "object", True, "指数简称"),
+        ColumnSchema("fullname", "object", True, "指数全称"),
+        ColumnSchema("bmk_level", "object", True, "基准库分层"),
+        ColumnSchema("bmk_type", "object", True, "基准类型"),
+        ColumnSchema("bmk_src", "object", True, "指数编制机构"),
+        ColumnSchema("idx_type", "object", True, "指数类型"),
+    ],
+)
+
+
+# 公募基金持仓 Schema（Tushare fund_portfolio）
+FundPortfolioSchema = DataFrameSchema(
+    name="fund_portfolio",
+    description="公募基金季度持仓",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "TS 基金代码"),
+        ColumnSchema("ann_date", "datetime64[ns]", False, "公告日期"),
+        ColumnSchema("end_date", "datetime64[ns]", False, "报告期截止日期"),
+        ColumnSchema("symbol", "object", False, "股票代码"),
+        ColumnSchema("mkv", "float64", True, "持有股票市值（元）"),
+        ColumnSchema("amount", "float64", True, "持有股票数量（股）"),
+        ColumnSchema("stk_mkv_ratio", "float64", True, "占股票市值比"),
+        ColumnSchema("stk_float_ratio", "float64", True, "占流通股本比例"),
+    ],
+)
+
+
+# 公募基金公司（Tushare fund_company）
+FundCompanySchema = DataFrameSchema(
+    name="fund_company",
+    description="公募基金管理人信息",
+    columns=[
+        ColumnSchema("name", "object", False, "基金公司名称"),
+        ColumnSchema("shortname", "object", True, "简称"),
+        ColumnSchema("short_enname", "object", True, "英文缩写"),
+        ColumnSchema("province", "object", True, "省份"),
+        ColumnSchema("city", "object", True, "城市"),
+        ColumnSchema("address", "object", True, "注册地址"),
+        ColumnSchema("phone", "object", True, "电话"),
+        ColumnSchema("office", "object", True, "办公地址"),
+        ColumnSchema("website", "object", True, "公司网址"),
+        ColumnSchema("chairman", "object", True, "法人代表"),
+        ColumnSchema("manager", "object", True, "总经理"),
+        ColumnSchema("reg_capital", "float64", True, "注册资本"),
+        ColumnSchema("setup_date", "datetime64[ns]", True, "成立日期"),
+        ColumnSchema("end_date", "datetime64[ns]", True, "公司终止日期"),
+        ColumnSchema("employees", "float64", True, "员工总数"),
+        ColumnSchema("main_business", "object", True, "主要产品及业务"),
+        ColumnSchema("org_code", "object", True, "组织机构代码"),
+        ColumnSchema("credit_code", "object", True, "统一社会信用代码"),
+    ],
+)
+
+
+# 基金经理（Tushare fund_manager）
+FundManagerSchema = DataFrameSchema(
+    name="fund_manager",
+    description="公募基金经理任职及简历信息",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "TS 基金代码"),
+        ColumnSchema("ann_date", "datetime64[ns]", False, "公告日期"),
+        ColumnSchema("name", "object", False, "基金经理姓名"),
+        ColumnSchema("gender", "object", True, "性别（F/M）"),
+        ColumnSchema("birth_year", "object", True, "出生年份"),
+        ColumnSchema("edu", "object", True, "学历"),
+        ColumnSchema("nationality", "object", True, "国籍"),
+        ColumnSchema("begin_date", "datetime64[ns]", False, "任职日期"),
+        ColumnSchema("end_date", "datetime64[ns]", True, "离任日期"),
+        ColumnSchema("resume", "object", True, "简历"),
+    ],
+)
+
+
 # 日线行情数据 Schema
 # 注意: 复权因子存储在独立的 adj_factor 表中，不在此表中
 DailyDataSchema = DataFrameSchema(
