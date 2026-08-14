@@ -513,19 +513,25 @@ class TaskExecutor:
             return None
 
         placeholder_match = re.fullmatch(
-            r"(latest|previous_trade_date)(?:([+-])(\d+)(bd|d))?",
+            r"(latest|previous_trade_date|today)(?:([+-])(\d+)(bd|d))?",
             normalized,
         )
         if placeholder_match:
             placeholder, sign, days, unit = placeholder_match.groups()
             if placeholder == "latest":
                 resolved_value = self._get_latest_trade_date(asset_class=asset_class)
-            else:
+                if resolved_value is None:
+                    return None
+                resolved = datetime.strptime(resolved_value, "%Y-%m-%d").date()
+            elif placeholder == "previous_trade_date":
                 resolved_value = self._get_previous_trade_date(asset_class=asset_class)
-            if resolved_value is None:
-                return None
-
-            resolved = datetime.strptime(resolved_value, "%Y-%m-%d").date()
+                if resolved_value is None:
+                    return None
+                resolved = datetime.strptime(resolved_value, "%Y-%m-%d").date()
+            else:
+                # fund_div announcements can occur on weekends and holidays,
+                # so daily jobs need the calendar date rather than latest.
+                resolved = date.today()
             if days:
                 offset = int(days)
                 if unit == "bd":

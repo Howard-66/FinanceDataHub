@@ -6,7 +6,7 @@ import pytest
 import os
 from pathlib import Path
 from datetime import datetime, date, timedelta
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 class TestJobConfig:
@@ -278,6 +278,12 @@ jobs:
             in config.jobs["futures_minute_1m_saturday_update"].depends_on
         )
         assert config.jobs["futures_daily_update"].params["trade_date"] == "latest"
+        assert config.jobs["fund_nav_update"].enabled is True
+        assert config.jobs["fund_nav_update"].params["trade_date"] == "latest"
+        assert config.jobs["fund_share_update"].enabled is True
+        assert config.jobs["fund_share_update"].params["trade_date"] == "latest"
+        assert config.jobs["fund_div_update"].enabled is True
+        assert config.jobs["fund_div_update"].params["trade_date"] == "today"
         assert "sw_daily_update" not in config.jobs
         assert config.jobs["futures_term_metrics_saturday_update"].dataset == "term_metrics"
         desktop_job = config.jobs["basisflow_wind_excel_refresh"]
@@ -416,6 +422,20 @@ class TestTaskExecutor:
         joined = " ".join(cmd)
         assert "--start-date 2024-05-03" in joined
         assert "--end-date 2024-05-06" in joined
+
+    def test_build_download_command_resolves_today_calendar_date_placeholder(self):
+        """fund_div 调度的 today 应保留自然日，而不是退化为最近交易日。"""
+        from finance_data_hub.scheduler.executor import TaskExecutor
+
+        executor = TaskExecutor()
+        with patch("finance_data_hub.scheduler.executor.date") as mock_date:
+            mock_date.today.return_value = date(2024, 5, 4)  # Saturday
+            cmd = executor._build_download_command(
+                "fund_div", {"trade_date": "today"}
+            )
+
+        assert "--dataset fund_div" in " ".join(cmd)
+        assert "--trade-date 2024-05-04" in " ".join(cmd)
 
     def test_resolve_params_freezes_scheduler_date_placeholders(self):
         """调度执行前应先冻结日期占位，供重试和次日补跑复用。"""

@@ -120,33 +120,38 @@ jobs:
       hour: 19
       minute: 0
     params:
-      # fund_nav 需要基金代码或净值日；latest 由调度执行器解析为最近日期。
+      # 按最近交易日抓取全市场净值；无需 --symbols all 的历史全量模式。
       trade_date: "latest"
     retry:
       max_retries: 3
       delay: 600
 
-  # 规模与分红接口需要运行时指定基金代码或日期；保留可启用的调度模板。
   fund_share_update:
-    enabled: false
+    enabled: true
     type: download
     dataset: fund_share
     schedule:
       type: cron
       hour: 19
       minute: 10
+    params:
+      # 按最近交易日抓取全市场基金规模，自动按 2,000 行分页。
+      trade_date: "latest"
     retry:
       max_retries: 3
       delay: 600
 
   fund_div_update:
-    enabled: false
+    enabled: true
     type: download
     dataset: fund_div
     schedule:
       type: cron
       hour: 19
       minute: 20
+    params:
+      # 分红公告可能发生在非交易日，today 使用运行当日的自然日。
+      trade_date: "today"
     retry:
       max_retries: 3
       delay: 600
