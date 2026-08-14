@@ -679,14 +679,12 @@ class TushareProvider(BaseDataProvider):
         con_code: Optional[str] = None, start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> pd.DataFrame:
-        """获取沪市 ETF 每日持仓组合；每页最多 3,000 行。"""
-        return self._get_fund_series(
+        """获取沪市 ETF 每日持仓组合；满 3,000 行时拆分日期范围。"""
+        return self._get_etf_cons_series(
             "etf_sh_cons", EtfShConsSchema,
             {"ts_code": ts_code, "trade_date": self._clean_api_date(trade_date),
              "con_code": con_code, "start_date": self._clean_api_date(start_date),
              "end_date": self._clean_api_date(end_date)},
-            ["trade_date", "ts_code", "con_code"], max_records=ETF_CONS_MAX_RECORDS,
-            log_empty_as_warning=False,
         )
 
     def get_etf_sz_cons(
@@ -694,15 +692,93 @@ class TushareProvider(BaseDataProvider):
         con_code: Optional[str] = None, start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> pd.DataFrame:
-        """获取深市 ETF 每日持仓组合；每页最多 3,000 行。"""
-        return self._get_fund_series(
+        """获取深市 ETF 每日持仓组合；满 3,000 行时拆分日期范围。"""
+        return self._get_etf_cons_series(
             "etf_sz_cons", EtfSzConsSchema,
             {"ts_code": ts_code, "trade_date": self._clean_api_date(trade_date),
              "con_code": con_code, "start_date": self._clean_api_date(start_date),
              "end_date": self._clean_api_date(end_date)},
-            ["trade_date", "ts_code", "con_code"], max_records=ETF_CONS_MAX_RECORDS,
-            log_empty_as_warning=False,
         )
+
+    def _get_etf_cons_series(
+        self,
+        api_name: str,
+        schema,
+        api_params: Dict[str, Any],
+    ) -> pd.DataFrame:
+        """Fetch ETF basket data without using the unsupported ``offset`` input.
+
+        The two PCF endpoints document code/date iteration instead of offset
+        pagination.  A saturated date range is therefore bisected until every
+        response is below the 3,000-row cap.  Callers should provide ``ts_code``
+        so a single-day request remains safely below the endpoint-wide cap.
+        """
+        fields = ",".join(schema.get_required_columns())
+        base_params = {
+            key: value for key, value in api_params.items()
+            if value is not None and key not in {"start_date", "end_date"}
+        }
+        initial_start = api_params.get("start_date")
+        initial_end = api_params.get("end_date")
+        if base_params.get("trade_date"):
+            initial_start = None
+            initial_end = None
+
+        def fetch_range(
+            range_start: Optional[str], range_end: Optional[str]
+        ) -> List[pd.DataFrame]:
+            params = dict(base_params)
+            if range_start:
+                params["start_date"] = range_start
+            if range_end:
+                params["end_date"] = range_end
+            df = self._call_api(
+                api_name,
+                fields=fields,
+                log_empty_as_warning=False,
+                **params,
+            )
+            if df is None or df.empty:
+                return []
+            fetched = len(df)
+            logger.info(
+                "{} ts_code={} range={}..{} fetched {} records",
+                api_name,
+                params.get("ts_code") or "all",
+                range_start or params.get("trade_date") or "all",
+                range_end or params.get("trade_date") or "all",
+                fetched,
+            )
+            if fetched < ETF_CONS_MAX_RECORDS:
+                return [df]
+
+            if range_start and range_end:
+                start_ts = pd.Timestamp(range_start)
+                end_ts = pd.Timestamp(range_end)
+                if start_ts < end_ts:
+                    midpoint = start_ts + (end_ts - start_ts) // 2
+                    right_start = midpoint + pd.Timedelta(days=1)
+                    return fetch_range(
+                        start_ts.strftime("%Y%m%d"), midpoint.strftime("%Y%m%d")
+                    ) + fetch_range(
+                        right_start.strftime("%Y%m%d"), end_ts.strftime("%Y%m%d")
+                    )
+
+            raise ProviderDataError(
+                f"{api_name} returned the 3,000-row cap for one indivisible request; "
+                "please specify a single ETF ts_code or a narrower constituent filter"
+            )
+
+        frames = fetch_range(initial_start, initial_end)
+        if not frames:
+            return pd.DataFrame(columns=schema.get_required_columns())
+        result = pd.concat(frames, ignore_index=True, sort=False)
+        result = validate_dataframe(result, schema, provider_name=self.name)
+        keys = ["trade_date", "ts_code", "con_code"]
+        result = result.dropna(subset=keys)
+        return result.drop_duplicates(subset=keys, keep="last").sort_values(
+            keys
+        ).reset_index(drop=True)
 
     def get_idx_anns(
         self, ann_date: Optional[str] = None, start_date: Optional[str] = None,

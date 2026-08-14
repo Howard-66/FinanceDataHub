@@ -32,10 +32,6 @@ runner = CliRunner()
          FundAdjSchema, FUND_ADJ_MAX_RECORDS, ["ts_code", "trade_date"]),
         ("get_etf_share_size", {"trade_date": "2024-01-02"}, "etf_share_size",
          EtfShareSizeSchema, ETF_SHARE_SIZE_MAX_RECORDS, ["ts_code", "trade_date"]),
-        ("get_etf_sh_cons", {"trade_date": "2024-01-02"}, "etf_sh_cons",
-         EtfShConsSchema, ETF_CONS_MAX_RECORDS, ["trade_date", "ts_code", "con_code"]),
-        ("get_etf_sz_cons", {"trade_date": "2024-01-02"}, "etf_sz_cons",
-         EtfSzConsSchema, ETF_CONS_MAX_RECORDS, ["trade_date", "ts_code", "con_code"]),
         ("get_idx_anns", {"ann_date": "2024-01-02"}, "idx_anns",
          IdxAnnsSchema, IDX_ANNS_MAX_RECORDS, ["ann_date", "title", "source"]),
     ],
@@ -76,6 +72,69 @@ def test_extended_provider_requests_all_fields_and_paginates(
     assert second_call.kwargs["offset"] == max_records
 
 
+@pytest.mark.parametrize(
+    "method_name,api_name,schema",
+    [
+        ("get_etf_sh_cons", "etf_sh_cons", EtfShConsSchema),
+        ("get_etf_sz_cons", "etf_sz_cons", EtfSzConsSchema),
+    ],
+)
+def test_etf_cons_splits_saturated_date_range_without_offset(
+    method_name, api_name, schema
+):
+    provider = TushareProvider(config={"token": "test-token"})
+    saturated = pd.DataFrame({
+        "trade_date": ["20240101"] * ETF_CONS_MAX_RECORDS,
+        "ts_code": ["510300.SH"] * ETF_CONS_MAX_RECORDS,
+        "con_code": [f"{index:06d}.SH" for index in range(ETF_CONS_MAX_RECORDS)],
+    })
+    day_one = pd.DataFrame({
+        "trade_date": ["20240101"], "ts_code": ["510300.SH"],
+        "con_code": ["600000.SH"],
+    })
+    day_two = pd.DataFrame({
+        "trade_date": ["20240102"], "ts_code": ["510300.SH"],
+        "con_code": ["600001.SH"],
+    })
+    provider._call_api = Mock(side_effect=[saturated, day_one, day_two])
+
+    result = getattr(provider, method_name)(
+        ts_code="510300.SH", start_date="2024-01-01", end_date="2024-01-02"
+    )
+
+    assert len(result) == 2
+    calls = provider._call_api.call_args_list
+    assert [call.args[0] for call in calls] == [api_name, api_name, api_name]
+    assert all("offset" not in call.kwargs for call in calls)
+    assert set(calls[0].kwargs["fields"].split(",")) == set(
+        schema.get_required_columns()
+    )
+    assert (calls[0].kwargs["start_date"], calls[0].kwargs["end_date"]) == (
+        "20240101", "20240102"
+    )
+    assert (calls[1].kwargs["start_date"], calls[1].kwargs["end_date"]) == (
+        "20240101", "20240101"
+    )
+    assert (calls[2].kwargs["start_date"], calls[2].kwargs["end_date"]) == (
+        "20240102", "20240102"
+    )
+
+
+def test_etf_cons_rejects_saturated_indivisible_request():
+    provider = TushareProvider(config={"token": "test-token"})
+    saturated = pd.DataFrame({
+        "trade_date": ["20240101"] * ETF_CONS_MAX_RECORDS,
+        "ts_code": ["510300.SH"] * ETF_CONS_MAX_RECORDS,
+        "con_code": [f"{index:06d}.SH" for index in range(ETF_CONS_MAX_RECORDS)],
+    })
+    provider._call_api = Mock(return_value=saturated)
+
+    with pytest.raises(Exception, match="single ETF ts_code"):
+        provider.get_etf_sh_cons(trade_date="2024-01-01")
+
+    assert "offset" not in provider._call_api.call_args.kwargs
+
+
 def test_extended_provider_rejects_repeated_full_page():
     provider = TushareProvider(config={"token": "test-token"})
     page = pd.DataFrame({
@@ -112,6 +171,36 @@ async def test_fund_adj_smart_incremental_uses_open_dates_and_persists_each_day(
     assert [call.kwargs["trade_date"] for call in updater.router.route.call_args_list] == [
         "2024-01-02", "2024-01-03"
     ]
+
+
+@pytest.mark.asyncio
+async def test_etf_sh_cons_full_download_iterates_only_sh_etf_codes():
+    updater = object.__new__(DataUpdater)
+    updater.router = Mock(route=Mock(return_value=pd.DataFrame({
+        "trade_date": ["20240102"], "ts_code": ["510300.SH"],
+        "con_code": ["600000.SH"],
+    })))
+    updater.data_ops = Mock(
+        get_etf_basic=AsyncMock(return_value=pd.DataFrame({
+            "ts_code": ["510300.SH", "159919.SZ"],
+            "exchange": ["SH", "SZ"],
+            "setup_date": [pd.Timestamp("2012-05-04"), pd.Timestamp("2012-05-04")],
+            "list_date": [pd.Timestamp("2012-05-28"), pd.Timestamp("2012-05-28")],
+        })),
+        insert_etf_sh_cons_batch=AsyncMock(return_value=1),
+    )
+
+    count = await updater.update_etf_sh_cons(
+        start_date="2024-01-01", end_date="2024-01-31", all_funds=True
+    )
+
+    assert count == 1
+    updater.router.route.assert_called_once_with(
+        asset_class="fund", data_type="etf_sh_cons", method_name="get_etf_sh_cons",
+        ts_code="510300.SH", start_date="2024-01-01", end_date="2024-01-31",
+        con_code=None,
+    )
+    updater.data_ops.insert_etf_sh_cons_batch.assert_awaited_once()
 
 
 @pytest.mark.asyncio

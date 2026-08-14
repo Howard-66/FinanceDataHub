@@ -636,6 +636,7 @@ class DataUpdater:
         catalog_exchange: Optional[str] = None, extra_params: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
         incremental_lookback_days: int = 0,
+        always_by_codes: bool = False,
     ) -> int:
         """Shared full/incremental workflow for ETF date-series endpoints."""
         if all_funds and smart_incremental:
@@ -644,7 +645,7 @@ class DataUpdater:
         insert_method = getattr(self.data_ops, insert_method_name)
         latest = None
 
-        if fund_codes:
+        if fund_codes and not always_by_codes:
             total = 0
             if progress_callback:
                 progress_callback(0, len(fund_codes))
@@ -686,13 +687,31 @@ class DataUpdater:
         if resolved_start > resolved_end:
             return 0
 
-        if full_by_codes and (all_funds or (smart_incremental and not latest)):
+        if always_by_codes or (
+            full_by_codes and (all_funds or (smart_incremental and not latest))
+        ):
             catalog = await self.data_ops.get_etf_basic()
             if catalog is None or catalog.empty:
                 await self._resolve_etf_history_start()
             if catalog_exchange:
-                catalog = catalog[catalog["exchange"].astype(str).str.upper() == catalog_exchange]
+                exchange_aliases = {
+                    "SH": {"SH", "SSE"},
+                    "SZ": {"SZ", "SZSE"},
+                }.get(catalog_exchange, {catalog_exchange})
+                code_suffix = f".{catalog_exchange}"
+                catalog = catalog[
+                    catalog["exchange"].astype(str).str.upper().isin(exchange_aliases)
+                    | catalog["ts_code"].astype(str).str.upper().str.endswith(code_suffix)
+                ]
+            if fund_codes:
+                requested_codes = {str(code).strip() for code in fund_codes}
+                catalog = catalog[catalog["ts_code"].astype(str).isin(requested_codes)]
             catalog = catalog.sort_values("ts_code").reset_index(drop=True)
+            if catalog.empty:
+                raise ValueError(
+                    f"{data_type} 未在本地 etf_basic 中找到匹配的 ETF；"
+                    "请先刷新 etf_basic"
+                )
             total = 0
             total_codes = len(catalog)
             if progress_callback:
@@ -783,6 +802,7 @@ class DataUpdater:
             latest_method_name="get_latest_etf_sh_cons_trade_date",
             fund_codes=fund_codes, trade_date=trade_date, start_date=start_date,
             end_date=end_date, all_funds=all_funds, smart_incremental=smart_incremental,
+            full_by_codes=True, always_by_codes=True, catalog_exchange="SH",
             extra_params={"con_code": con_code}, progress_callback=progress_callback,
         )
 
@@ -795,6 +815,7 @@ class DataUpdater:
             latest_method_name="get_latest_etf_sz_cons_trade_date",
             fund_codes=fund_codes, trade_date=trade_date, start_date=start_date,
             end_date=end_date, all_funds=all_funds, smart_incremental=smart_incremental,
+            full_by_codes=True, always_by_codes=True, catalog_exchange="SZ",
             extra_params={"con_code": con_code}, progress_callback=progress_callback,
         )
 

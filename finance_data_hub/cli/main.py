@@ -1876,7 +1876,10 @@ async def _run_force_update(
         )
         smart_incremental = not all_data and not selected_codes and not trade_date
         progress_unit = (
-            "ETF代码" if all_data and data_type in {"fund_daily", "etf_share_size"}
+            "ETF代码" if (
+                data_type in {"etf_sh_cons", "etf_sz_cons"}
+                or all_data and data_type in {"fund_daily", "etf_share_size"}
+            )
             else "交易日"
         )
         with Progress(
