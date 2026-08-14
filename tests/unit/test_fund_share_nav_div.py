@@ -8,6 +8,7 @@ from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.providers.tushare import (
     FUND_DIV_MAX_RECORDS,
     FUND_NAV_MAX_RECORDS,
+    FUND_PORTFOLIO_MAX_RECORDS,
     FUND_SERIES_MAX_RECORDS,
     TushareProvider,
 )
@@ -224,6 +225,42 @@ def test_fund_div_paginates_at_the_documented_1000_record_limit():
     assert provider._call_api.call_args_list[1].kwargs["offset"] == FUND_DIV_MAX_RECORDS
 
 
+def test_fund_portfolio_paginates_at_the_observed_8000_record_limit():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        side_effect=[
+            pd.DataFrame(
+                {
+                    "ts_code": [
+                        f"{index:06d}.OF" for index in range(FUND_PORTFOLIO_MAX_RECORDS)
+                    ],
+                    "ann_date": ["20240823"] * FUND_PORTFOLIO_MAX_RECORDS,
+                    "end_date": ["20240630"] * FUND_PORTFOLIO_MAX_RECORDS,
+                    "symbol": ["600000.SH"] * FUND_PORTFOLIO_MAX_RECORDS,
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "ts_code": ["999999.OF"],
+                    "ann_date": ["20240823"],
+                    "end_date": ["20240630"],
+                    "symbol": ["600000.SH"],
+                }
+            ),
+        ]
+    )
+
+    result = provider.get_fund_portfolio(ann_date="2024-08-23")
+
+    assert len(result) == FUND_PORTFOLIO_MAX_RECORDS + 1
+    assert provider._call_api.call_args_list[0].kwargs["ann_date"] == "20240823"
+    assert provider._call_api.call_args_list[1].kwargs["offset"] == FUND_PORTFOLIO_MAX_RECORDS
+    assert set(provider._call_api.call_args.kwargs["fields"].split(",")) == {
+        "ts_code", "ann_date", "end_date", "symbol", "mkv", "amount",
+        "stk_mkv_ratio", "stk_float_ratio",
+    }
+
+
 @pytest.mark.asyncio
 async def test_update_fund_share_all_fetches_each_trade_date_in_history_order():
     updater = object.__new__(DataUpdater)
@@ -378,6 +415,81 @@ async def test_update_fund_div_all_fetches_every_calendar_day_from_fund_basic_st
         ),
     ]
     assert progress.call_args_list == [call(0, 3), call(1, 3), call(2, 3), call(3, 3)]
+
+
+@pytest.mark.asyncio
+async def test_update_fund_portfolio_all_uses_ann_dates_and_calendar_start():
+    updater = object.__new__(DataUpdater)
+    updater.router = Mock()
+    updater.router.route.side_effect = [
+        pd.DataFrame(
+            {
+                "ts_code": ["000001.OF"], "ann_date": ["19980731"],
+                "end_date": ["19980731"], "symbol": ["600000.SH"],
+            }
+        ),
+        pd.DataFrame(),
+        pd.DataFrame(
+            {
+                "ts_code": ["000001.OF"], "ann_date": ["19980802"],
+                "end_date": ["19980731"], "symbol": ["600000.SH"],
+            }
+        ),
+    ]
+    updater.data_ops = Mock(
+        get_earliest_trade_cal_date=AsyncMock(return_value="1998-07-31"),
+        insert_fund_portfolio_batch=AsyncMock(side_effect=[1, 1]),
+    )
+    progress = Mock()
+
+    count = await updater.update_fund_portfolio(
+        all_funds=True,
+        end_date="1998-08-02",
+        progress_callback=progress,
+    )
+
+    assert count == 2
+    updater.data_ops.get_earliest_trade_cal_date.assert_awaited_once_with(
+        exchange="SSE", start_date="1998-01-01"
+    )
+    assert updater.router.route.call_args_list == [
+        call(
+            asset_class="fund", data_type="portfolio",
+            method_name="get_fund_portfolio", ann_date="1998-07-31",
+        ),
+        call(
+            asset_class="fund", data_type="portfolio",
+            method_name="get_fund_portfolio", ann_date="1998-08-01",
+        ),
+        call(
+            asset_class="fund", data_type="portfolio",
+            method_name="get_fund_portfolio", ann_date="1998-08-02",
+        ),
+    ]
+    assert progress.call_args_list == [call(0, 3), call(1, 3), call(2, 3), call(3, 3)]
+
+
+@pytest.mark.asyncio
+async def test_update_fund_portfolio_smart_incremental_reuses_latest_ann_date():
+    updater = object.__new__(DataUpdater)
+    updater.router = Mock(return_value=pd.DataFrame())
+    updater.data_ops = Mock(
+        get_latest_fund_portfolio_ann_date=AsyncMock(return_value="2024-08-23"),
+    )
+    progress = Mock()
+
+    count = await updater.update_fund_portfolio(
+        smart_incremental=True,
+        end_date="2024-08-24",
+        progress_callback=progress,
+    )
+
+    assert count == 0
+    updater.data_ops.get_latest_fund_portfolio_ann_date.assert_awaited_once_with()
+    assert [call.kwargs["ann_date"] for call in updater.router.route.call_args_list] == [
+        "2024-08-23", "2024-08-24",
+    ]
+    assert progress.call_args_list == [call(0, 2), call(1, 2), call(2, 2)]
 
 
 @pytest.mark.asyncio

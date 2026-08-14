@@ -583,6 +583,108 @@ class DataOperations:
             return None
         return pd.DataFrame([row._asdict() for row in rows])
 
+    async def insert_etf_basic_batch(self, data: pd.DataFrame) -> int:
+        """批量写入 Tushare ETF 基础信息全部字段。"""
+        if data is None or data.empty:
+            return 0
+
+        columns = [
+            "ts_code", "csname", "extname", "cname", "index_code", "index_name",
+            "setup_date", "list_date", "list_status", "exchange", "mgr_name",
+            "custod_name", "mgt_fee", "etf_type",
+        ]
+        prepared = data.copy()
+        for column in columns:
+            if column not in prepared.columns:
+                prepared[column] = None
+        prepared = prepared[columns].dropna(subset=["ts_code"])
+        if prepared.empty:
+            return 0
+
+        records = prepared.to_dict(orient="records")
+        for record in records:
+            for key, value in record.items():
+                if pd.isna(value):
+                    record[key] = None
+                elif key in {"setup_date", "list_date"}:
+                    record[key] = pd.Timestamp(value).date()
+
+        insert_sql = """
+            INSERT INTO etf_basic (
+                ts_code, csname, extname, cname, index_code, index_name,
+                setup_date, list_date, list_status, exchange, mgr_name,
+                custod_name, mgt_fee, etf_type, updated_at, created_at
+            ) VALUES (
+                :ts_code, :csname, :extname, :cname, :index_code, :index_name,
+                :setup_date, :list_date, :list_status, :exchange, :mgr_name,
+                :custod_name, :mgt_fee, :etf_type, NOW(), NOW()
+            ) ON CONFLICT (ts_code) DO UPDATE SET
+                csname = EXCLUDED.csname,
+                extname = EXCLUDED.extname,
+                cname = EXCLUDED.cname,
+                index_code = EXCLUDED.index_code,
+                index_name = EXCLUDED.index_name,
+                setup_date = EXCLUDED.setup_date,
+                list_date = EXCLUDED.list_date,
+                list_status = EXCLUDED.list_status,
+                exchange = EXCLUDED.exchange,
+                mgr_name = EXCLUDED.mgr_name,
+                custod_name = EXCLUDED.custod_name,
+                mgt_fee = EXCLUDED.mgt_fee,
+                etf_type = EXCLUDED.etf_type,
+                updated_at = NOW()
+        """
+        async with self.db_manager._engine.begin() as conn:
+            await conn.execute(text(insert_sql), records)
+        logger.info("Inserted/updated {} etf_basic records", len(records))
+        return len(records)
+
+    async def get_etf_basic(
+        self,
+        ts_code: Optional[str] = None,
+        index_code: Optional[str] = None,
+        list_date: Optional[str] = None,
+        list_status: Optional[str] = None,
+        exchange: Optional[str] = None,
+        mgr_name: Optional[str] = None,
+        etf_type: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """查询已同步的 Tushare ETF 基础信息。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        query = """
+            SELECT ts_code, csname, extname, cname, index_code, index_name,
+                   setup_date, list_date, list_status, exchange, mgr_name,
+                   custod_name, mgt_fee, etf_type
+            FROM etf_basic
+            WHERE 1=1
+        """
+        params: Dict[str, Any] = {}
+        for column, value in {
+            "ts_code": ts_code,
+            "index_code": index_code,
+            "list_status": list_status,
+            "exchange": exchange,
+            "mgr_name": mgr_name,
+            "etf_type": etf_type,
+        }.items():
+            if value:
+                query += f" AND {column} = :{column}"
+                params[column] = value
+        if list_date:
+            query += " AND list_date = :list_date"
+            params["list_date"] = pd.Timestamp(list_date).date()
+
+        query += " ORDER BY exchange, ts_code"
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            rows = result.fetchall()
+
+        if not rows:
+            return None
+        return pd.DataFrame([row._asdict() for row in rows])
+
     async def get_earliest_fund_basic_date(self) -> Optional[str]:
         """返回本地基金目录中最早的可用基金日期。
 
@@ -1020,6 +1122,26 @@ class DataOperations:
             result = await conn.execute(text(query), params)
             rows = result.fetchall()
         return pd.DataFrame([row._asdict() for row in rows]) if rows else None
+
+    async def get_latest_fund_portfolio_ann_date(self) -> Optional[str]:
+        """返回本地基金持仓已同步到的最新公告日。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        query = "SELECT MAX(ann_date) AS latest_date FROM fund_portfolio"
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query))
+            row = result.fetchone()
+
+        if row is None:
+            return None
+        if hasattr(row, "_mapping"):
+            value = row._mapping["latest_date"]
+        elif hasattr(row, "_asdict"):
+            value = row._asdict()["latest_date"]
+        else:
+            value = row[0]
+        return pd.Timestamp(value).strftime("%Y-%m-%d") if value is not None else None
 
     async def insert_daily_basic_batch(
         self, data: pd.DataFrame, batch_size: int = 1000
@@ -5973,6 +6095,39 @@ class DataOperations:
             dates = dates.dt.tz_convert("Asia/Shanghai")
 
         return dates.dt.strftime("%Y-%m-%d").drop_duplicates().tolist()
+
+    async def get_earliest_trade_cal_date(
+        self,
+        exchange: str = "SSE",
+        start_date: Optional[str] = None,
+    ) -> Optional[str]:
+        """返回交易日历在给定下限后的最早自然日。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+
+        query = """
+            SELECT MIN((cal_date AT TIME ZONE 'Asia/Shanghai')::date) AS earliest_date
+            FROM trade_cal
+            WHERE exchange = :exchange
+        """
+        params: Dict[str, Any] = {"exchange": exchange.upper()}
+        if start_date:
+            query += " AND (cal_date AT TIME ZONE 'Asia/Shanghai')::date >= :start_date"
+            params["start_date"] = pd.Timestamp(start_date).date()
+
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(text(query), params)
+            row = result.fetchone()
+
+        if row is None:
+            return None
+        if hasattr(row, "_mapping"):
+            value = row._mapping["earliest_date"]
+        elif hasattr(row, "_asdict"):
+            value = row._asdict()["earliest_date"]
+        else:
+            value = row[0]
+        return pd.Timestamp(value).strftime("%Y-%m-%d") if value is not None else None
 
     async def get_latest_trade_cal_date(self, exchange: str) -> Optional[str]:
         """

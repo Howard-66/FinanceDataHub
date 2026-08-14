@@ -284,7 +284,21 @@ jobs:
         assert config.jobs["fund_share_update"].params["trade_date"] == "latest"
         assert config.jobs["fund_div_update"].enabled is True
         assert config.jobs["fund_div_update"].params["trade_date"] == "today"
-        assert "sw_daily_update" not in config.jobs
+        assert config.jobs["mkt_idx_bmk_update"].enabled is True
+        assert config.jobs["mkt_idx_bmk_update"].dataset == "mkt_idx_bmk"
+        assert config.jobs["mkt_idx_bmk_update"].schedule["day_of_week"] == "mon"
+        assert config.jobs["etf_basic_update"].enabled is True
+        assert config.jobs["etf_basic_update"].dataset == "etf_basic"
+        assert config.jobs["etf_basic_update"].schedule["hour"] == 7
+        assert config.jobs["etf_basic_update"].schedule["minute"] == 30
+        assert config.jobs["fund_portfolio_update"].enabled is True
+        assert config.jobs["fund_portfolio_update"].params == {}
+        assert config.jobs["fund_portfolio_update"].schedule["day_of_week"] == "mon-fri"
+        assert config.jobs["sw_daily_update"].enabled is True
+        assert config.jobs["sw_daily_update"].dataset == "sw_daily"
+        assert config.jobs["sw_daily_update"].params["trade_date"] == "latest"
+        assert config.jobs["sw_daily_update"].schedule["hour"] == 21
+        assert config.jobs["sw_daily_update"].schedule["minute"] == 50
         assert config.jobs["futures_term_metrics_saturday_update"].dataset == "term_metrics"
         desktop_job = config.jobs["basisflow_wind_excel_refresh"]
         assert desktop_job.type.value == "desktop_automation"

@@ -138,7 +138,7 @@ def update(
         None,
         "--dataset",
         "-d",
-        help="数据类型 (daily, minute_1, minute_5, minute_15, minute_30, minute_60, daily_basic, adj_factor, basic, fund_basic, fund_company, fund_manager, fund_share, fund_nav, fund_div, mkt_idx_bmk, fund_portfolio, index_basic, gdp)。"
+        help="数据类型 (daily, minute_1, minute_5, minute_15, minute_30, minute_60, daily_basic, adj_factor, basic, fund_basic, etf_basic, fund_company, fund_manager, fund_share, fund_nav, fund_div, mkt_idx_bmk, fund_portfolio, index_basic, gdp)。"
              "取代 --frequency 参数，提供更准确的描述。"
     ),
     frequency: Optional[str] = typer.Option(
@@ -217,13 +217,14 @@ def update(
       - m: 中国货币供应量数据（M0、M1、M2）
       - pmi: 中国PMI采购经理人指数数据
       - fund_basic: 公募基金基础信息（非时间序列，按场内/场外市场全量刷新）
+      - etf_basic: ETF基础信息（非时间序列，默认全量刷新）
       - fund_company: 公募基金管理人目录（非时间序列，全量刷新）
       - fund_manager: 基金经理任职与简历（支持全量分页或按基金代码、公告日筛选）
       - fund_share: 公募基金规模（支持基金代码、交易日或日期区间）
       - fund_nav: 公募基金净值（支持基金代码、净值日或日期区间）
       - fund_div: 公募基金分红（支持基金代码或公告/除息/派息日）
       - mkt_idx_bmk: ETF业绩比较基准库（非时间序列）
-      - fund_portfolio: 公募基金季度持仓（需指定基金代码或报告期）
+      - fund_portfolio: 公募基金季度持仓（支持全量与智能增量下载）
       - index_basic: 指数基本信息（非时间序列，按 Tushare 指数市场全量刷新）
       - index_daily: 指数日线行情数据（沪深300、中证500、上证50、上证综指等）
       - index_dailybasic: 大盘指数每日指标数据（上证综指、深证成指、上证50、中证500等）
@@ -268,6 +269,11 @@ def update(
         - 指定--symbols时：按基金交易市场筛选，如 --symbols E,O
         - 基础信息不是时间序列，不支持 --trade-date、--start-date 或 --end-date
 
+        etf_basic使用说明:
+        - 不指定--symbols或指定--symbols all时：分页同步全部沪深 ETF 基础信息
+        - 指定--symbols时：按单个 ETF TS 代码筛选，如 --symbols 510300.SH
+        - 基础信息不是时间序列，不支持 --trade-date、--start-date 或 --end-date
+
         fund_company使用说明:
         - 不指定--symbols或指定--symbols all时：同步全部基金管理人
         - 非时间序列，不支持 --trade-date、--start-date 或 --end-date
@@ -288,9 +294,10 @@ def update(
         - 基准库不是时间序列，不支持 --trade-date、--start-date 或 --end-date
 
         fund_portfolio使用说明:
+        - --symbols all --force：按公告日回补全量数据；--start-date/--end-date 可缩小范围
+        - 不传 --symbols、--trade-date 或 --force：按本地最新公告日智能增量（首次自动回补全量）
         - 指定基金代码：--symbols 001753.OF（可逗号分隔多个基金）
         - 按报告期同步：--trade-date 2024-06-30
-        - 支持 --start-date、--end-date 缩小报告期范围
 
         index_weight使用说明:
         - 不指定--symbols或指定--symbols all时：从本地 index_basic 获取有效指数目录（智能更新）
@@ -417,7 +424,7 @@ def _is_timeseries_data(data_type: str) -> bool:
     """
     # 非时间序列数据类型
     non_timeseries_types = {
-        "basic", "asset_basic", "fund_basic", "fund_company", "fund_manager",
+        "basic", "asset_basic", "fund_basic", "etf_basic", "fund_company", "fund_manager",
         "mkt_idx_bmk", "index_basic",
     }
     return data_type not in non_timeseries_types
@@ -481,11 +488,11 @@ async def _run_update(
         _validate_symbols_all(symbol_list, "期货模式下")
     if data_type in {
         "index_basic", "index_daily", "index_weight", "fund_basic", "fund_company",
-        "fund_manager", "mkt_idx_bmk", "sw_daily",
+        "fund_manager", "etf_basic", "mkt_idx_bmk", "sw_daily",
     } and symbol_list:
         _validate_symbols_all(symbol_list, "指数/基金模式下")
 
-    if data_type in {"index_basic", "fund_basic", "fund_company", "mkt_idx_bmk"} and (trade_date or start_date or end_date):
+    if data_type in {"index_basic", "fund_basic", "etf_basic", "fund_company", "mkt_idx_bmk"} and (trade_date or start_date or end_date):
         raise ValueError(
             f"{data_type} 是非时间序列数据，不支持 --trade-date、--start-date 或 --end-date"
         )
@@ -511,12 +518,13 @@ async def _run_update(
 
     # 公募基金规模/净值/分红使用接口自己的筛选与分页，不能走股票智能下载。
     if data_type in {
-        "fund_company", "fund_manager", "fund_share", "fund_nav", "fund_div",
+        "etf_basic", "fund_company", "fund_manager", "fund_share", "fund_nav", "fund_div",
         "fund_portfolio",
     }:
         return await _run_force_update(
             settings, asset_class, data_type, symbol_list,
             start_date, end_date, adj, trade_date, market, verbose, quiet,
+            force_update=force,
         )
     # 更新策略矩阵：根据参数组合自动选择最优策略
     elif trade_date:
@@ -536,7 +544,8 @@ async def _run_update(
                 console.print("\n[bold yellow]使用强制更新模式[/bold yellow]")
         await _run_force_update(
             settings, asset_class, data_type, symbol_list,
-            start_date, end_date, adj, trade_date, market, verbose, quiet
+            start_date, end_date, adj, trade_date, market, verbose, quiet,
+            force_update=force,
         )
     else:
         # 策略 3: 智能下载模式（默认）
@@ -1673,6 +1682,7 @@ async def _run_force_update(
     market: str,
     verbose: bool,
     quiet: bool = False,
+    force_update: bool = False,
 ):
     """强制更新模式：忽略数据库状态，使用指定日期范围"""
     if data_type in ("basic", "asset_basic"):
@@ -1743,6 +1753,32 @@ async def _run_force_update(
                 except Exception as e:
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新公募基金基本信息失败: {str(e)}")
+                    raise
+
+    if data_type == "etf_basic":
+        selected_codes = None if _is_symbols_all(symbol_list) else symbol_list
+        if selected_codes and len(selected_codes) != 1:
+            raise ValueError("etf_basic 的 --symbols 最多指定一个 ETF TS 代码")
+
+        with Progress(
+            get_spinner(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("正在更新 ETF 基础信息...", total=1)
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                try:
+                    count = await updater.update_etf_basic(
+                        ts_code=selected_codes[0] if selected_codes else None
+                    )
+                    progress.update(task, completed=1)
+                    console.print(f"[green][OK][/green] 已更新 {count} 条 ETF 基础信息")
+                    return count
+                except Exception as e:
+                    progress.update(task, failed=True)
+                    console.print(f"[bold red]ERROR:[/bold red] 更新 ETF 基础信息失败: {str(e)}")
                     raise
 
     if data_type == "fund_company":
@@ -1888,24 +1924,56 @@ async def _run_force_update(
 
     if data_type == "fund_portfolio":
         selected_codes = None if _is_symbols_all(symbol_list) else symbol_list
-        if _is_symbols_all(symbol_list):
-            raise ValueError("fund_portfolio 不支持 --symbols all；请指定基金代码或 --trade-date 报告期")
-        if not selected_codes and not trade_date:
-            raise ValueError("fund_portfolio 需要 --symbols 基金代码或 --trade-date 报告期")
-        with Progress(
+        all_fund_dataset = _is_symbols_all(symbol_list) and not trade_date
+        # ``--force`` without a more specific scope is a full backfill.  A
+        # scope-less ordinary invocation instead resumes from its checkpoint.
+        if force_update and not selected_codes and not trade_date:
+            all_fund_dataset = True
+        smart_incremental = (
+            not all_fund_dataset and not selected_codes and not trade_date
+        )
+
+        progress_columns = [
             get_spinner(), TextColumn("[bold blue]{task.description}"), BarColumn(),
-            TimeElapsedColumn(), console=console,
-        ) as progress:
-            task = progress.add_task("正在更新公募基金持仓...", total=1)
+        ]
+        if all_fund_dataset or smart_incremental:
+            progress_columns.append(
+                TextColumn("[bold cyan]已下载 {task.completed:.0f}/{task.total:.0f} 公告日")
+            )
+        progress_columns.append(TimeElapsedColumn())
+
+        with Progress(*progress_columns, console=console) as progress:
+            task_description = (
+                "正在按公告日全量下载 fund_portfolio ..."
+                if all_fund_dataset
+                else (
+                    "正在智能增量下载 fund_portfolio ..."
+                    if smart_incremental
+                    else "正在更新公募基金持仓..."
+                )
+            )
+            task = progress.add_task(task_description, total=1)
             async with DataUpdater(settings, config_path="sources.yml") as updater:
                 try:
+                    update_kwargs = {
+                        "fund_codes": selected_codes,
+                        "period": trade_date,
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "all_funds": all_fund_dataset,
+                        "smart_incremental": smart_incremental,
+                    }
+                    if all_fund_dataset or smart_incremental:
+                        def update_progress(completed: int, total: int) -> None:
+                            progress.update(task, completed=completed, total=total)
+
+                        update_kwargs["progress_callback"] = update_progress
+
                     count = await updater.update_fund_portfolio(
-                        fund_codes=selected_codes,
-                        period=trade_date,
-                        start_date=start_date,
-                        end_date=end_date,
+                        **update_kwargs,
                     )
-                    progress.update(task, completed=1)
+                    if not (all_fund_dataset or smart_incremental):
+                        progress.update(task, completed=1)
                     console.print(f"[green][OK][/green] 已更新 {count} 条公募基金持仓")
                     return count
                 except Exception as e:

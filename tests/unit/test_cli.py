@@ -548,6 +548,36 @@ def test_cli_updates_fund_benchmark_and_portfolio():
     assert fake_updater.update_fund_portfolio.call_args.kwargs["fund_codes"] == ["001753.OF"]
 
 
+def test_cli_fund_portfolio_all_force_and_default_use_date_modes():
+    fake_updater = Mock()
+    fake_updater.update_fund_portfolio = AsyncMock(return_value=2)
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update", "--dataset", "fund_portfolio", "--symbols", "all",
+                "--force", "--start-date", "2024-01-01", "--end-date", "2024-01-02",
+            ],
+        )
+        assert result.exit_code == 0
+        full_call = fake_updater.update_fund_portfolio.await_args.kwargs
+        assert full_call["all_funds"] is True
+        assert full_call["smart_incremental"] is False
+        assert full_call["start_date"] == "2024-01-01"
+
+        fake_updater.update_fund_portfolio.reset_mock()
+        result = runner.invoke(app, ["update", "--dataset", "fund_portfolio"])
+
+    assert result.exit_code == 0
+    smart_call = fake_updater.update_fund_portfolio.await_args.kwargs
+    assert smart_call["all_funds"] is False
+    assert smart_call["smart_incremental"] is True
+
+
 def test_cli_update_index_weight_symbols_all_uses_full_index_catalog():
     fake_updater = Mock()
     fake_updater.resolve_index_weight_codes = AsyncMock(return_value=[

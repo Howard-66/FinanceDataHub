@@ -1109,6 +1109,50 @@ class FinanceDataHub:
             management=management,
         )
 
+    def get_etf_basic(
+        self,
+        ts_code: Optional[str] = None,
+        index_code: Optional[str] = None,
+        list_date: Optional[str] = None,
+        list_status: Optional[str] = None,
+        exchange: Optional[str] = None,
+        mgr_name: Optional[str] = None,
+        etf_type: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的 ETF 基础信息（同步方法）。"""
+        return asyncio.run(
+            self.get_etf_basic_async(
+                ts_code=ts_code,
+                index_code=index_code,
+                list_date=list_date,
+                list_status=list_status,
+                exchange=exchange,
+                mgr_name=mgr_name,
+                etf_type=etf_type,
+            )
+        )
+
+    async def get_etf_basic_async(
+        self,
+        ts_code: Optional[str] = None,
+        index_code: Optional[str] = None,
+        list_date: Optional[str] = None,
+        list_status: Optional[str] = None,
+        exchange: Optional[str] = None,
+        mgr_name: Optional[str] = None,
+        etf_type: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
+        """获取已同步的 ETF 基础信息（异步方法）。"""
+        return await self.ops.get_etf_basic(
+            ts_code=ts_code,
+            index_code=index_code,
+            list_date=list_date,
+            list_status=list_status,
+            exchange=exchange,
+            mgr_name=mgr_name,
+            etf_type=etf_type,
+        )
+
     def get_fund_share(
         self, ts_code: Optional[str] = None, trade_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:

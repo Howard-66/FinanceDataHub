@@ -46,6 +46,7 @@ FUTURES_PERIOD_LOOKBACK_DAYS = {
 FUTURES_MINUTE_TRADING_DAY_START = datetime_time(21, 0, 0)
 FUTURES_MINUTE_TRADING_DAY_END = datetime_time(15, 0, 0)
 INDEX_DAILY_EXCLUDED_CATALOG_MARKETS = {"SW"}
+FUND_PORTFOLIO_HISTORY_START = "1998-01-01"
 
 
 def _is_all_symbol_request(symbols: Optional[List[str]]) -> bool:
@@ -573,6 +574,38 @@ class DataUpdater:
             logger.exception("Failed to update fund_basic")
             raise
 
+    async def update_etf_basic(
+        self,
+        ts_code: Optional[str] = None,
+        index_code: Optional[str] = None,
+        list_date: Optional[str] = None,
+        list_status: Optional[str] = None,
+        exchange: Optional[str] = None,
+        mgr: Optional[str] = None,
+    ) -> int:
+        """刷新 Tushare ETF 基础信息目录。"""
+        try:
+            data = self.router.route(
+                asset_class="fund",
+                data_type="etf_basic",
+                method_name="get_etf_basic",
+                ts_code=ts_code,
+                index_code=index_code,
+                list_date=list_date,
+                list_status=list_status,
+                exchange=exchange,
+                mgr=mgr,
+            )
+            if data is None or data.empty:
+                logger.warning("No etf_basic data received")
+                return 0
+            inserted_count = await self.data_ops.insert_etf_basic_batch(data)
+            logger.info("Updated {} etf_basic records", inserted_count)
+            return inserted_count
+        except Exception:
+            logger.exception("Failed to update etf_basic")
+            raise
+
     async def update_fund_share(
         self, ts_code: Optional[str] = None, trade_date: Optional[str] = None,
         start_date: Optional[str] = None, end_date: Optional[str] = None,
@@ -1034,8 +1067,54 @@ class DataUpdater:
         period: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        all_funds: bool = False,
+        smart_incremental: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> int:
-        """同步指定基金或报告期的 Tushare 公募基金季度持仓。"""
+        """同步公募基金持仓。
+
+        全量及智能增量模式按 ``ann_date`` 的自然日请求全市场数据。不能按
+        ``period`` 的季度末分批，因为早期数据存在非季末报告截止日。每次
+        请求的 8,000 行分页由 Provider 负责处理。
+        """
+        if all_funds or smart_incremental:
+            if fund_codes or symbol or ann_date or period:
+                raise ValueError(
+                    "fund_portfolio 全市场按公告日模式不能同时指定基金代码、股票代码、公告日或报告期"
+                )
+            if all_funds and smart_incremental:
+                raise ValueError("fund_portfolio 不能同时使用全量和智能增量模式")
+
+            resolved_end_date = pd.Timestamp(
+                end_date or datetime.now().strftime("%Y-%m-%d")
+            ).strftime("%Y-%m-%d")
+            if start_date:
+                resolved_start_date = pd.Timestamp(start_date).strftime("%Y-%m-%d")
+            elif smart_incremental:
+                # The checkpoint is inclusive: re-fetching the latest ann_date
+                # is cheap and also absorbs a same-day Tushare correction.
+                resolved_start_date = (
+                    await self.data_ops.get_latest_fund_portfolio_ann_date()
+                )
+                if not resolved_start_date:
+                    resolved_start_date = await self._resolve_fund_portfolio_history_start()
+            else:
+                resolved_start_date = await self._resolve_fund_portfolio_history_start()
+
+            resolved_start_date = pd.Timestamp(resolved_start_date).strftime("%Y-%m-%d")
+            if resolved_start_date > resolved_end_date:
+                logger.info(
+                    "fund_portfolio is already current (start={} > end={})",
+                    resolved_start_date,
+                    resolved_end_date,
+                )
+                return 0
+            return await self._update_fund_portfolio_by_ann_dates(
+                start_date=resolved_start_date,
+                end_date=resolved_end_date,
+                progress_callback=progress_callback,
+            )
+
         if not any((fund_codes, ann_date, period)):
             raise ValueError("fund_portfolio 需要 --symbols、--trade-date 或报告期参数")
         total = 0
@@ -1059,6 +1138,66 @@ class DataUpdater:
                 logger.exception("Failed to update fund_portfolio for {}", ts_code or period)
                 raise
         logger.info("Updated {} fund_portfolio records", total)
+        return total
+
+    async def _resolve_fund_portfolio_history_start(self) -> str:
+        """Resolve the first full-download date from the local SSE calendar."""
+        earliest_calendar_date = await self.data_ops.get_earliest_trade_cal_date(
+            exchange="SSE",
+            start_date=FUND_PORTFOLIO_HISTORY_START,
+        )
+        if earliest_calendar_date:
+            return earliest_calendar_date
+        logger.warning(
+            "SSE trade_cal is unavailable for fund_portfolio; falling back to {}",
+            FUND_PORTFOLIO_HISTORY_START,
+        )
+        return FUND_PORTFOLIO_HISTORY_START
+
+    async def _update_fund_portfolio_by_ann_dates(
+        self,
+        start_date: str,
+        end_date: str,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """Download all holdings by natural announcement date and upsert daily."""
+        ann_dates = pd.date_range(start=start_date, end=end_date, freq="D").strftime(
+            "%Y-%m-%d"
+        ).tolist()
+        if not ann_dates:
+            return 0
+
+        total = 0
+        total_dates = len(ann_dates)
+        logger.info(
+            "Updating fund_portfolio for {} announcement dates (start={}, end={})",
+            total_dates,
+            start_date,
+            end_date,
+        )
+        if progress_callback:
+            progress_callback(0, total_dates)
+
+        for index, current_ann_date in enumerate(ann_dates, start=1):
+            try:
+                data = self.router.route(
+                    asset_class="fund",
+                    data_type="portfolio",
+                    method_name="get_fund_portfolio",
+                    ann_date=current_ann_date,
+                )
+                if data is not None and not data.empty:
+                    total += await self.data_ops.insert_fund_portfolio_batch(data)
+                else:
+                    logger.debug("No fund_portfolio data for {}", current_ann_date)
+            except Exception:
+                logger.exception("Failed to update fund_portfolio for {}", current_ann_date)
+                raise
+            finally:
+                if progress_callback:
+                    progress_callback(index, total_dates)
+
+        logger.info("Updated {} fund_portfolio records across {} dates", total, total_dates)
         return total
 
     @staticmethod

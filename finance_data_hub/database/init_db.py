@@ -180,6 +180,7 @@ class DatabaseInitializer:
             'daily_basic',
             'adj_factor',
             'fund_basic',
+            'etf_basic',
             'fund_company',
             'fund_manager',
             'fund_share',

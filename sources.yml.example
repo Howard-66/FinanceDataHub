@@ -144,6 +144,9 @@ routing_strategy:
     basic:
       providers: [tushare]
       fallback: false
+    etf_basic:
+      providers: [tushare]
+      fallback: false
     company:
       providers: [tushare]
       fallback: false

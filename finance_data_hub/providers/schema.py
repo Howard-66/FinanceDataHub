@@ -102,6 +102,29 @@ FundBasicSchema = DataFrameSchema(
 )
 
 
+# ETF 基础信息 Schema（Tushare etf_basic）
+EtfBasicSchema = DataFrameSchema(
+    name="etf_basic",
+    description="ETF基础信息",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "ETF交易代码"),
+        ColumnSchema("csname", "object", True, "ETF中文简称"),
+        ColumnSchema("extname", "object", True, "ETF扩位简称"),
+        ColumnSchema("cname", "object", True, "基金中文全称"),
+        ColumnSchema("index_code", "object", True, "ETF基准指数代码"),
+        ColumnSchema("index_name", "object", True, "ETF基准指数中文全称"),
+        ColumnSchema("setup_date", "datetime64[ns]", True, "设立日期"),
+        ColumnSchema("list_date", "datetime64[ns]", True, "上市日期"),
+        ColumnSchema("list_status", "object", True, "存续状态（L/D/P）"),
+        ColumnSchema("exchange", "object", True, "交易所（SH/SZ）"),
+        ColumnSchema("mgr_name", "object", True, "基金管理人简称"),
+        ColumnSchema("custod_name", "object", True, "基金托管人名称"),
+        ColumnSchema("mgt_fee", "float64", True, "基金管理费"),
+        ColumnSchema("etf_type", "object", True, "基金投资通道类型"),
+    ],
+)
+
+
 # 公募基金规模 Schema
 FundShareSchema = DataFrameSchema(
     name="fund_share",

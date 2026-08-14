@@ -24,6 +24,7 @@ from finance_data_hub.providers.registry import register_provider
 from finance_data_hub.providers.schema import (
     StockBasicSchema,
     FundBasicSchema,
+    EtfBasicSchema,
     FundCompanySchema,
     FundManagerSchema,
     FundShareSchema,
@@ -109,10 +110,15 @@ SUPPORTED_EXCHANGES = [
 SUPPORTED_FUTURES_EXCHANGES = supported_futures_exchanges()
 FUTURES_WEEKLY_MONTHLY_MAX_RECORDS = 6000
 FUND_BASIC_MAX_RECORDS = 15000
+ETF_BASIC_MAX_RECORDS = 5000
 FUND_MANAGER_MAX_RECORDS = 5000
 FUND_SERIES_MAX_RECORDS = 2000
 FUND_NAV_MAX_RECORDS = 10500
 FUND_DIV_MAX_RECORDS = 1000
+# The API truncates a single fund_portfolio response at 8,000 records.  This
+# limit is observed in production and is intentionally kept separate from the
+# other fund-series limits above.
+FUND_PORTFOLIO_MAX_RECORDS = 8000
 TUSHARE_FUND_MARKETS = ["E", "O"]
 SUPPORTED_FUTURES_INDEX_CODES = [
     "NHCI.NH",  # 南华商品指数
@@ -567,6 +573,37 @@ class TushareProvider(BaseDataProvider):
             drop=True
         )
 
+    def get_etf_basic(
+        self,
+        ts_code: Optional[str] = None,
+        index_code: Optional[str] = None,
+        list_date: Optional[str] = None,
+        list_status: Optional[str] = None,
+        exchange: Optional[str] = None,
+        mgr: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取 ETF 基础信息，命中 5,000 条上限时按 offset 继续分页。"""
+        result = self._get_fund_series(
+            "etf_basic",
+            EtfBasicSchema,
+            {
+                "ts_code": ts_code,
+                "index_code": index_code,
+                "list_date": self._clean_api_date(list_date),
+                "list_status": list_status,
+                "exchange": exchange,
+                "mgr": mgr,
+            },
+            ["ts_code"],
+            max_records=ETF_BASIC_MAX_RECORDS,
+            log_empty_as_warning=False,
+        )
+        if result.empty:
+            return result
+        result["ts_code"] = result["ts_code"].astype(str).str.strip()
+        result = result[result["ts_code"] != ""]
+        return result.sort_values("ts_code").reset_index(drop=True)
+
     def _get_fund_series(
         self,
         api_name: str,
@@ -716,34 +753,32 @@ class TushareProvider(BaseDataProvider):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> pd.DataFrame:
-        """获取公募基金季度持仓（Tushare ``fund_portfolio``）。"""
+        """获取公募基金季度持仓（Tushare ``fund_portfolio``）。
+
+        The endpoint requires at least one of ``ts_code``, ``ann_date`` or
+        ``period``.  A single response is capped at 8,000 rows, so a query
+        that reaches that limit is continued with ``offset`` until exhausted.
+        """
         if not any((ts_code, ann_date, period)):
             raise ValueError("fund_portfolio 至少需要 ts_code、ann_date 或 period 之一")
-        params = {
-            key: value.replace("-", "") if isinstance(value, str) and key in {
-                "ann_date", "period", "start_date", "end_date"
-            } else value
-            for key, value in {
+        result = self._get_fund_series(
+            "fund_portfolio",
+            FundPortfolioSchema,
+            {
                 "ts_code": ts_code,
                 "symbol": symbol,
-                "ann_date": ann_date,
-                "period": period,
-                "start_date": start_date,
-                "end_date": end_date,
-            }.items() if value is not None
-        }
-        df = self._call_api(
-            "fund_portfolio",
-            fields=",".join(FundPortfolioSchema.get_required_columns()),
-            **params,
+                "ann_date": self._clean_api_date(ann_date),
+                "period": self._clean_api_date(period),
+                "start_date": self._clean_api_date(start_date),
+                "end_date": self._clean_api_date(end_date),
+            },
+            ["ts_code", "ann_date", "end_date", "symbol"],
+            max_records=FUND_PORTFOLIO_MAX_RECORDS,
+            log_empty_as_warning=False,
         )
-        if df is None or df.empty:
-            return pd.DataFrame(columns=FundPortfolioSchema.get_required_columns())
-        df = df.dropna(subset=["ts_code", "ann_date", "end_date", "symbol"])
-        df = df.drop_duplicates(
-            subset=["ts_code", "ann_date", "end_date", "symbol"], keep="last"
-        )
-        return validate_dataframe(df, FundPortfolioSchema, provider_name=self.name).sort_values(
+        if result.empty:
+            return result
+        return result.sort_values(
             ["ts_code", "end_date", "ann_date", "symbol"]
         ).reset_index(drop=True)
 

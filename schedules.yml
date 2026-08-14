@@ -98,6 +98,21 @@ jobs:
       max_retries: 3
       delay: 600
 
+  # ETF 基础信息为静态目录，每周一执行完整分页刷新。
+  etf_basic_update:
+    enabled: true
+    type: download
+    dataset: etf_basic
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 7
+      minute: 30
+    retry:
+      max_retries: 3
+      delay: 600
+
+  # ETF 业绩比较基准库为静态目录，每周一刷新全量数据。
   mkt_idx_bmk_update:
     enabled: true
     type: download
@@ -156,17 +171,16 @@ jobs:
       max_retries: 3
       delay: 600
 
-  # 基金持仓按季度披露；调度系统应在运行时提供报告期（trade_date）或基金代码。
+  # 按本地最新公告日智能增量；首次运行会按公告日回补完整历史。
   fund_portfolio_update:
-    enabled: false
+    enabled: true
     type: download
     dataset: fund_portfolio
     schedule:
       type: cron
-      month: "1,4,7,10"
-      day: "20"
-      hour: 8
-      minute: 0
+      day_of_week: "mon-fri"
+      hour: 19
+      minute: 30
     retry:
       max_retries: 3
       delay: 600
@@ -840,20 +854,21 @@ jobs:
       max_retries: 3
       delay: 600
 
-  # sw_daily_update:
-  #   enabled: true
-  #   type: download
-  #   dataset: sw_daily
-  #   schedule:
-  #     type: cron
-  #     hour: 21
-  #     minute: 50
-  #     day_of_week: "mon-fri"
-  #   params:
-  #     trade_date: "latest"
-  #   retry:
-  #     max_retries: 3
-  #     delay: 600
+  # Tushare sw_daily 下载权限已开通：每个交易日抓取最近交易日的申万行业行情。
+  sw_daily_update:
+    enabled: true
+    type: download
+    dataset: sw_daily
+    schedule:
+      type: cron
+      hour: 21
+      minute: 50
+      day_of_week: "mon-fri"
+    params:
+      trade_date: "latest"
+    retry:
+      max_retries: 3
+      delay: 600
 
   industry_valuation_preprocess:
     enabled: true

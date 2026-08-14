@@ -297,6 +297,10 @@ fdh-cli preprocess run --all --category technical --market HK \
 fdh-cli update --dataset fund_basic
 fdh-cli update --dataset fund_basic --symbols all
 
+# 同步全部 ETF 基础信息
+fdh-cli update --dataset etf_basic
+fdh-cli update --dataset etf_basic --symbols 510300.SH
+
 # 仅同步场内或场外基金
 fdh-cli update --dataset fund_basic --symbols E
 fdh-cli update --dataset fund_basic --symbols O
@@ -304,6 +308,9 @@ fdh-cli update --dataset fund_basic --symbols O
 # ETF业绩比较基准库和公募基金季度持仓
 fdh-cli update --dataset mkt_idx_bmk
 fdh-cli update --dataset fund_portfolio --symbols 001753.OF
+fdh-cli update --dataset fund_portfolio --symbols all --force
+# 后续日常更新可不带参数，自动从本地最新公告日继续
+fdh-cli update --dataset fund_portfolio
 
 # 公募基金规模、净值与分红
 fdh-cli update --dataset fund_share --symbols 150018.SZ --start-date 2024-01-01
@@ -314,7 +321,7 @@ fdh-cli update --dataset fund_nav --symbols all --force
 fdh-cli update --dataset fund_div --symbols all --force
 fdh-cli update --dataset fund_div --symbols 161618.OF
 
-# fund_basic 为非时间序列数据，不支持 --trade-date、--start-date 或 --end-date
+# fund_basic / etf_basic 为非时间序列数据，不支持日期参数
 ```
 
 > 该 Tushare 接口需要至少 2000 积分。单个市场查询返回 15,000 条时，系统会自动通过 `offset` 获取后续页面，直至返回记录数低于 15,000 条。

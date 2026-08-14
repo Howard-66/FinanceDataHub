@@ -1,5 +1,6 @@
 from datetime import date
 import asyncio
+from collections import namedtuple
 
 import pandas as pd
 
@@ -31,3 +32,32 @@ async def _test_fund_benchmark_and_portfolio_upserts():
     assert "INSERT INTO fund_portfolio" in str(transaction.statement)
     assert "ON CONFLICT (ts_code, ann_date, end_date, symbol)" in str(transaction.statement)
     assert transaction.records[0]["ann_date"] == date(2024, 8, 23)
+
+
+async def _test_fund_portfolio_date_checkpoints():
+    transaction = _Transaction()
+    operations = DataOperations(_DatabaseManager(_Engine(transaction)))
+    row_type = namedtuple("Row", ["latest_date"])
+    transaction.result = type("Result", (), {"fetchone": lambda self: row_type(date(2024, 8, 23))})()
+
+    latest = await operations.get_latest_fund_portfolio_ann_date()
+
+    assert latest == "2024-08-23"
+    assert "MAX(ann_date)" in str(transaction.statement)
+
+    earliest_row_type = namedtuple("EarliestRow", ["earliest_date"])
+    transaction.result = type(
+        "Result", (), {"fetchone": lambda self: earliest_row_type(date(1998, 1, 5))}
+    )()
+    earliest = await operations.get_earliest_trade_cal_date(
+        exchange="SSE", start_date="1998-01-01"
+    )
+
+    assert earliest == "1998-01-05"
+    assert "MIN((cal_date AT TIME ZONE 'Asia/Shanghai')::date)" in str(transaction.statement)
+    assert transaction.records["exchange"] == "SSE"
+    assert transaction.records["start_date"] == date(1998, 1, 1)
+
+
+def test_fund_portfolio_date_checkpoints():
+    asyncio.run(_test_fund_portfolio_date_checkpoints())
