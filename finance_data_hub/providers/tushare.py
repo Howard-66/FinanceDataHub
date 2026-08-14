@@ -3634,6 +3634,10 @@ class TushareProvider(BaseDataProvider):
             f"start_date={start_date}, end_date={end_date})"
         )
 
+        trade_date = self._clean_api_date(trade_date)
+        start_date = self._clean_api_date(start_date)
+        end_date = self._clean_api_date(end_date)
+
         # Tushare限制：单次最大4000行
         SW_DAILY_MAX_RECORDS = 4000
 

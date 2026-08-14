@@ -481,7 +481,7 @@ async def _run_update(
         _validate_symbols_all(symbol_list, "期货模式下")
     if data_type in {
         "index_basic", "index_daily", "index_weight", "fund_basic", "fund_company",
-        "fund_manager", "mkt_idx_bmk",
+        "fund_manager", "mkt_idx_bmk", "sw_daily",
     } and symbol_list:
         _validate_symbols_all(symbol_list, "指数/基金模式下")
 
@@ -1106,7 +1106,7 @@ async def _run_smart_download(
     # 申万行业日线行情数据处理
     if data_type == "sw_daily":
         # 获取行业代码列表
-        ts_code_list = symbol_list  # 使用symbol_list作为行业代码列表
+        ts_code_list = None if _is_symbols_all(symbol_list) else symbol_list
 
         if not quiet:
             console.print("[bold]智能下载策略:[/bold]")
@@ -2257,7 +2257,7 @@ async def _run_force_update(
     # 申万行业日线行情数据处理
     if data_type == "sw_daily":
         # 获取行业代码列表
-        ts_code_list = symbol_list  # 使用symbol_list作为行业代码列表
+        ts_code_list = None if _is_symbols_all(symbol_list) else symbol_list
 
         if not quiet:
             console.print("[bold]强制更新策略:[/bold]")

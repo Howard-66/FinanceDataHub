@@ -2516,6 +2516,10 @@ class DataUpdater:
         elif ts_code_list is None:
             ts_code_list = []
 
+        _validate_no_mixed_all(ts_code_list, "申万行业日线模式下")
+        if _is_all_symbol_request(ts_code_list):
+            ts_code_list = []
+
         logger.info(
             f"Updating sw_daily for {ts_code_list or 'all industries'} "
             f"(trade_date={trade_date}, start={start_date or 'smart'}, end={end_date}, force={force_update})"
@@ -2523,21 +2527,28 @@ class DataUpdater:
 
         try:
             total_records = 0
+            failed_requests: List[Tuple[str, str]] = []
 
             # 交易日模式
             if trade_date:
-                logger.info(f"Trade date mode: fetching all industries for {trade_date}")
+                api_trade_date = trade_date.replace("-", "")
+                logger.info(
+                    f"Trade date mode: fetching all industries for {api_trade_date}"
+                )
                 data = self.router.route(
                     asset_class="index",
                     data_type="sw_daily",
                     method_name="get_sw_daily",
-                    trade_date=trade_date,
+                    trade_date=api_trade_date,
                 )
 
                 if data is not None and not data.empty:
                     inserted = await self.data_ops.insert_sw_daily_batch(data)
                     total_records += inserted
-                    logger.info(f"Inserted {inserted} sw_daily records for trade_date={trade_date}")
+                    logger.info(
+                        f"Inserted {inserted} sw_daily records "
+                        f"for trade_date={api_trade_date}"
+                    )
                 return total_records
 
             # 获取行业代码列表
@@ -2579,7 +2590,11 @@ class DataUpdater:
                             symbol_start_date = None
                             logger.debug(f"Smart download: {code} - fetching full history")
 
-                    api_start = symbol_start_date
+                    api_start = (
+                        symbol_start_date.replace("-", "")
+                        if symbol_start_date
+                        else None
+                    )
                     api_end = end_date.replace("-", "") if end_date else None
 
                     logger.info(f"Industry mode: fetching {code} ({idx + 1}/{total_industries})")
@@ -2602,7 +2617,20 @@ class DataUpdater:
 
                 except Exception as e:
                     logger.error(f"Failed to fetch data for {code}: {str(e)}")
+                    failed_requests.append((code, str(e)))
                     continue
+
+            if failed_requests and len(failed_requests) == total_industries:
+                first_code, first_error = failed_requests[0]
+                raise RuntimeError(
+                    f"All {total_industries} sw_daily requests failed; "
+                    f"first failure: {first_code}: {first_error}"
+                )
+            if failed_requests:
+                logger.warning(
+                    f"Failed to fetch {len(failed_requests)}/{total_industries} "
+                    "sw_daily industries"
+                )
 
             # 最终进度回调
             if progress_callback:

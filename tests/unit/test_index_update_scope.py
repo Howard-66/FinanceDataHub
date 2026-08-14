@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock
 import pandas as pd
 import pytest
 
+from finance_data_hub.providers.tushare import TushareProvider
 from finance_data_hub.update.updater import DataUpdater
 
 
@@ -245,3 +246,97 @@ async def test_update_fund_basic_refreshes_selected_markets():
         status=None,
     )
     updater.data_ops.insert_fund_basic_batch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_sw_daily_symbols_all_resolves_catalog_and_normalizes_dates():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.router.route.return_value = pd.DataFrame()
+    updater.data_ops = Mock()
+    updater.data_ops.get_sw_industry_classify = AsyncMock(
+        return_value=pd.DataFrame(
+            {"index_code": ["801010.SI", "801020.SI"]}
+        )
+    )
+
+    result = await updater.update_sw_daily(
+        ts_code_list=["ALL"],
+        start_date="2026-06-09",
+        end_date="2026-08-13",
+        force_update=True,
+    )
+
+    assert result == 0
+    updater.data_ops.get_sw_industry_classify.assert_awaited_once_with(level=None)
+    assert [call.kwargs for call in updater.router.route.call_args_list] == [
+        {
+            "asset_class": "index",
+            "data_type": "sw_daily",
+            "method_name": "get_sw_daily",
+            "ts_code": "801010.SI",
+            "start_date": "20260609",
+            "end_date": "20260813",
+        },
+        {
+            "asset_class": "index",
+            "data_type": "sw_daily",
+            "method_name": "get_sw_daily",
+            "ts_code": "801020.SI",
+            "start_date": "20260609",
+            "end_date": "20260813",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_sw_daily_trade_date_is_normalized():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.router.route.return_value = pd.DataFrame()
+    updater.data_ops = Mock()
+
+    result = await updater.update_sw_daily(trade_date="2026-08-13")
+
+    assert result == 0
+    updater.router.route.assert_called_once_with(
+        asset_class="index",
+        data_type="sw_daily",
+        method_name="get_sw_daily",
+        trade_date="20260813",
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_sw_daily_raises_when_all_industry_requests_fail():
+    updater = DataUpdater(settings=Mock())
+    updater.router = Mock()
+    updater.router.route.side_effect = RuntimeError("provider unavailable")
+    updater.data_ops = Mock()
+
+    with pytest.raises(RuntimeError, match="All 2 sw_daily requests failed"):
+        await updater.update_sw_daily(
+            ts_code_list=["801010.SI", "801020.SI"],
+            start_date="2026-06-09",
+            end_date="2026-08-13",
+            force_update=True,
+        )
+
+
+def test_tushare_sw_daily_normalizes_api_dates():
+    provider = TushareProvider(config={})
+    provider._call_api = Mock(return_value=pd.DataFrame())
+
+    provider.get_sw_daily(
+        ts_code="801010.SI",
+        trade_date="2026-08-13",
+        start_date="2026-06-09",
+        end_date="2026-08-13",
+    )
+
+    call = provider._call_api.call_args
+    assert call.args == ("sw_daily",)
+    assert call.kwargs["ts_code"] == "801010.SI"
+    assert call.kwargs["trade_date"] == "20260813"
+    assert call.kwargs["start_date"] == "20260609"
+    assert call.kwargs["end_date"] == "20260813"

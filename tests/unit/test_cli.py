@@ -276,6 +276,57 @@ def test_cli_update_future_symbols_all_cannot_mix_with_other_codes():
     assert "--symbols all 不能与其他代码混用" in result.output
 
 
+def test_cli_update_sw_daily_symbols_all_cannot_mix_with_industry_codes():
+    result = runner.invoke(
+        app,
+        [
+            "update",
+            "--dataset", "sw_daily",
+            "--symbols", "all,801010.SI",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--symbols all 不能与其他代码混用" in result.output
+
+
+def test_cli_update_sw_daily_symbols_all_uses_full_industry_catalog():
+    fake_updater = Mock()
+    fake_updater.data_ops.get_sw_industry_classify = AsyncMock(
+        return_value=pd.DataFrame(
+            {"index_code": ["801010.SI", "801020.SI"]}
+        )
+    )
+    fake_updater.update_sw_daily = AsyncMock(return_value=0)
+
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app,
+            [
+                "update",
+                "--dataset", "sw_daily",
+                "--symbols", "all",
+                "--start-date", "2026-06-09",
+                "--end-date", "2026-08-13",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "将更新 2 个行业指数" in result.output
+    fake_updater.update_sw_daily.assert_awaited_once_with(
+        ts_code_list=None,
+        trade_date=None,
+        start_date="2026-06-09",
+        end_date="2026-08-13",
+        force_update=True,
+        progress_callback=ANY,
+    )
+
+
 def test_cli_update_future_symbols_all_shows_full_universe_hint():
     fake_updater = Mock()
     fake_updater.update_futures_daily = AsyncMock(return_value=0)
