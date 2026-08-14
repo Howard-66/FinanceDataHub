@@ -147,6 +147,27 @@ routing_strategy:
     etf_basic:
       providers: [tushare]
       fallback: false
+    etf_index:
+      providers: [tushare]
+      fallback: false
+    fund_daily:
+      providers: [tushare]
+      fallback: false
+    fund_adj:
+      providers: [tushare]
+      fallback: false
+    etf_share_size:
+      providers: [tushare]
+      fallback: false
+    etf_sh_cons:
+      providers: [tushare]
+      fallback: false
+    etf_sz_cons:
+      providers: [tushare]
+      fallback: false
+    idx_anns:
+      providers: [tushare]
+      fallback: false
     company:
       providers: [tushare]
       fallback: false

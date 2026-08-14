@@ -125,6 +125,113 @@ EtfBasicSchema = DataFrameSchema(
 )
 
 
+# ETF 扩展数据 Schema（Tushare）
+EtfIndexSchema = DataFrameSchema(
+    name="etf_index",
+    description="ETF基准指数列表",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "指数代码"),
+        ColumnSchema("indx_name", "object", True, "指数全称"),
+        ColumnSchema("indx_csname", "object", True, "指数简称"),
+        ColumnSchema("pub_party_name", "object", True, "发布机构"),
+        ColumnSchema("pub_date", "datetime64[ns]", True, "发布日期"),
+        ColumnSchema("base_date", "datetime64[ns]", True, "指数基日"),
+        ColumnSchema("bp", "float64", True, "指数基点"),
+        ColumnSchema("adj_circle", "object", True, "成份证券调整周期"),
+    ],
+)
+
+FundDailySchema = DataFrameSchema(
+    name="fund_daily",
+    description="ETF日线行情",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "ETF代码"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("open", "float64", True, "开盘价"),
+        ColumnSchema("high", "float64", True, "最高价"),
+        ColumnSchema("low", "float64", True, "最低价"),
+        ColumnSchema("close", "float64", True, "收盘价"),
+        ColumnSchema("pre_close", "float64", True, "昨收价"),
+        ColumnSchema("change", "float64", True, "涨跌额"),
+        ColumnSchema("pct_chg", "float64", True, "涨跌幅"),
+        ColumnSchema("vol", "float64", True, "成交量（手）"),
+        ColumnSchema("amount", "float64", True, "成交额（千元）"),
+    ],
+)
+
+FundAdjSchema = DataFrameSchema(
+    name="fund_adj",
+    description="基金复权因子",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "基金代码"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("adj_factor", "float64", True, "复权因子"),
+    ],
+)
+
+EtfShareSizeSchema = DataFrameSchema(
+    name="etf_share_size",
+    description="ETF份额规模",
+    columns=[
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("ts_code", "object", False, "ETF代码"),
+        ColumnSchema("etf_name", "object", True, "ETF简称"),
+        ColumnSchema("total_share", "float64", True, "总份额（万份）"),
+        ColumnSchema("total_size", "float64", True, "总规模（万元）"),
+        ColumnSchema("nav", "float64", True, "单位净值"),
+        ColumnSchema("close", "float64", True, "收盘价"),
+        ColumnSchema("exchange", "object", True, "交易所"),
+    ],
+)
+
+EtfShConsSchema = DataFrameSchema(
+    name="etf_sh_cons",
+    description="ETF每日持仓组合（沪市）",
+    columns=[
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("ts_code", "object", False, "ETF代码"),
+        ColumnSchema("con_code", "object", False, "成份证券代码"),
+        ColumnSchema("con_name", "object", True, "成份证券名称"),
+        ColumnSchema("qty", "float64", True, "证券数量"),
+        ColumnSchema("sub_flag", "object", True, "现金替代标志"),
+        ColumnSchema("cpr", "float64", True, "现金替代溢价比例"),
+        ColumnSchema("rdr", "float64", True, "赎回现金替代折价比率（%）"),
+        ColumnSchema("sca", "float64", True, "替代金额（人民币元）"),
+        ColumnSchema("exchange", "object", True, "交易所"),
+    ],
+)
+
+EtfSzConsSchema = DataFrameSchema(
+    name="etf_sz_cons",
+    description="ETF每日持仓组合（深市）",
+    columns=[
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("ts_code", "object", False, "ETF代码"),
+        ColumnSchema("con_code", "object", False, "成份证券代码"),
+        ColumnSchema("con_name", "object", True, "成份证券名称"),
+        ColumnSchema("qty", "float64", True, "证券数量"),
+        ColumnSchema("sub_flag", "object", True, "现金替代标志"),
+        ColumnSchema("cpr", "float64", True, "现金替代溢价比例"),
+        ColumnSchema("rdr", "float64", True, "替代金额"),
+        ColumnSchema("sub_cc", "float64", True, "申购替代金额"),
+        ColumnSchema("red_cc", "float64", True, "赎回替代金额"),
+        ColumnSchema("exchange", "object", True, "交易所"),
+    ],
+)
+
+IdxAnnsSchema = DataFrameSchema(
+    name="idx_anns",
+    description="指数公告",
+    columns=[
+        ColumnSchema("ann_date", "datetime64[ns]", False, "公告日期"),
+        ColumnSchema("title", "object", False, "公告标题"),
+        ColumnSchema("url", "object", True, "公告链接"),
+        ColumnSchema("source", "object", False, "公告来源"),
+        ColumnSchema("type", "object", True, "公告类型"),
+    ],
+)
+
+
 # 公募基金规模 Schema
 FundShareSchema = DataFrameSchema(
     name="fund_share",

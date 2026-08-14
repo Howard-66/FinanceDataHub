@@ -112,6 +112,96 @@ jobs:
       max_retries: 3
       delay: 600
 
+  etf_index_update:
+    enabled: true
+    type: download
+    dataset: etf_index
+    schedule:
+      type: cron
+      day_of_week: "mon"
+      hour: 7
+      minute: 35
+    retry:
+      max_retries: 3
+      delay: 600
+
+  etf_sh_cons_update:
+    enabled: true
+    type: download
+    dataset: etf_sh_cons
+    schedule:
+      type: cron
+      day_of_week: "mon-fri"
+      hour: 8
+      minute: 40
+    retry:
+      max_retries: 3
+      delay: 600
+
+  etf_sz_cons_update:
+    enabled: true
+    type: download
+    dataset: etf_sz_cons
+    schedule:
+      type: cron
+      day_of_week: "mon-fri"
+      hour: 8
+      minute: 50
+    retry:
+      max_retries: 3
+      delay: 600
+
+  etf_share_size_update:
+    enabled: true
+    type: download
+    dataset: etf_share_size
+    schedule:
+      type: cron
+      day_of_week: "mon-fri"
+      hour: 9
+      minute: 10
+    retry:
+      max_retries: 3
+      delay: 600
+
+  fund_daily_update:
+    enabled: true
+    type: download
+    dataset: fund_daily
+    schedule:
+      type: cron
+      day_of_week: "mon-fri"
+      hour: 19
+      minute: 40
+    retry:
+      max_retries: 3
+      delay: 600
+
+  fund_adj_update:
+    enabled: true
+    type: download
+    dataset: fund_adj
+    schedule:
+      type: cron
+      day_of_week: "mon-fri"
+      hour: 19
+      minute: 50
+    retry:
+      max_retries: 3
+      delay: 600
+
+  idx_anns_update:
+    enabled: true
+    type: download
+    dataset: idx_anns
+    schedule:
+      type: cron
+      hour: 20
+      minute: 10
+    retry:
+      max_retries: 3
+      delay: 600
+
   # ETF 业绩比较基准库为静态目录，每周一刷新全量数据。
   mkt_idx_bmk_update:
     enabled: true

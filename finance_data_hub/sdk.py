@@ -1153,6 +1153,74 @@ class FinanceDataHub:
             etf_type=etf_type,
         )
 
+    def get_etf_index(self, ts_code=None, pub_date=None, base_date=None):
+        return asyncio.run(self.get_etf_index_async(ts_code, pub_date, base_date))
+
+    async def get_etf_index_async(self, ts_code=None, pub_date=None, base_date=None):
+        return await self.ops.get_etf_index(ts_code, pub_date, base_date)
+
+    def get_fund_daily(self, ts_code=None, trade_date=None, start_date=None, end_date=None):
+        return asyncio.run(self.get_fund_daily_async(ts_code, trade_date, start_date, end_date))
+
+    async def get_fund_daily_async(self, ts_code=None, trade_date=None,
+                                   start_date=None, end_date=None):
+        return await self.ops.get_fund_daily(ts_code, trade_date, start_date, end_date)
+
+    def get_fund_adj(self, ts_code=None, trade_date=None, start_date=None, end_date=None):
+        return asyncio.run(self.get_fund_adj_async(ts_code, trade_date, start_date, end_date))
+
+    async def get_fund_adj_async(self, ts_code=None, trade_date=None,
+                                 start_date=None, end_date=None):
+        return await self.ops.get_fund_adj(ts_code, trade_date, start_date, end_date)
+
+    def get_etf_share_size(self, ts_code=None, trade_date=None, start_date=None,
+                           end_date=None, exchange=None):
+        return asyncio.run(self.get_etf_share_size_async(
+            ts_code, trade_date, start_date, end_date, exchange
+        ))
+
+    async def get_etf_share_size_async(self, ts_code=None, trade_date=None,
+                                       start_date=None, end_date=None, exchange=None):
+        return await self.ops.get_etf_share_size(
+            ts_code, trade_date, start_date, end_date, exchange
+        )
+
+    def get_etf_sh_cons(self, ts_code=None, trade_date=None, con_code=None,
+                        start_date=None, end_date=None):
+        return asyncio.run(self.get_etf_sh_cons_async(
+            ts_code, trade_date, con_code, start_date, end_date
+        ))
+
+    async def get_etf_sh_cons_async(self, ts_code=None, trade_date=None, con_code=None,
+                                    start_date=None, end_date=None):
+        return await self.ops.get_etf_sh_cons(
+            ts_code, trade_date, con_code, start_date, end_date
+        )
+
+    def get_etf_sz_cons(self, ts_code=None, trade_date=None, con_code=None,
+                        start_date=None, end_date=None):
+        return asyncio.run(self.get_etf_sz_cons_async(
+            ts_code, trade_date, con_code, start_date, end_date
+        ))
+
+    async def get_etf_sz_cons_async(self, ts_code=None, trade_date=None, con_code=None,
+                                    start_date=None, end_date=None):
+        return await self.ops.get_etf_sz_cons(
+            ts_code, trade_date, con_code, start_date, end_date
+        )
+
+    def get_idx_anns(self, ann_date=None, start_date=None, end_date=None,
+                     source=None, ann_type=None):
+        return asyncio.run(self.get_idx_anns_async(
+            ann_date, start_date, end_date, source, ann_type
+        ))
+
+    async def get_idx_anns_async(self, ann_date=None, start_date=None, end_date=None,
+                                 source=None, ann_type=None):
+        return await self.ops.get_idx_anns(
+            ann_date, start_date, end_date, source, ann_type
+        )
+
     def get_fund_share(
         self, ts_code: Optional[str] = None, trade_date: Optional[str] = None
     ) -> Optional[pd.DataFrame]:

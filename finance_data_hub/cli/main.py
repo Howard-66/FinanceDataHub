@@ -138,7 +138,7 @@ def update(
         None,
         "--dataset",
         "-d",
-        help="数据类型 (daily, minute_1, minute_5, minute_15, minute_30, minute_60, daily_basic, adj_factor, basic, fund_basic, etf_basic, fund_company, fund_manager, fund_share, fund_nav, fund_div, mkt_idx_bmk, fund_portfolio, index_basic, gdp)。"
+        help="数据类型 (daily, minute_1, minute_5, minute_15, minute_30, minute_60, daily_basic, adj_factor, basic, fund_basic, etf_basic, etf_index, fund_daily, fund_adj, etf_share_size, etf_sh_cons, etf_sz_cons, idx_anns, fund_company, fund_manager, fund_share, fund_nav, fund_div, mkt_idx_bmk, fund_portfolio, index_basic, gdp)。"
              "取代 --frequency 参数，提供更准确的描述。"
     ),
     frequency: Optional[str] = typer.Option(
@@ -218,6 +218,12 @@ def update(
       - pmi: 中国PMI采购经理人指数数据
       - fund_basic: 公募基金基础信息（非时间序列，按场内/场外市场全量刷新）
       - etf_basic: ETF基础信息（非时间序列，默认全量刷新）
+      - etf_index: ETF基准指数列表（无可靠变更时间，智能模式执行快照 upsert）
+      - fund_daily: ETF日线行情（支持全量与智能增量）
+      - fund_adj: 基金复权因子（支持全量与智能增量）
+      - etf_share_size: ETF份额规模（支持全量与智能增量）
+      - etf_sh_cons/etf_sz_cons: 沪深 ETF 每日持仓组合
+      - idx_anns: 指数公告（按自然月窗口全量/智能增量）
       - fund_company: 公募基金管理人目录（非时间序列，全量刷新）
       - fund_manager: 基金经理任职与简历（支持全量分页或按基金代码、公告日筛选）
       - fund_share: 公募基金规模（支持基金代码、交易日或日期区间）
@@ -424,7 +430,7 @@ def _is_timeseries_data(data_type: str) -> bool:
     """
     # 非时间序列数据类型
     non_timeseries_types = {
-        "basic", "asset_basic", "fund_basic", "etf_basic", "fund_company", "fund_manager",
+        "basic", "asset_basic", "fund_basic", "etf_basic", "etf_index", "fund_company", "fund_manager",
         "mkt_idx_bmk", "index_basic",
     }
     return data_type not in non_timeseries_types
@@ -488,7 +494,9 @@ async def _run_update(
         _validate_symbols_all(symbol_list, "期货模式下")
     if data_type in {
         "index_basic", "index_daily", "index_weight", "fund_basic", "fund_company",
-        "fund_manager", "etf_basic", "mkt_idx_bmk", "sw_daily",
+        "fund_manager", "etf_basic", "etf_index", "mkt_idx_bmk", "sw_daily",
+        "fund_daily", "fund_adj", "etf_share_size", "etf_sh_cons", "etf_sz_cons",
+        "idx_anns",
     } and symbol_list:
         _validate_symbols_all(symbol_list, "指数/基金模式下")
 
@@ -519,7 +527,8 @@ async def _run_update(
     # 公募基金规模/净值/分红使用接口自己的筛选与分页，不能走股票智能下载。
     if data_type in {
         "etf_basic", "fund_company", "fund_manager", "fund_share", "fund_nav", "fund_div",
-        "fund_portfolio",
+        "fund_portfolio", "etf_index", "fund_daily", "fund_adj", "etf_share_size",
+        "etf_sh_cons", "etf_sz_cons", "idx_anns",
     }:
         return await _run_force_update(
             settings, asset_class, data_type, symbol_list,
@@ -1781,6 +1790,21 @@ async def _run_force_update(
                     console.print(f"[bold red]ERROR:[/bold red] 更新 ETF 基础信息失败: {str(e)}")
                     raise
 
+    if data_type == "etf_index":
+        selected_codes = None if _is_symbols_all(symbol_list) else symbol_list
+        if selected_codes and len(selected_codes) != 1:
+            raise ValueError("etf_index 的 --symbols 最多指定一个指数代码")
+        with Progress(get_spinner(), TextColumn("[bold blue]{task.description}"),
+                      BarColumn(), TimeElapsedColumn(), console=console) as progress:
+            task = progress.add_task("正在刷新 ETF 基准指数列表...", total=1)
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                count = await updater.update_etf_index(
+                    ts_code=selected_codes[0] if selected_codes else None
+                )
+                progress.update(task, completed=1)
+                console.print(f"[green][OK][/green] 已更新 {count} 条 ETF 基准指数")
+                return count
+
     if data_type == "fund_company":
         if symbol_list and not _is_symbols_all(symbol_list):
             raise ValueError("fund_company 不接受 --symbols；请省略或使用 --symbols all")
@@ -1842,6 +1866,70 @@ async def _run_force_update(
                     progress.update(task, failed=True)
                     console.print(f"[bold red]ERROR:[/bold red] 更新 ETF 业绩比较基准失败: {str(e)}")
                     raise
+
+    if data_type in {
+        "fund_daily", "fund_adj", "etf_share_size", "etf_sh_cons", "etf_sz_cons",
+    }:
+        selected_codes = None if _is_symbols_all(symbol_list) else symbol_list
+        all_data = _is_symbols_all(symbol_list) or (
+            force_update and not selected_codes and not trade_date
+        )
+        smart_incremental = not all_data and not selected_codes and not trade_date
+        progress_unit = (
+            "ETF代码" if all_data and data_type in {"fund_daily", "etf_share_size"}
+            else "交易日"
+        )
+        with Progress(
+            get_spinner(), TextColumn("[bold blue]{task.description}"), BarColumn(),
+            TextColumn(f"[bold cyan]已下载 {{task.completed:.0f}}/{{task.total:.0f}} {progress_unit}"),
+            TimeElapsedColumn(), console=console,
+        ) as progress:
+            mode = "全量" if all_data else ("智能增量" if smart_incremental else "指定范围")
+            task = progress.add_task(f"正在{mode}下载 {data_type} ...", total=1)
+
+            def update_progress(completed: int, total: int) -> None:
+                progress.update(task, completed=completed, total=total)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                method = getattr(updater, f"update_{data_type}")
+                kwargs = {
+                    "fund_codes": selected_codes,
+                    "trade_date": trade_date,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "all_funds": all_data,
+                    "smart_incremental": smart_incremental,
+                    "progress_callback": update_progress,
+                }
+                if data_type == "etf_share_size":
+                    kwargs["exchange"] = market if market in {"SH", "SZ"} else None
+                count = await method(**kwargs)
+                console.print(f"[green][OK][/green] 已更新 {count} 条 {data_type} 数据")
+                return count
+
+    if data_type == "idx_anns":
+        if symbol_list and not _is_symbols_all(symbol_list):
+            raise ValueError("idx_anns 不接受指数代码；SDK 可使用 src 筛选公告来源")
+        all_data = _is_symbols_all(symbol_list) or (force_update and not trade_date)
+        smart_incremental = not all_data and not trade_date
+        with Progress(
+            get_spinner(), TextColumn("[bold blue]{task.description}"), BarColumn(),
+            TextColumn("[bold cyan]已下载 {task.completed:.0f}/{task.total:.0f} 月度窗口"),
+            TimeElapsedColumn(), console=console,
+        ) as progress:
+            task = progress.add_task("正在同步指数公告...", total=1)
+
+            def update_progress(completed: int, total: int) -> None:
+                progress.update(task, completed=completed, total=total)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                count = await updater.update_idx_anns(
+                    ann_date=trade_date, start_date=start_date, end_date=end_date,
+                    all_data=all_data, smart_incremental=smart_incremental,
+                    progress_callback=update_progress,
+                )
+                console.print(f"[green][OK][/green] 已更新 {count} 条 idx_anns 数据")
+                return count
 
     if data_type in {"fund_share", "fund_nav", "fund_div"}:
         all_fund_dataset = (

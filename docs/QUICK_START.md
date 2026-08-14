@@ -300,6 +300,12 @@ fdh-cli update --dataset fund_basic --symbols all
 # 同步全部 ETF 基础信息
 fdh-cli update --dataset etf_basic
 fdh-cli update --dataset etf_basic --symbols 510300.SH
+fdh-cli update --dataset fund_daily --symbols all --force
+fdh-cli update --dataset fund_adj --symbols all --force
+fdh-cli update --dataset etf_share_size --symbols all --force
+fdh-cli update --dataset etf_sh_cons --symbols all --force
+fdh-cli update --dataset etf_sz_cons --symbols all --force
+fdh-cli update --dataset idx_anns --symbols all --force
 
 # 仅同步场内或场外基金
 fdh-cli update --dataset fund_basic --symbols E

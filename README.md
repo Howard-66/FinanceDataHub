@@ -426,6 +426,12 @@ fdh-cli update --dataset fund_basic --symbols E
 # 同步 Tushare ETF 基础信息（默认全量）
 fdh-cli update --dataset etf_basic
 fdh-cli update --dataset etf_basic --symbols 510300.SH
+fdh-cli update --dataset fund_daily --symbols all --force
+fdh-cli update --dataset fund_adj --symbols all --force
+fdh-cli update --dataset etf_share_size --symbols all --force
+fdh-cli update --dataset etf_sh_cons --symbols all --force
+fdh-cli update --dataset etf_sz_cons --symbols all --force
+fdh-cli update --dataset idx_anns --symbols all --force
 
 # 同步 ETF 业绩比较基准和指定基金的季度持仓
 fdh-cli update --dataset mkt_idx_bmk

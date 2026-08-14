@@ -47,6 +47,7 @@ FUTURES_MINUTE_TRADING_DAY_START = datetime_time(21, 0, 0)
 FUTURES_MINUTE_TRADING_DAY_END = datetime_time(15, 0, 0)
 INDEX_DAILY_EXCLUDED_CATALOG_MARKETS = {"SW"}
 FUND_PORTFOLIO_HISTORY_START = "1998-01-01"
+IDX_ANNS_HISTORY_START = "1990-01-01"
 
 
 def _is_all_symbol_request(symbols: Optional[List[str]]) -> bool:
@@ -605,6 +606,248 @@ class DataUpdater:
         except Exception:
             logger.exception("Failed to update etf_basic")
             raise
+
+    async def update_etf_index(
+        self, ts_code: Optional[str] = None, pub_date: Optional[str] = None,
+        base_date: Optional[str] = None,
+    ) -> int:
+        """刷新 ETF 基准指数目录；无可靠变更时间时使用低成本全表 upsert。"""
+        data = self.router.route(
+            asset_class="fund", data_type="etf_index", method_name="get_etf_index",
+            ts_code=ts_code, pub_date=pub_date, base_date=base_date,
+        )
+        return await self.data_ops.insert_etf_index_batch(data) if data is not None else 0
+
+    async def _resolve_etf_history_start(self) -> str:
+        start = await self.data_ops.get_earliest_etf_basic_date()
+        if not start:
+            raise ValueError(
+                "全量 ETF 数据下载需要本地 etf_basic 目录；"
+                "请先执行 `fdh-cli update --dataset etf_basic --symbols all`"
+            )
+        return start
+
+    async def _update_etf_series(
+        self, *, data_type: str, method_name: str, insert_method_name: str,
+        latest_method_name: str, fund_codes: Optional[List[str]] = None,
+        trade_date: Optional[str] = None, start_date: Optional[str] = None,
+        end_date: Optional[str] = None, all_funds: bool = False,
+        smart_incremental: bool = False, full_by_codes: bool = False,
+        catalog_exchange: Optional[str] = None, extra_params: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        incremental_lookback_days: int = 0,
+    ) -> int:
+        """Shared full/incremental workflow for ETF date-series endpoints."""
+        if all_funds and smart_incremental:
+            raise ValueError(f"{data_type} 不能同时使用全量和智能增量模式")
+        params = dict(extra_params or {})
+        insert_method = getattr(self.data_ops, insert_method_name)
+        latest = None
+
+        if fund_codes:
+            total = 0
+            if progress_callback:
+                progress_callback(0, len(fund_codes))
+            for index, code in enumerate(fund_codes, start=1):
+                data = self.router.route(
+                    asset_class="fund", data_type=data_type, method_name=method_name,
+                    ts_code=code, trade_date=trade_date, start_date=start_date,
+                    end_date=end_date, **params,
+                )
+                if data is not None and not data.empty:
+                    total += await insert_method(data)
+                if progress_callback:
+                    progress_callback(index, len(fund_codes))
+            return total
+
+        resolved_end = pd.Timestamp(end_date or datetime.now()).strftime("%Y-%m-%d")
+        if all_funds:
+            resolved_start = pd.Timestamp(
+                start_date or await self._resolve_etf_history_start()
+            ).strftime("%Y-%m-%d")
+        elif smart_incremental:
+            latest = await getattr(self.data_ops, latest_method_name)()
+            if latest and incremental_lookback_days:
+                latest = (pd.Timestamp(latest) - pd.Timedelta(days=incremental_lookback_days)).strftime(
+                    "%Y-%m-%d"
+                )
+            resolved_start = pd.Timestamp(
+                start_date or latest or await self._resolve_etf_history_start()
+            ).strftime("%Y-%m-%d")
+        elif trade_date:
+            resolved_start = resolved_end = pd.Timestamp(trade_date).strftime("%Y-%m-%d")
+        elif start_date or end_date:
+            resolved_start = pd.Timestamp(
+                start_date or await self._resolve_etf_history_start()
+            ).strftime("%Y-%m-%d")
+        else:
+            raise ValueError(f"{data_type} 需要基金代码、交易日、日期范围或智能增量模式")
+
+        if resolved_start > resolved_end:
+            return 0
+
+        if full_by_codes and (all_funds or (smart_incremental and not latest)):
+            catalog = await self.data_ops.get_etf_basic()
+            if catalog is None or catalog.empty:
+                await self._resolve_etf_history_start()
+            if catalog_exchange:
+                catalog = catalog[catalog["exchange"].astype(str).str.upper() == catalog_exchange]
+            catalog = catalog.sort_values("ts_code").reset_index(drop=True)
+            total = 0
+            total_codes = len(catalog)
+            if progress_callback:
+                progress_callback(0, total_codes)
+            for index, row in catalog.iterrows():
+                code_start = resolved_start
+                for date_column in ("setup_date", "list_date"):
+                    value = row.get(date_column)
+                    if pd.notna(value):
+                        code_start = max(code_start, pd.Timestamp(value).strftime("%Y-%m-%d"))
+                        break
+                data = self.router.route(
+                    asset_class="fund", data_type=data_type, method_name=method_name,
+                    ts_code=row["ts_code"], start_date=code_start, end_date=resolved_end,
+                    **params,
+                )
+                if data is not None and not data.empty:
+                    total += await insert_method(data)
+                if progress_callback:
+                    progress_callback(index + 1, total_codes)
+            return total
+
+        dates = await self.data_ops.get_trade_dates(
+            exchange="SSE", start_date=resolved_start, end_date=resolved_end
+        )
+        if not dates:
+            logger.warning("SSE trade_cal unavailable; falling back to weekdays")
+            dates = pd.bdate_range(resolved_start, resolved_end).strftime("%Y-%m-%d").tolist()
+        total = 0
+        if progress_callback:
+            progress_callback(0, len(dates))
+        for index, current_date in enumerate(dates, start=1):
+            data = self.router.route(
+                asset_class="fund", data_type=data_type, method_name=method_name,
+                trade_date=current_date, **params,
+            )
+            if data is not None and not data.empty:
+                total += await insert_method(data)
+            if progress_callback:
+                progress_callback(index, len(dates))
+        return total
+
+    async def update_fund_daily(self, fund_codes=None, trade_date=None, start_date=None,
+                                end_date=None, all_funds=False, smart_incremental=False,
+                                progress_callback=None) -> int:
+        return await self._update_etf_series(
+            data_type="fund_daily", method_name="get_fund_daily",
+            insert_method_name="insert_fund_daily_batch",
+            latest_method_name="get_latest_fund_daily_trade_date", fund_codes=fund_codes,
+            trade_date=trade_date, start_date=start_date, end_date=end_date,
+            all_funds=all_funds, smart_incremental=smart_incremental,
+            full_by_codes=True, progress_callback=progress_callback,
+        )
+
+    async def update_fund_adj(self, fund_codes=None, trade_date=None, start_date=None,
+                              end_date=None, all_funds=False, smart_incremental=False,
+                              progress_callback=None) -> int:
+        return await self._update_etf_series(
+            data_type="fund_adj", method_name="get_fund_adj",
+            insert_method_name="insert_fund_adj_batch",
+            latest_method_name="get_latest_fund_adj_trade_date", fund_codes=fund_codes,
+            trade_date=trade_date, start_date=start_date, end_date=end_date,
+            all_funds=all_funds, smart_incremental=smart_incremental,
+            progress_callback=progress_callback,
+        )
+
+    async def update_etf_share_size(self, fund_codes=None, trade_date=None, start_date=None,
+                                    end_date=None, exchange=None, all_funds=False,
+                                    smart_incremental=False, progress_callback=None) -> int:
+        exchange_map = {"SH": "SSE", "SZ": "SZSE"}
+        return await self._update_etf_series(
+            data_type="etf_share_size", method_name="get_etf_share_size",
+            insert_method_name="insert_etf_share_size_batch",
+            latest_method_name="get_latest_etf_share_size_trade_date",
+            fund_codes=fund_codes, trade_date=trade_date, start_date=start_date,
+            end_date=end_date, all_funds=all_funds, smart_incremental=smart_incremental,
+            full_by_codes=True, catalog_exchange=exchange,
+            extra_params={"exchange": exchange_map.get(exchange)},
+            progress_callback=progress_callback, incremental_lookback_days=7,
+        )
+
+    async def update_etf_sh_cons(self, fund_codes=None, trade_date=None, start_date=None,
+                                 end_date=None, con_code=None, all_funds=False,
+                                 smart_incremental=False, progress_callback=None) -> int:
+        return await self._update_etf_series(
+            data_type="etf_sh_cons", method_name="get_etf_sh_cons",
+            insert_method_name="insert_etf_sh_cons_batch",
+            latest_method_name="get_latest_etf_sh_cons_trade_date",
+            fund_codes=fund_codes, trade_date=trade_date, start_date=start_date,
+            end_date=end_date, all_funds=all_funds, smart_incremental=smart_incremental,
+            extra_params={"con_code": con_code}, progress_callback=progress_callback,
+        )
+
+    async def update_etf_sz_cons(self, fund_codes=None, trade_date=None, start_date=None,
+                                 end_date=None, con_code=None, all_funds=False,
+                                 smart_incremental=False, progress_callback=None) -> int:
+        return await self._update_etf_series(
+            data_type="etf_sz_cons", method_name="get_etf_sz_cons",
+            insert_method_name="insert_etf_sz_cons_batch",
+            latest_method_name="get_latest_etf_sz_cons_trade_date",
+            fund_codes=fund_codes, trade_date=trade_date, start_date=start_date,
+            end_date=end_date, all_funds=all_funds, smart_incremental=smart_incremental,
+            extra_params={"con_code": con_code}, progress_callback=progress_callback,
+        )
+
+    async def update_idx_anns(self, ann_date=None, start_date=None, end_date=None,
+                              src=None, all_data=False, smart_incremental=False,
+                              progress_callback=None) -> int:
+        """按自然月窗口同步指数公告，并从最新公告日回看七天。"""
+        if ann_date:
+            data = self.router.route(
+                asset_class="fund", data_type="idx_anns", method_name="get_idx_anns",
+                ann_date=ann_date, src=src,
+            )
+            return await self.data_ops.insert_idx_anns_batch(data) if data is not None else 0
+        resolved_end = pd.Timestamp(end_date or datetime.now()).normalize()
+        if start_date:
+            resolved_start = pd.Timestamp(start_date).normalize()
+        elif smart_incremental:
+            latest = await self.data_ops.get_latest_idx_anns_ann_date()
+            resolved_start = (
+                pd.Timestamp(latest) - pd.Timedelta(days=7)
+                if latest else pd.Timestamp(await self._resolve_idx_anns_history_start())
+            )
+        else:
+            resolved_start = pd.Timestamp(await self._resolve_idx_anns_history_start())
+        if resolved_start > resolved_end:
+            return 0
+        windows = []
+        cursor = resolved_start
+        while cursor <= resolved_end:
+            window_end = min(cursor + pd.offsets.MonthEnd(0), resolved_end)
+            windows.append((cursor, window_end))
+            cursor = window_end + pd.Timedelta(days=1)
+        total = 0
+        if progress_callback:
+            progress_callback(0, len(windows))
+        for index, (window_start, window_end) in enumerate(windows, start=1):
+            data = self.router.route(
+                asset_class="fund", data_type="idx_anns", method_name="get_idx_anns",
+                start_date=window_start.strftime("%Y-%m-%d"),
+                end_date=window_end.strftime("%Y-%m-%d"), src=src,
+            )
+            if data is not None and not data.empty:
+                total += await self.data_ops.insert_idx_anns_batch(data)
+            if progress_callback:
+                progress_callback(index, len(windows))
+        return total
+
+    async def _resolve_idx_anns_history_start(self) -> str:
+        return (
+            await self.data_ops.get_earliest_trade_cal_date(
+                exchange="SSE", start_date=IDX_ANNS_HISTORY_START
+            ) or IDX_ANNS_HISTORY_START
+        )
 
     async def update_fund_share(
         self, ts_code: Optional[str] = None, trade_date: Optional[str] = None,

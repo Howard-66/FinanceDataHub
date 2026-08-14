@@ -685,6 +685,29 @@ class DataOperations:
             return None
         return pd.DataFrame([row._asdict() for row in rows])
 
+    async def get_earliest_etf_basic_date(self) -> Optional[str]:
+        """返回本地 ETF 目录最早设立/上市日期。"""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+        query = """
+            SELECT MIN(COALESCE(setup_date, list_date)) AS earliest_date
+            FROM etf_basic
+            WHERE COALESCE(setup_date, list_date) IS NOT NULL
+        """
+        async with self.db_manager._engine.begin() as conn:
+            row = (await conn.execute(text(query))).fetchone()
+        value = row._mapping["earliest_date"] if row is not None else None
+        return pd.Timestamp(value).strftime("%Y-%m-%d") if value is not None else None
+
+    async def _get_latest_dataset_date(self, table: str, column: str) -> Optional[str]:
+        """Return a YYYY-MM-DD checkpoint from a trusted internal table/column."""
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+        async with self.db_manager._engine.begin() as conn:
+            row = (await conn.execute(text(f"SELECT MAX({column}) AS value FROM {table}"))).fetchone()
+        value = row._mapping["value"] if row is not None else None
+        return pd.Timestamp(value).strftime("%Y-%m-%d") if value is not None else None
+
     async def get_earliest_fund_basic_date(self) -> Optional[str]:
         """返回本地基金目录中最早的可用基金日期。
 
@@ -785,6 +808,53 @@ class DataOperations:
             },
         )
 
+    async def insert_etf_index_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_fund_dataset(
+            data, "etf_index", ["ts_code", "indx_name", "indx_csname",
+            "pub_party_name", "pub_date", "base_date", "bp", "adj_circle"],
+            ["ts_code"], {"pub_date", "base_date"},
+        )
+
+    async def insert_fund_daily_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_fund_dataset(
+            data, "fund_daily", ["ts_code", "trade_date", "open", "high", "low",
+            "close", "pre_close", "change", "pct_chg", "vol", "amount"],
+            ["ts_code", "trade_date"], {"trade_date"},
+        )
+
+    async def insert_fund_adj_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_fund_dataset(
+            data, "fund_adj", ["ts_code", "trade_date", "adj_factor"],
+            ["ts_code", "trade_date"], {"trade_date"},
+        )
+
+    async def insert_etf_share_size_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_fund_dataset(
+            data, "etf_share_size", ["trade_date", "ts_code", "etf_name",
+            "total_share", "total_size", "nav", "close", "exchange"],
+            ["ts_code", "trade_date"], {"trade_date"},
+        )
+
+    async def insert_etf_sh_cons_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_fund_dataset(
+            data, "etf_sh_cons", ["trade_date", "ts_code", "con_code", "con_name",
+            "qty", "sub_flag", "cpr", "rdr", "sca", "exchange"],
+            ["trade_date", "ts_code", "con_code"], {"trade_date"},
+        )
+
+    async def insert_etf_sz_cons_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_fund_dataset(
+            data, "etf_sz_cons", ["trade_date", "ts_code", "con_code", "con_name",
+            "qty", "sub_flag", "cpr", "rdr", "sub_cc", "red_cc", "exchange"],
+            ["trade_date", "ts_code", "con_code"], {"trade_date"},
+        )
+
+    async def insert_idx_anns_batch(self, data: pd.DataFrame) -> int:
+        return await self._insert_fund_dataset(
+            data, "idx_anns", ["ann_date", "title", "url", "source", "type"],
+            ["ann_date", "title", "source"], {"ann_date"},
+        )
+
     async def _get_fund_dataset(
         self, table: str, columns: List[str], filters: Dict[str, Any], order_by: str
     ) -> Optional[pd.DataFrame]:
@@ -832,6 +902,101 @@ class DataOperations:
             ], {"ts_code": ts_code, "ann_date": ann_date, "ex_date": ex_date,
                 "pay_date": pay_date}, "ann_date DESC, ts_code",
         )
+
+    async def _get_dated_fund_dataset(
+        self, table: str, columns: List[str], date_column: str,
+        filters: Dict[str, Any], start_date: Optional[str], end_date: Optional[str],
+    ) -> Optional[pd.DataFrame]:
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+        query = f"SELECT {', '.join(columns)} FROM {table} WHERE 1=1"
+        params: Dict[str, Any] = {}
+        for column, value in filters.items():
+            if value is not None:
+                query += f" AND {column} = :{column}"
+                params[column] = value
+        if start_date:
+            query += f" AND {date_column} >= :start_date"
+            params["start_date"] = pd.Timestamp(start_date).date()
+        if end_date:
+            query += f" AND {date_column} <= :end_date"
+            params["end_date"] = pd.Timestamp(end_date).date()
+        query += f" ORDER BY {date_column} DESC"
+        async with self.db_manager._engine.begin() as conn:
+            rows = (await conn.execute(text(query), params)).fetchall()
+        return pd.DataFrame([row._asdict() for row in rows]) if rows else None
+
+    async def get_etf_index(self, ts_code=None, pub_date=None, base_date=None):
+        return await self._get_fund_dataset(
+            "etf_index", ["ts_code", "indx_name", "indx_csname", "pub_party_name",
+            "pub_date", "base_date", "bp", "adj_circle"],
+            {"ts_code": ts_code, "pub_date": pub_date, "base_date": base_date}, "ts_code",
+        )
+
+    async def get_fund_daily(self, ts_code=None, trade_date=None, start_date=None, end_date=None):
+        return await self._get_dated_fund_dataset(
+            "fund_daily", ["ts_code", "trade_date", "open", "high", "low", "close",
+            "pre_close", "change", "pct_chg", "vol", "amount"], "trade_date",
+            {"ts_code": ts_code, "trade_date": trade_date}, start_date, end_date,
+        )
+
+    async def get_fund_adj(self, ts_code=None, trade_date=None, start_date=None, end_date=None):
+        return await self._get_dated_fund_dataset(
+            "fund_adj", ["ts_code", "trade_date", "adj_factor"], "trade_date",
+            {"ts_code": ts_code, "trade_date": trade_date}, start_date, end_date,
+        )
+
+    async def get_etf_share_size(self, ts_code=None, trade_date=None, start_date=None,
+                                 end_date=None, exchange=None):
+        return await self._get_dated_fund_dataset(
+            "etf_share_size", ["trade_date", "ts_code", "etf_name", "total_share",
+            "total_size", "nav", "close", "exchange"], "trade_date",
+            {"ts_code": ts_code, "trade_date": trade_date, "exchange": exchange},
+            start_date, end_date,
+        )
+
+    async def get_etf_sh_cons(self, ts_code=None, trade_date=None, con_code=None,
+                              start_date=None, end_date=None):
+        return await self._get_dated_fund_dataset(
+            "etf_sh_cons", ["trade_date", "ts_code", "con_code", "con_name", "qty",
+            "sub_flag", "cpr", "rdr", "sca", "exchange"], "trade_date",
+            {"ts_code": ts_code, "trade_date": trade_date, "con_code": con_code},
+            start_date, end_date,
+        )
+
+    async def get_etf_sz_cons(self, ts_code=None, trade_date=None, con_code=None,
+                              start_date=None, end_date=None):
+        return await self._get_dated_fund_dataset(
+            "etf_sz_cons", ["trade_date", "ts_code", "con_code", "con_name", "qty",
+            "sub_flag", "cpr", "rdr", "sub_cc", "red_cc", "exchange"], "trade_date",
+            {"ts_code": ts_code, "trade_date": trade_date, "con_code": con_code},
+            start_date, end_date,
+        )
+
+    async def get_idx_anns(self, ann_date=None, start_date=None, end_date=None,
+                           source=None, ann_type=None):
+        return await self._get_dated_fund_dataset(
+            "idx_anns", ["ann_date", "title", "url", "source", "type"], "ann_date",
+            {"ann_date": ann_date, "source": source, "type": ann_type}, start_date, end_date,
+        )
+
+    async def get_latest_fund_daily_trade_date(self):
+        return await self._get_latest_dataset_date("fund_daily", "trade_date")
+
+    async def get_latest_fund_adj_trade_date(self):
+        return await self._get_latest_dataset_date("fund_adj", "trade_date")
+
+    async def get_latest_etf_share_size_trade_date(self):
+        return await self._get_latest_dataset_date("etf_share_size", "trade_date")
+
+    async def get_latest_etf_sh_cons_trade_date(self):
+        return await self._get_latest_dataset_date("etf_sh_cons", "trade_date")
+
+    async def get_latest_etf_sz_cons_trade_date(self):
+        return await self._get_latest_dataset_date("etf_sz_cons", "trade_date")
+
+    async def get_latest_idx_anns_ann_date(self):
+        return await self._get_latest_dataset_date("idx_anns", "ann_date")
 
     async def insert_fund_company_batch(self, data: pd.DataFrame) -> int:
         """批量写入 Tushare 公募基金管理人信息。"""

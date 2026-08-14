@@ -32,6 +32,13 @@ from finance_data_hub.providers.schema import (
     FundDivSchema,
     MktIdxBmkSchema,
     FundPortfolioSchema,
+    EtfIndexSchema,
+    FundDailySchema,
+    FundAdjSchema,
+    EtfShareSizeSchema,
+    EtfShConsSchema,
+    EtfSzConsSchema,
+    IdxAnnsSchema,
     DailyDataSchema,
     MinuteDataSchema,
     DailyBasicSchema,
@@ -119,6 +126,12 @@ FUND_DIV_MAX_RECORDS = 1000
 # limit is observed in production and is intentionally kept separate from the
 # other fund-series limits above.
 FUND_PORTFOLIO_MAX_RECORDS = 8000
+ETF_INDEX_MAX_RECORDS = 5000
+FUND_DAILY_MAX_RECORDS = 5000
+FUND_ADJ_MAX_RECORDS = 2000
+ETF_SHARE_SIZE_MAX_RECORDS = 5000
+ETF_CONS_MAX_RECORDS = 3000
+IDX_ANNS_MAX_RECORDS = 1000
 TUSHARE_FUND_MARKETS = ["E", "O"]
 SUPPORTED_FUTURES_INDEX_CODES = [
     "NHCI.NH",  # 南华商品指数
@@ -604,6 +617,107 @@ class TushareProvider(BaseDataProvider):
         result = result[result["ts_code"] != ""]
         return result.sort_values("ts_code").reset_index(drop=True)
 
+    def get_etf_index(
+        self, ts_code: Optional[str] = None, pub_date: Optional[str] = None,
+        base_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取 ETF 基准指数列表；满 5,000 行时继续分页。"""
+        return self._get_fund_series(
+            "etf_index", EtfIndexSchema,
+            {"ts_code": ts_code, "pub_date": self._clean_api_date(pub_date),
+             "base_date": self._clean_api_date(base_date)},
+            ["ts_code"], max_records=ETF_INDEX_MAX_RECORDS,
+            log_empty_as_warning=False,
+        )
+
+    def get_fund_daily(
+        self, ts_code: Optional[str] = None, trade_date: Optional[str] = None,
+        start_date: Optional[str] = None, end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取 ETF 日线行情；每页最多 5,000 行。"""
+        return self._get_fund_series(
+            "fund_daily", FundDailySchema,
+            {"ts_code": ts_code, "trade_date": self._clean_api_date(trade_date),
+             "start_date": self._clean_api_date(start_date),
+             "end_date": self._clean_api_date(end_date)},
+            ["ts_code", "trade_date"], max_records=FUND_DAILY_MAX_RECORDS,
+            log_empty_as_warning=False,
+        )
+
+    def get_fund_adj(
+        self, ts_code: Optional[str] = None, trade_date: Optional[str] = None,
+        start_date: Optional[str] = None, end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取基金复权因子；每页最多 2,000 行。"""
+        return self._get_fund_series(
+            "fund_adj", FundAdjSchema,
+            {"ts_code": ts_code, "trade_date": self._clean_api_date(trade_date),
+             "start_date": self._clean_api_date(start_date),
+             "end_date": self._clean_api_date(end_date), "limit": FUND_ADJ_MAX_RECORDS},
+            ["ts_code", "trade_date"], max_records=FUND_ADJ_MAX_RECORDS,
+            log_empty_as_warning=False,
+        )
+
+    def get_etf_share_size(
+        self, ts_code: Optional[str] = None, trade_date: Optional[str] = None,
+        start_date: Optional[str] = None, end_date: Optional[str] = None,
+        exchange: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取 ETF 份额规模；显式请求默认隐藏的 nav/close 字段。"""
+        api_exchange = exchange if exchange in {"SSE", "SZSE"} else None
+        return self._get_fund_series(
+            "etf_share_size", EtfShareSizeSchema,
+            {"ts_code": ts_code, "trade_date": self._clean_api_date(trade_date),
+             "start_date": self._clean_api_date(start_date),
+             "end_date": self._clean_api_date(end_date), "exchange": api_exchange},
+            ["ts_code", "trade_date"], max_records=ETF_SHARE_SIZE_MAX_RECORDS,
+            log_empty_as_warning=False,
+        )
+
+    def get_etf_sh_cons(
+        self, ts_code: Optional[str] = None, trade_date: Optional[str] = None,
+        con_code: Optional[str] = None, start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取沪市 ETF 每日持仓组合；每页最多 3,000 行。"""
+        return self._get_fund_series(
+            "etf_sh_cons", EtfShConsSchema,
+            {"ts_code": ts_code, "trade_date": self._clean_api_date(trade_date),
+             "con_code": con_code, "start_date": self._clean_api_date(start_date),
+             "end_date": self._clean_api_date(end_date)},
+            ["trade_date", "ts_code", "con_code"], max_records=ETF_CONS_MAX_RECORDS,
+            log_empty_as_warning=False,
+        )
+
+    def get_etf_sz_cons(
+        self, ts_code: Optional[str] = None, trade_date: Optional[str] = None,
+        con_code: Optional[str] = None, start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取深市 ETF 每日持仓组合；每页最多 3,000 行。"""
+        return self._get_fund_series(
+            "etf_sz_cons", EtfSzConsSchema,
+            {"ts_code": ts_code, "trade_date": self._clean_api_date(trade_date),
+             "con_code": con_code, "start_date": self._clean_api_date(start_date),
+             "end_date": self._clean_api_date(end_date)},
+            ["trade_date", "ts_code", "con_code"], max_records=ETF_CONS_MAX_RECORDS,
+            log_empty_as_warning=False,
+        )
+
+    def get_idx_anns(
+        self, ann_date: Optional[str] = None, start_date: Optional[str] = None,
+        end_date: Optional[str] = None, src: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取指数公告；每页最多 1,000 行。"""
+        return self._get_fund_series(
+            "idx_anns", IdxAnnsSchema,
+            {"ann_date": self._clean_api_date(ann_date),
+             "start_date": self._clean_api_date(start_date),
+             "end_date": self._clean_api_date(end_date), "src": src},
+            ["ann_date", "title", "source"], max_records=IDX_ANNS_MAX_RECORDS,
+            log_empty_as_warning=False,
+        )
+
     def _get_fund_series(
         self,
         api_name: str,
@@ -617,6 +731,7 @@ class TushareProvider(BaseDataProvider):
         fields = ",".join(schema.get_required_columns())
         frames = []
         offset = 0
+        previous_page_keys = None
         while True:
             params = {key: value for key, value in api_params.items() if value is not None}
             params["offset"] = offset
@@ -628,6 +743,17 @@ class TushareProvider(BaseDataProvider):
             )
             if df is None or df.empty:
                 break
+            available_keys = [column for column in duplicate_columns if column in df.columns]
+            if available_keys:
+                page_keys = tuple(
+                    tuple(str(value) for value in row)
+                    for row in df[available_keys].itertuples(index=False, name=None)
+                )
+                if offset and page_keys == previous_page_keys:
+                    raise ProviderDataError(
+                        f"{api_name} ignored offset={offset}; refusing an endless pagination loop"
+                    )
+                previous_page_keys = page_keys
             frames.append(df)
             fetched = len(df)
             logger.info("{} offset={} fetched {} records", api_name, offset, fetched)
