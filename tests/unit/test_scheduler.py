@@ -280,6 +280,14 @@ jobs:
         assert config.jobs["futures_daily_update"].params["trade_date"] == "latest"
         assert "sw_daily_update" not in config.jobs
         assert config.jobs["futures_term_metrics_saturday_update"].dataset == "term_metrics"
+        desktop_job = config.jobs["basisflow_wind_excel_refresh"]
+        assert desktop_job.type.value == "desktop_automation"
+        assert desktop_job.schedule["hour"] == 20
+        assert desktop_job.schedule["minute"] == 45
+        assert "day_of_week" not in desktop_job.schedule
+        assert desktop_job.params["action"] == "wind_excel_refresh"
+        assert desktop_job.resource_group == "mac_excel"
+        assert desktop_job.catchup_on_failure is False
 
 
 class TestTaskExecutor:
@@ -543,6 +551,57 @@ class TestTaskExecutor:
         joined = " ".join(cmd)
         assert "--category technical" in joined
         assert "--market HK" in joined
+
+    def test_desktop_automation_uses_shared_queue(self, tmp_path):
+        """Docker 调度器应通过共享目录等待 Mac 执行器结果。"""
+        import json
+        import threading
+        import time
+
+        from finance_data_hub.scheduler.executor import TaskExecutor
+        from finance_data_hub.scheduler.models import JobConfig
+
+        queue_root = tmp_path / "desktop_queue"
+        config = JobConfig(
+            type="desktop_automation",
+            schedule={"type": "cron", "hour": 20, "minute": 45},
+            params={
+                "action": "wind_excel_refresh",
+                "queue_root": str(queue_root),
+                "timeout_seconds": 5,
+                "workbook_path": "/tmp/workbook.xlsx",
+                "excel_app_path": "/tmp/Microsoft Excel.app",
+            },
+        )
+
+        def publish_result():
+            deadline = time.monotonic() + 3
+            request_files = []
+            while time.monotonic() < deadline and not request_files:
+                request_files = list((queue_root / "requests").glob("*.json"))
+                time.sleep(0.01)
+            assert request_files
+            request = json.loads(request_files[0].read_text(encoding="utf-8"))
+            result_path = queue_root / "results" / request_files[0].name
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "request_id": request["request_id"],
+                        "status": "completed",
+                        "details": {"records_processed": 1},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        responder = threading.Thread(target=publish_result)
+        responder.start()
+        result = TaskExecutor(project_root=str(tmp_path))._execute_desktop_automation(
+            "basisflow_wind_excel_refresh", config
+        )
+        responder.join(timeout=2)
+
+        assert result == {"records_processed": 1, "symbols_count": 0}
 
 
 class TestScheduleManager:

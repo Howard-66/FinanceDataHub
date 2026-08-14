@@ -22,6 +22,7 @@ class JobType(str, Enum):
     DOWNLOAD = "download"
     PREPROCESS = "preprocess"
     AGGREGATE = "aggregate"
+    DESKTOP_AUTOMATION = "desktop_automation"
 
 
 class RetryConfig(BaseModel):

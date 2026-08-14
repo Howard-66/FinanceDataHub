@@ -73,6 +73,8 @@ services:
       - ./sources.yml:/app/sources.yml:ro
       - ./logs:/app/logs
       - ./data:/app/data
+      # macOS LaunchAgent consumes desktop requests from this host directory.
+      - ${DESKTOP_AUTOMATION_QUEUE_HOST_PATH:-/Users/howard/.financedatahub/desktop_automation/queue}:/app/data/desktop_automation
     # Docker Desktop provides host.docker.internal automatically. Do not
     # override it with host-gateway on macOS/Windows; that can point the
     # scheduler at an unreachable VM gateway instead of the host.

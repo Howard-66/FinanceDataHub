@@ -26,7 +26,7 @@ fdh-cli update --dataset fund_div --trade-date 2024-01-02
 fdh-cli update --dataset fund_div --symbols all --force
 ```
 
-`--symbols all` 的起点均取本地 `fund_basic` 最早的 `found_date`（缺失时回退到 `list_date`、`issue_date`）。`fund_share` 和 `fund_nav` 以 SSE 交易日遍历（交易日历未完整覆盖时回退为工作日）；`fund_div` 按每个自然日遍历，确保不会遗漏非交易日公告。该策略以日期数而非“基金数 × 日期数”发起请求。
+`--symbols all` 的起点均取本地 `fund_basic` 最早的 `found_date`（缺失时回退到 `list_date`、`issue_date`）。`fund_share` 和 `fund_nav` 以 SSE 交易日从历史到最新遍历（交易日历未完整覆盖时回退为工作日）；`fund_div` 按每个自然日遍历，确保不会遗漏非交易日公告。该策略以日期数而非“基金数 × 日期数”发起请求。
 
 单日满页时，`fund_share` 按 2,000 条、`fund_nav` 按 10,500 条、`fund_div` 按 1,000 条使用 `offset` 继续获取后续页面。全量模式会显示已下载日期计数。`fund_nav_update` 调度任务每日 19:00（Asia/Shanghai）运行。
 

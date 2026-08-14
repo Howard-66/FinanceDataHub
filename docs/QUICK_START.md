@@ -48,6 +48,22 @@ fdh-cli schedule start --config /app/schedules.yml
 SCHEDULER_XTQUANT_API_URL=http://host.docker.internal:8100
 ```
 
+#### Mac Excel / Wind 桌面任务
+
+Docker 调度器不能直接控制 macOS 桌面应用。`desktop_automation` 任务通过
+`data/desktop_automation` 共享队列交给 Mac 端 LaunchAgent 执行。首次部署或
+代码路径变化后，在 Mac 主机运行：
+
+```bash
+.venv/bin/python scripts/install_mac_desktop_automation.py
+```
+
+安装脚本会启动 `com.tradingnexus.financedatahub.desktop-automation`。其输出、
+任务请求和结果保留在 `~/.financedatahub/desktop_automation/`。Docker Compose
+默认把该队列挂载到容器内的 `data/desktop_automation/`；如使用其他账户，可通过
+`DESKTOP_AUTOMATION_QUEUE_HOST_PATH` 覆盖宿主机路径。Excel 中如已有其他工作簿，
+执行器会安全失败，不会关闭或覆盖用户正在编辑的文件。
+
 #### 配置环境变量
 创建 `.env` 文件：
 ```bash

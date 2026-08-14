@@ -672,7 +672,7 @@ class DataUpdater:
         market: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> int:
-        """按交易日拉取基金规模全量，并逐日写入本地库。"""
+        """按交易日从历史到最新拉取基金规模全量，并逐日写入本地库。"""
         trade_dates = await self._resolve_fund_share_dates(start_date, end_date)
         if not trade_dates:
             logger.info("No fund_share dates found between {} and {}", start_date, end_date)

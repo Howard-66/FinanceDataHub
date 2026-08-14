@@ -10,6 +10,10 @@ import subprocess
 import sys
 import re
 import threading
+import json
+import os
+import time
+import uuid
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime, date, timedelta
@@ -112,6 +116,10 @@ class TaskExecutor:
                 result = self._execute_preprocess(job_id, job_config, **kwargs)
             elif job_config.type == JobType.AGGREGATE:
                 result = self._execute_aggregate(job_id, job_config, **kwargs)
+            elif job_config.type == JobType.DESKTOP_AUTOMATION:
+                result = self._execute_desktop_automation(
+                    job_id, job_config, **kwargs
+                )
             else:
                 raise ValueError(f"Unknown job type: {job_config.type}")
             
@@ -183,6 +191,99 @@ class TaskExecutor:
             "records_processed": total_records,
             "symbols_count": total_symbols
         }
+
+    def _execute_desktop_automation(
+        self,
+        job_id: str,
+        job_config: JobConfig,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Submit a desktop task for the macOS worker and wait for its result.
+
+        The production scheduler runs inside Docker and cannot control desktop
+        applications directly.  The queue lives under the existing ``data``
+        bind mount, so a macOS LaunchAgent can claim the request, operate Excel,
+        and publish an auditable result without exposing a network service.
+        """
+        params = {**job_config.params, **kwargs}
+        action = str(params.get("action", "")).strip()
+        if action != "wind_excel_refresh":
+            raise ValueError(
+                "desktop_automation only supports action=wind_excel_refresh"
+            )
+
+        queue_root_value = params.get(
+            "queue_root", self.project_root / "data" / "desktop_automation"
+        )
+        queue_root = Path(str(queue_root_value))
+        if not queue_root.is_absolute():
+            queue_root = self.project_root / queue_root
+
+        timeout_seconds = int(params.get("timeout_seconds", 900))
+        if timeout_seconds < 1:
+            raise ValueError("timeout_seconds must be positive")
+
+        request_dir = queue_root / "requests"
+        result_dir = queue_root / "results"
+        request_dir.mkdir(parents=True, exist_ok=True)
+        result_dir.mkdir(parents=True, exist_ok=True)
+
+        requested_at = datetime.now().astimezone()
+        request_id = (
+            f"{job_id}-{requested_at.strftime('%Y%m%dT%H%M%S')}-"
+            f"{uuid.uuid4().hex[:12]}"
+        )
+        worker_params = {
+            key: value
+            for key, value in params.items()
+            if key not in {"queue_root", "timeout_seconds"}
+        }
+        request_payload = {
+            "request_id": request_id,
+            "job_id": job_id,
+            "action": action,
+            "requested_at": requested_at.isoformat(),
+            "params": worker_params,
+        }
+
+        request_path = request_dir / f"{request_id}.json"
+        temporary_path = request_dir / f".{request_id}.tmp"
+        temporary_path.write_text(
+            json.dumps(request_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(temporary_path, request_path)
+        logger.info(
+            f"Queued desktop automation request {request_id} at {request_path}"
+        )
+
+        result_path = result_dir / f"{request_id}.json"
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if result_path.exists():
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+                status = str(result.get("status", "failed"))
+                if status != "completed":
+                    error = result.get("error") or "desktop worker failed"
+                    raise RuntimeError(
+                        f"Desktop automation {request_id} failed: {error}"
+                    )
+                details = result.get("details") or {}
+                logger.info(
+                    f"Desktop automation {request_id} completed: {details}"
+                )
+                return {
+                    "records_processed": int(
+                        details.get("records_processed", 0)
+                    ),
+                    "symbols_count": 0,
+                }
+            time.sleep(1)
+
+        raise TimeoutError(
+            f"Desktop automation {request_id} did not finish within "
+            f"{timeout_seconds} seconds"
+        )
 
     @staticmethod
     def _format_subprocess_error(

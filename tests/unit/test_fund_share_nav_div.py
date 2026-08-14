@@ -94,6 +94,86 @@ def test_fund_nav_and_div_request_every_documented_output_field():
     )
 
 
+def test_fund_series_normalize_cli_dates_to_tushare_format():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        side_effect=[
+            pd.DataFrame(
+                {
+                    "ts_code": ["510300.SH"],
+                    "trade_date": ["20240102"],
+                    "fd_share": [1.0],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "ts_code": ["000001.OF"],
+                    "nav_date": ["20240102"],
+                    "unit_nav": [1.0],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "ts_code": ["000001.OF"],
+                    "ann_date": ["20240102"],
+                    "div_cash": [0.1],
+                }
+            ),
+        ]
+    )
+
+    provider.get_fund_share(
+        trade_date="2024-01-02",
+        start_date="2024-01-01",
+        end_date="2024-01-03",
+    )
+    provider.get_fund_nav(nav_date="2024-01-02")
+    provider.get_fund_div(ann_date="2024-01-02")
+
+    share_kwargs = provider._call_api.call_args_list[0].kwargs
+    nav_kwargs = provider._call_api.call_args_list[1].kwargs
+    div_kwargs = provider._call_api.call_args_list[2].kwargs
+    assert {
+        key: share_kwargs[key] for key in ("trade_date", "start_date", "end_date")
+    } == {
+        "trade_date": "20240102",
+        "start_date": "20240101",
+        "end_date": "20240103",
+    }
+    assert nav_kwargs["nav_date"] == "20240102"
+    assert div_kwargs["ann_date"] == "20240102"
+
+
+def test_fund_series_ignores_router_cn_market_for_tushare_filters():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._call_api = Mock(
+        side_effect=[
+            pd.DataFrame(
+                {
+                    "ts_code": ["510300.SH"],
+                    "trade_date": ["20240102"],
+                    "fd_share": [1.0],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "ts_code": ["000001.OF"],
+                    "nav_date": ["20240102"],
+                    "unit_nav": [1.0],
+                }
+            ),
+        ]
+    )
+
+    provider.get_fund_share(trade_date="2024-01-02", market="CN")
+    provider.get_fund_nav(nav_date="2024-01-02", market="CN")
+
+    share_kwargs = provider._call_api.call_args_list[0].kwargs
+    nav_kwargs = provider._call_api.call_args_list[1].kwargs
+    assert "market" not in share_kwargs
+    assert "market" not in nav_kwargs
+
+
 def test_fund_nav_paginates_at_the_observed_10500_record_limit():
     provider = TushareProvider(config={"token": "test-token"})
     provider._call_api = Mock(
@@ -145,7 +225,7 @@ def test_fund_div_paginates_at_the_documented_1000_record_limit():
 
 
 @pytest.mark.asyncio
-async def test_update_fund_share_all_fetches_each_trade_date_from_fund_basic_start():
+async def test_update_fund_share_all_fetches_each_trade_date_in_history_order():
     updater = object.__new__(DataUpdater)
     updater.router = Mock()
     updater.router.route.side_effect = [

@@ -303,7 +303,11 @@ class TushareProvider(BaseDataProvider):
         self._call_count += 1
 
     def _call_api(
-        self, api_name: str, fields: Optional[str] = None, **kwargs
+        self,
+        api_name: str,
+        fields: Optional[str] = None,
+        log_empty_as_warning: bool = True,
+        **kwargs,
     ) -> pd.DataFrame:
         """
         调用Tushare API的通用方法
@@ -378,7 +382,8 @@ class TushareProvider(BaseDataProvider):
             return pd.DataFrame()
 
         if result.empty:
-            logger.warning(f"Empty result from Tushare API: {api_name}")
+            log_empty = logger.warning if log_empty_as_warning else logger.debug
+            log_empty(f"Empty result from Tushare API: {api_name}")
             return pd.DataFrame()
 
         return result
@@ -569,6 +574,7 @@ class TushareProvider(BaseDataProvider):
         api_params: Dict[str, Any],
         duplicate_columns: List[str],
         max_records: int = FUND_SERIES_MAX_RECORDS,
+        log_empty_as_warning: bool = True,
     ) -> pd.DataFrame:
         """获取受单次记录数限制的公募基金时间序列接口。"""
         fields = ",".join(schema.get_required_columns())
@@ -577,7 +583,12 @@ class TushareProvider(BaseDataProvider):
         while True:
             params = {key: value for key, value in api_params.items() if value is not None}
             params["offset"] = offset
-            df = self._call_api(api_name, fields=fields, **params)
+            df = self._call_api(
+                api_name,
+                fields=fields,
+                log_empty_as_warning=log_empty_as_warning,
+                **params,
+            )
             if df is None or df.empty:
                 break
             frames.append(df)
@@ -604,11 +615,21 @@ class TushareProvider(BaseDataProvider):
         market: Optional[str] = None,
     ) -> pd.DataFrame:
         """获取基金规模（含沪深 ETF）；接口每次最多返回 2,000 行。"""
+        # SmartRouter uses the broad ``CN`` route market, while this Tushare
+        # endpoint only accepts exchange filters ``SH`` and ``SZ``. Passing
+        # CN makes an otherwise valid trade_date query return an empty frame.
+        api_market = market if market in {"SH", "SZ"} else None
         return self._get_fund_series(
             "fund_share", FundShareSchema,
-            {"ts_code": ts_code, "trade_date": trade_date, "start_date": start_date,
-             "end_date": end_date, "market": market},
+            {
+                "ts_code": ts_code,
+                "trade_date": self._clean_api_date(trade_date),
+                "start_date": self._clean_api_date(start_date),
+                "end_date": self._clean_api_date(end_date),
+                "market": api_market,
+            },
             ["ts_code", "trade_date"],
+            log_empty_as_warning=False,
         )
 
     def get_fund_nav(
@@ -620,12 +641,20 @@ class TushareProvider(BaseDataProvider):
         end_date: Optional[str] = None,
     ) -> pd.DataFrame:
         """获取公募基金净值，并在单日满 10,500 行时按 offset 分页。"""
+        # ``fund_nav`` uses Tushare's E/O market codes, not SmartRouter's CN.
+        api_market = market if market in {"E", "O"} else None
         return self._get_fund_series(
             "fund_nav", FundNavSchema,
-            {"ts_code": ts_code, "nav_date": nav_date, "market": market,
-             "start_date": start_date, "end_date": end_date},
+            {
+                "ts_code": ts_code,
+                "nav_date": self._clean_api_date(nav_date),
+                "market": api_market,
+                "start_date": self._clean_api_date(start_date),
+                "end_date": self._clean_api_date(end_date),
+            },
             ["ts_code", "nav_date"],
             max_records=FUND_NAV_MAX_RECORDS,
+            log_empty_as_warning=False,
         )
 
     def get_fund_div(
@@ -638,10 +667,15 @@ class TushareProvider(BaseDataProvider):
         """获取公募基金分红，并在单日满 1,000 行时按 offset 分页。"""
         return self._get_fund_series(
             "fund_div", FundDivSchema,
-            {"ann_date": ann_date, "ex_date": ex_date, "pay_date": pay_date,
-             "ts_code": ts_code},
+            {
+                "ann_date": self._clean_api_date(ann_date),
+                "ex_date": self._clean_api_date(ex_date),
+                "pay_date": self._clean_api_date(pay_date),
+                "ts_code": ts_code,
+            },
             ["ts_code", "ann_date"],
             max_records=FUND_DIV_MAX_RECORDS,
+            log_empty_as_warning=False,
         )
 
     def get_mkt_idx_bmk(

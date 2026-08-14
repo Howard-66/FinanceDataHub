@@ -750,6 +750,29 @@ jobs:
       max_retries: 3
       delay: 300
 
+  # 每日 20:45：通过 Mac 端执行器刷新 BasisFlow 的 Wind Excel 静态数据。
+  # 该时段位于 20:15 与 21:20 两组任务之间，完整预留约 35 分钟空档。
+  basisflow_wind_excel_refresh:
+    enabled: true
+    type: desktop_automation
+    resource_group: mac_excel
+    catchup_on_failure: false
+    schedule:
+      type: cron
+      hour: 20
+      minute: 45
+    params:
+      action: wind_excel_refresh
+      workbook_path: "/Volumes/Repository/Projects/TradingNexus/BasisFlow/data/static/煤焦钢矿.xlsx"
+      excel_app_path: "/Volumes/Repository/Applications/Microsoft Excel.app"
+      load_wait_seconds: 90
+      refresh_wait_seconds: 150
+      queue_root: "${DESKTOP_AUTOMATION_QUEUE_ROOT:-data/desktop_automation}"
+      timeout_seconds: 600
+    retry:
+      max_retries: 1
+      delay: 300
+
   hk_technical_preprocess:
     enabled: true
     type: preprocess
