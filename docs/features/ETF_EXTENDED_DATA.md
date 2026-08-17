@@ -8,14 +8,16 @@ FinanceDataHub 支持以下 Tushare ETF/指数接口，并保存官方定义的�
 | `fund_daily` | 5,000 | 遍历本地 `etf_basic` 全部代码 | 从本地最新交易日开始逐 SSE 交易日 |
 | `fund_adj` | 2,000 | 从最早 ETF 日期开始逐 SSE 交易日 | 从本地最新交易日开始，含最新日重拉 |
 | `etf_share_size` | 5,000 | 遍历本地 `etf_basic` 全部代码 | 逐交易日，并回看 7 个自然日以覆盖迟到数据 |
-| `etf_sh_cons` | 3,000 | 遍历沪市 ETF 代码，满页时递归拆分日期范围 | 从本地最新交易日起按沪市 ETF 代码更新 |
-| `etf_sz_cons` | 3,000 | 遍历深市 ETF 代码，满页时递归拆分日期范围 | 从本地最新交易日起按深市 ETF 代码更新 |
+| `etf_sh_cons` | 3,000 | 遍历沪市 ETF 代码，正常 offset 分页，接近 offset 上限时拆分日期范围 | 从本地最新交易日起按沪市 ETF 代码更新 |
+| `etf_sz_cons` | 3,000 | 遍历深市 ETF 代码，正常 offset 分页，接近 offset 上限时拆分日期范围 | 从本地最新交易日起按深市 ETF 代码更新 |
 | `idx_anns` | 1,000 | 从 SSE 交易日历最早日期开始，按自然月窗口 | 从最新公告日回看 7 天，按自然月窗口 |
 
-所有 Provider 请求都会显式传入完整字段列表。支持 `offset` 的接口在达到上限时自动
-翻页；沪深 ETF 持仓组合接口没有 `offset` 输入，改为按 ETF 代码查询，并在日期区间
-达到 3,000 条时递归拆分区间。每个 ETF 批次会立即 upsert，而不是等全量任务结束后
-统一写库。
+所有 Provider 请求都会显式传入完整字段列表。接口在达到上限时自动使用 `offset`
+翻页。沪深 ETF 持仓组合在 `offset=102000` 时会被服务端拒绝，因此下载按 ETF 代码
+执行；若结果在安全 offset 边界仍未结束，则根据已观测到的有数据日期区间分窗
+重取，避免在 ETF 上市后的多年空区间中反复分页。两个接口按 Tushare 8,000
+积分权限使用 500 次/分钟的独立限频。每个 ETF 批次会立即 upsert，而不是等
+全量任务结束后统一写库。
 
 ## CLI
 
@@ -41,8 +43,13 @@ fdh-cli update --dataset idx_anns
 
 # 指定代码或日期范围
 fdh-cli update --dataset fund_daily --symbols 510300.SH --start-date 2024-01-01
+fdh-cli update --dataset fund_daily --symbols all --trade-date 2026-08-14
 fdh-cli update --dataset etf_sh_cons --trade-date 2026-08-14
 ```
+
+`fund_daily` 显式指定 `--trade-date` 时按该交易日一次请求全市场，并由 Provider
+自动使用 offset 分页；即使同时传入 `--symbols all`，也不会遍历
+`etf_basic` 代码。
 
 `etf_index` 是静态目录，可用 `fdh-cli update --dataset etf_index` 刷新全表，或通过
 `--symbols` 精确刷新一个指数代码。

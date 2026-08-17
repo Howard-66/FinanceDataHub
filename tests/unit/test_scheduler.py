@@ -11,13 +11,11 @@ from unittest.mock import Mock, patch
 
 class TestJobConfig:
     """任务配置测试"""
-    
+
     def test_job_config_creation(self):
         """测试任务配置创建"""
-        from finance_data_hub.scheduler.models import (
-            JobConfig, JobType, RetryConfig
-        )
-        
+        from finance_data_hub.scheduler.models import JobConfig, JobType, RetryConfig
+
         config = JobConfig(
             enabled=True,
             type=JobType.DOWNLOAD,
@@ -26,11 +24,11 @@ class TestJobConfig:
                 "type": "cron",
                 "hour": 17,
                 "minute": 0,
-                "day_of_week": "mon-fri"
+                "day_of_week": "mon-fri",
             },
-            retry=RetryConfig()
+            retry=RetryConfig(),
         )
-        
+
         assert config.enabled is True
         assert config.type == JobType.DOWNLOAD
         assert config.dataset == "daily"
@@ -56,36 +54,27 @@ class TestJobConfig:
 
         assert config.resource_group == "xtquant_helper"
         assert config.catchup_on_failure is False
-    
+
     def test_job_config_with_list_dataset(self):
         """测试多数据集任务配置"""
-        from finance_data_hub.scheduler.models import (
-            JobConfig, JobType, RetryConfig
-        )
-        
+        from finance_data_hub.scheduler.models import JobConfig, JobType, RetryConfig
+
         config = JobConfig(
             enabled=True,
             type=JobType.DOWNLOAD,
             dataset=["fina_indicator", "cashflow", "balancesheet"],
-            schedule={
-                "type": "cron",
-                "day": "1,15",
-                "hour": 6,
-                "minute": 0
-            },
-            retry=RetryConfig()
+            schedule={"type": "cron", "day": "1,15", "hour": 6, "minute": 0},
+            retry=RetryConfig(),
         )
-        
+
         datasets = config.get_datasets()
         assert len(datasets) == 3
         assert "fina_indicator" in datasets
-    
+
     def test_preprocess_job_config(self):
         """测试预处理任务配置"""
-        from finance_data_hub.scheduler.models import (
-            JobConfig, JobType, RetryConfig
-        )
-        
+        from finance_data_hub.scheduler.models import JobConfig, JobType, RetryConfig
+
         config = JobConfig(
             enabled=True,
             type=JobType.PREPROCESS,
@@ -94,24 +83,19 @@ class TestJobConfig:
                 "type": "cron",
                 "hour": 18,
                 "minute": 0,
-                "day_of_week": "mon-fri"
+                "day_of_week": "mon-fri",
             },
-            params={
-                "freq": ["daily", "weekly"],
-                "indicators": {"ma": [5, 10, 20]}
-            },
-            retry=RetryConfig()
+            params={"freq": ["daily", "weekly"], "indicators": {"ma": [5, 10, 20]}},
+            retry=RetryConfig(),
         )
-        
+
         assert config.type == JobType.PREPROCESS
         assert config.category == "technical"
         assert "freq" in config.params
 
     def test_aggregate_job_config(self):
         """测试连续聚合刷新任务配置"""
-        from finance_data_hub.scheduler.models import (
-            JobConfig, JobType, RetryConfig
-        )
+        from finance_data_hub.scheduler.models import JobConfig, JobType, RetryConfig
 
         config = JobConfig(
             enabled=True,
@@ -122,16 +106,16 @@ class TestJobConfig:
                 "hour": 17,
                 "minute": 15,
             },
-            retry=RetryConfig()
+            retry=RetryConfig(),
         )
 
         assert config.type == JobType.AGGREGATE
         assert config.get_datasets() == ["futures.minute_15m"]
-    
+
     def test_get_schedule_config(self):
         """测试获取调度配置对象"""
         from finance_data_hub.scheduler.models import JobConfig, CronSchedule
-        
+
         config = JobConfig(
             type="download",
             dataset="daily",
@@ -139,9 +123,9 @@ class TestJobConfig:
                 "type": "cron",
                 "hour": 17,
                 "minute": 30,
-            }
+            },
         )
-        
+
         schedule = config.get_schedule_config()
         assert isinstance(schedule, CronSchedule)
         assert schedule.hour == 17
@@ -150,44 +134,34 @@ class TestJobConfig:
 
 class TestScheduleConfig:
     """调度配置测试"""
-    
+
     def test_cron_schedule(self):
         """测试 Cron 调度"""
         from finance_data_hub.scheduler.models import ScheduleType, CronSchedule
-        
+
         schedule = CronSchedule(
-            type=ScheduleType.CRON,
-            hour=17,
-            minute=30,
-            day_of_week="mon-fri"
+            type=ScheduleType.CRON, hour=17, minute=30, day_of_week="mon-fri"
         )
-        
+
         assert schedule.type == ScheduleType.CRON
         assert schedule.hour == 17
         assert schedule.minute == 30
-    
+
     def test_interval_schedule(self):
         """测试间隔调度"""
         from finance_data_hub.scheduler.models import ScheduleType, IntervalSchedule
-        
-        schedule = IntervalSchedule(
-            type=ScheduleType.INTERVAL,
-            hours=1
-        )
-        
+
+        schedule = IntervalSchedule(type=ScheduleType.INTERVAL, hours=1)
+
         assert schedule.type == ScheduleType.INTERVAL
         assert schedule.hours == 1
-    
+
     def test_cron_to_apscheduler_kwargs(self):
         """测试转换为 APScheduler 参数"""
         from finance_data_hub.scheduler.models import CronSchedule
-        
-        schedule = CronSchedule(
-            hour=17,
-            minute=30,
-            day_of_week="mon-fri"
-        )
-        
+
+        schedule = CronSchedule(hour=17, minute=30, day_of_week="mon-fri")
+
         kwargs = schedule.to_apscheduler_kwargs()
         assert kwargs["hour"] == 17
         assert kwargs["minute"] == 30
@@ -196,7 +170,7 @@ class TestScheduleConfig:
 
 class TestScheduleConfigLoader:
     """配置加载测试"""
-    
+
     @pytest.fixture
     def sample_config_path(self, tmp_path):
         """创建临时配置文件"""
@@ -222,13 +196,13 @@ jobs:
         config_file = tmp_path / "schedules.yml"
         config_file.write_text(config_content)
         return str(config_file)
-    
+
     def test_load_config_from_yaml(self, sample_config_path):
         """测试从 YAML 加载配置"""
         from finance_data_hub.scheduler.models import ScheduleConfig
-        
+
         config = ScheduleConfig.from_yaml(sample_config_path)
-        
+
         assert config.scheduler.timezone == "Asia/Shanghai"
         assert config.scheduler.max_concurrent_jobs == 3
         assert "test_job" in config.jobs
@@ -246,11 +220,17 @@ jobs:
         assert "futures_minute_5m_night_update" in config.jobs
         assert "futures_minute_5m_saturday_update" in config.jobs
         assert config.jobs["futures_minute_15m_night_refresh"].type.value == "aggregate"
-        assert config.jobs["futures_minute_5m_update"].resource_group == "xtquant_helper"
+        assert (
+            config.jobs["futures_minute_5m_update"].resource_group == "xtquant_helper"
+        )
         assert config.jobs["futures_minute_5m_update"].catchup_on_failure is False
         assert config.jobs["futures_minute_5m_update"].params["trade_date"] == "latest"
-        assert "futures_daily_update" in config.jobs["futures_minute_5m_update"].depends_on
-        assert config.jobs["futures_minute_1m_update"].resource_group == "xtquant_helper"
+        assert (
+            "futures_daily_update" in config.jobs["futures_minute_5m_update"].depends_on
+        )
+        assert (
+            config.jobs["futures_minute_1m_update"].resource_group == "xtquant_helper"
+        )
         assert config.jobs["futures_minute_1m_update"].catchup_on_failure is False
         assert config.jobs["futures_minute_1m_update"].params["trade_date"] == "latest"
         assert (
@@ -258,21 +238,37 @@ jobs:
             in config.jobs["futures_minute_1m_update"].depends_on
         )
         assert config.jobs["futures_minute_5m_night_update"].enabled is False
-        assert config.jobs["futures_minute_5m_night_update"].resource_group == "xtquant_helper"
+        assert (
+            config.jobs["futures_minute_5m_night_update"].resource_group
+            == "xtquant_helper"
+        )
         assert config.jobs["futures_minute_5m_night_update"].catchup_on_failure is False
         assert config.jobs["futures_minute_1m_night_update"].enabled is False
-        assert config.jobs["futures_minute_1m_night_update"].resource_group == "xtquant_helper"
+        assert (
+            config.jobs["futures_minute_1m_night_update"].resource_group
+            == "xtquant_helper"
+        )
         assert config.jobs["futures_minute_1m_night_update"].catchup_on_failure is False
         assert (
             "futures_minute_5m_night_update"
             in config.jobs["futures_minute_1m_night_update"].depends_on
         )
         assert config.jobs["futures_minute_5m_saturday_update"].enabled is False
-        assert config.jobs["futures_minute_5m_saturday_update"].resource_group == "xtquant_helper"
-        assert config.jobs["futures_minute_5m_saturday_update"].catchup_on_failure is False
+        assert (
+            config.jobs["futures_minute_5m_saturday_update"].resource_group
+            == "xtquant_helper"
+        )
+        assert (
+            config.jobs["futures_minute_5m_saturday_update"].catchup_on_failure is False
+        )
         assert config.jobs["futures_minute_1m_saturday_update"].enabled is False
-        assert config.jobs["futures_minute_1m_saturday_update"].resource_group == "xtquant_helper"
-        assert config.jobs["futures_minute_1m_saturday_update"].catchup_on_failure is False
+        assert (
+            config.jobs["futures_minute_1m_saturday_update"].resource_group
+            == "xtquant_helper"
+        )
+        assert (
+            config.jobs["futures_minute_1m_saturday_update"].catchup_on_failure is False
+        )
         assert (
             "futures_minute_5m_saturday_update"
             in config.jobs["futures_minute_1m_saturday_update"].depends_on
@@ -299,7 +295,10 @@ jobs:
         assert config.jobs["sw_daily_update"].params["trade_date"] == "latest"
         assert config.jobs["sw_daily_update"].schedule["hour"] == 21
         assert config.jobs["sw_daily_update"].schedule["minute"] == 50
-        assert config.jobs["futures_term_metrics_saturday_update"].dataset == "term_metrics"
+        assert (
+            config.jobs["futures_term_metrics_saturday_update"].dataset
+            == "term_metrics"
+        )
         desktop_job = config.jobs["basisflow_wind_excel_refresh"]
         assert desktop_job.type.value == "desktop_automation"
         assert desktop_job.schedule["hour"] == 20
@@ -312,26 +311,26 @@ jobs:
 
 class TestTaskExecutor:
     """任务执行器测试"""
-    
+
     def test_executor_creation(self):
         """测试执行器创建"""
         from finance_data_hub.scheduler.executor import TaskExecutor
-        
+
         executor = TaskExecutor()
         assert executor is not None
         assert executor.project_root == Path.cwd()
-    
+
     def test_executor_with_custom_path(self, tmp_path):
         """测试自定义路径的执行器"""
         from finance_data_hub.scheduler.executor import TaskExecutor
-        
+
         executor = TaskExecutor(project_root=str(tmp_path))
         assert executor.project_root == tmp_path
-    
+
     def test_get_latest_trade_date(self):
         """测试获取最新交易日"""
         from finance_data_hub.scheduler.executor import TaskExecutor
-        
+
         executor = TaskExecutor()
         trade_date = executor._get_latest_trade_date()
 
@@ -354,7 +353,9 @@ class TestTaskExecutor:
         from finance_data_hub.scheduler.executor import TaskExecutor
 
         executor = TaskExecutor()
-        cmd = executor._build_download_command("daily", {"market": "HK", "trade_date": "2024-01-02"})
+        cmd = executor._build_download_command(
+            "daily", {"market": "HK", "trade_date": "2024-01-02"}
+        )
 
         joined = " ".join(cmd)
         assert "--dataset daily" in joined
@@ -444,9 +445,7 @@ class TestTaskExecutor:
         executor = TaskExecutor()
         with patch("finance_data_hub.scheduler.executor.date") as mock_date:
             mock_date.today.return_value = date(2024, 5, 4)  # Saturday
-            cmd = executor._build_download_command(
-                "fund_div", {"trade_date": "today"}
-            )
+            cmd = executor._build_download_command("fund_div", {"trade_date": "today"})
 
         assert "--dataset fund_div" in " ".join(cmd)
         assert "--trade-date 2024-05-04" in " ".join(cmd)
@@ -537,7 +536,14 @@ class TestTaskExecutor:
                 return False
 
             def execute(self, query, params):
-                assert params["exchanges"] == ["CFFEX", "SHFE", "CZCE", "DCE", "INE", "GFEX"]
+                assert params["exchanges"] == [
+                    "CFFEX",
+                    "SHFE",
+                    "CZCE",
+                    "DCE",
+                    "INE",
+                    "GFEX",
+                ]
                 return FakeResult()
 
         class FakeEngine:
@@ -547,10 +553,15 @@ class TestTaskExecutor:
             def dispose(self):
                 pass
 
-        monkeypatch.setattr(executor_module, "create_engine", lambda *args, **kwargs: FakeEngine())
+        monkeypatch.setattr(
+            executor_module, "create_engine", lambda *args, **kwargs: FakeEngine()
+        )
 
         executor = TaskExecutor()
-        assert executor._query_trade_calendar_date("future", date(2024, 5, 7), None) == "2024-05-06"
+        assert (
+            executor._query_trade_calendar_date("future", date(2024, 5, 7), None)
+            == "2024-05-06"
+        )
 
     def test_build_aggregate_command(self):
         """连续聚合刷新命令应透传表名与日期窗口。"""
@@ -580,7 +591,9 @@ class TestTaskExecutor:
         from finance_data_hub.scheduler.executor import TaskExecutor
 
         executor = TaskExecutor()
-        cmd = executor._build_preprocess_command("technical", {"all": True, "market": "HK"})
+        cmd = executor._build_preprocess_command(
+            "technical", {"all": True, "market": "HK"}
+        )
 
         joined = " ".join(cmd)
         assert "--category technical" in joined
@@ -640,7 +653,7 @@ class TestTaskExecutor:
 
 class TestScheduleManager:
     """调度管理器测试"""
-    
+
     @pytest.fixture
     def sample_config_path(self, tmp_path):
         """创建临时配置文件"""
@@ -681,34 +694,34 @@ jobs:
         config_file = tmp_path / "schedules.yml"
         config_file.write_text(config_content)
         return str(config_file)
-    
+
     def test_manager_creation(self, sample_config_path):
         """测试调度管理器创建"""
         from finance_data_hub.scheduler.manager import ScheduleManager
-        
+
         manager = ScheduleManager(config_path=sample_config_path)
         config = manager.load_config()
         assert config is not None
-    
+
     def test_manager_config_jobs(self, sample_config_path):
         """测试调度管理器配置中的任务"""
         from finance_data_hub.scheduler.manager import ScheduleManager
-        
+
         manager = ScheduleManager(config_path=sample_config_path)
         config = manager.load_config()
-        
+
         # 配置中应该有两个任务
         assert len(config.jobs) == 2
         assert "test_download" in config.jobs
         assert "test_preprocess" in config.jobs
-    
+
     def test_manager_job_dependency(self, sample_config_path):
         """测试任务依赖配置"""
         from finance_data_hub.scheduler.manager import ScheduleManager
-        
+
         manager = ScheduleManager(config_path=sample_config_path)
         config = manager.load_config()
-        
+
         preprocess_config = config.jobs["test_preprocess"]
         assert "test_download" in preprocess_config.depends_on
 
@@ -742,6 +755,60 @@ jobs:
         )
 
         assert manager._sync_database_url() == "postgresql://user:pass@localhost/db"
+
+    def test_postgresql_scheduler_requires_singleton_lock(
+        self, sample_config_path, monkeypatch
+    ):
+        """Two schedulers must not poll the same persistent APScheduler table."""
+        from finance_data_hub.scheduler.manager import ScheduleManager
+
+        connection = Mock()
+        connection.execute.return_value.scalar.return_value = False
+        engine = Mock()
+        engine.connect.return_value = connection
+        monkeypatch.setattr(
+            "sqlalchemy.create_engine", lambda *_args, **_kwargs: engine
+        )
+
+        manager = ScheduleManager(
+            config_path=sample_config_path,
+            database_url="postgresql://user:pass@localhost/db",
+        )
+        config = manager.load_config()
+        config.scheduler.job_store = "postgresql"
+
+        with pytest.raises(RuntimeError, match="Another FinanceDataHub scheduler"):
+            manager._acquire_instance_lock()
+
+        connection.close.assert_called_once()
+        engine.dispose.assert_called_once()
+
+    def test_scheduler_singleton_lock_is_released(
+        self, sample_config_path, monkeypatch
+    ):
+        from finance_data_hub.scheduler.manager import ScheduleManager
+
+        connection = Mock()
+        connection.execute.return_value.scalar.return_value = True
+        engine = Mock()
+        engine.connect.return_value = connection
+        monkeypatch.setattr(
+            "sqlalchemy.create_engine", lambda *_args, **_kwargs: engine
+        )
+
+        manager = ScheduleManager(
+            config_path=sample_config_path,
+            database_url="postgresql://user:pass@localhost/db",
+        )
+        config = manager.load_config()
+        config.scheduler.job_store = "postgresql"
+
+        manager._acquire_instance_lock()
+        manager._release_instance_lock()
+
+        assert connection.execute.call_count == 2
+        connection.close.assert_called_once()
+        engine.dispose.assert_called_once()
 
     def test_industry_valuation_depends_on_fundamental_preprocess_only(self):
         """行业估值预处理只依赖基本面预处理，行业分类使用最新成分映射。"""
@@ -888,7 +955,9 @@ jobs:
             refresh_15m = config.jobs[refresh_job_id]
 
             minute_time = minute_5m.schedule["hour"] * 60 + minute_5m.schedule["minute"]
-            refresh_time = refresh_15m.schedule["hour"] * 60 + refresh_15m.schedule["minute"]
+            refresh_time = (
+                refresh_15m.schedule["hour"] * 60 + refresh_15m.schedule["minute"]
+            )
 
             assert minute_job_id in refresh_15m.depends_on
             assert refresh_time - minute_time >= 30
@@ -982,9 +1051,7 @@ jobs:
 
         manager._engine.add_one_time_job.assert_not_called()
 
-    def test_past_next_day_catchup_is_skipped(
-        self, sample_config_path, monkeypatch
-    ):
+    def test_past_next_day_catchup_is_skipped(self, sample_config_path, monkeypatch):
         """调度器重启后不应把历史补跑改成当前立即执行。"""
         from finance_data_hub.scheduler.manager import ScheduleManager
 
@@ -1012,9 +1079,7 @@ jobs:
 
         manager._engine.add_one_time_job.assert_not_called()
 
-    def test_catchup_run_does_not_schedule_another_catchup(
-        self, sample_config_path
-    ):
+    def test_catchup_run_does_not_schedule_another_catchup(self, sample_config_path):
         """补跑失败不应无限递归安排补跑。"""
         from finance_data_hub.scheduler.manager import ScheduleManager
         from finance_data_hub.scheduler.executor import TaskExecutor, RetryExecutor
@@ -1052,12 +1117,12 @@ jobs:
 
 class TestRetryExecutor:
     """重试执行器测试"""
-    
+
     def test_retry_executor_creation(self):
         """测试重试执行器创建"""
         from finance_data_hub.scheduler.executor import TaskExecutor, RetryExecutor
-        
+
         executor = TaskExecutor()
         retry_executor = RetryExecutor(executor)
-        
+
         assert retry_executor.executor is executor

@@ -16,6 +16,8 @@ services:
     volumes:
       - ./pg_data:/var/lib/postgresql/data
       - ./sql/init:/docker-entrypoint-initdb.d
+      # 初始化脚本从独立目录读取迁移，避免与上方目录挂载发生重叠。
+      - ./sql/migrations:/app/sql/migrations:ro
     # 2. 【关键操作】删除了 command 这一行
     # 让容器使用默认的启动命令，这能解决 "exec: trading_nexus: not found" 错误
     healthcheck:

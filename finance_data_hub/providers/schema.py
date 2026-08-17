@@ -68,6 +68,115 @@ StockBasicSchema = DataFrameSchema(
 )
 
 
+# 主线策略所需的股票状态、公司行为与市场资金 Schema
+StockStSchema = DataFrameSchema(
+    name="stock_st",
+    description="股票 ST 每日快照（Tushare stock_st）",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "股票代码"),
+        ColumnSchema("name", "object", True, "证券简称"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("type", "object", True, "ST 类型"),
+        ColumnSchema("type_name", "object", True, "ST 类型名称"),
+    ],
+)
+
+StockNameChangeSchema = DataFrameSchema(
+    name="stock_namechange",
+    description="股票简称变更区间（Tushare namechange）",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "股票代码"),
+        ColumnSchema("name", "object", False, "证券简称"),
+        ColumnSchema("start_date", "datetime64[ns]", True, "简称启用日期"),
+        ColumnSchema("end_date", "datetime64[ns]", True, "简称结束日期"),
+        ColumnSchema("ann_date", "datetime64[ns]", True, "公告日期"),
+        ColumnSchema("change_reason", "object", True, "变更原因"),
+    ],
+)
+
+StockSuspendSchema = DataFrameSchema(
+    name="stock_suspend",
+    description="股票每日停复牌信息（Tushare suspend_d）",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "股票代码"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("suspend_timing", "object", True, "停复牌时间段"),
+        ColumnSchema("suspend_type", "object", True, "停复牌类型"),
+    ],
+)
+
+StockDividendSchema = DataFrameSchema(
+    name="stock_dividend",
+    description="股票分红送股（Tushare dividend）",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "股票代码"),
+        ColumnSchema("end_date", "datetime64[ns]", False, "分红年度"),
+        ColumnSchema("ann_date", "datetime64[ns]", True, "预案公告日"),
+        ColumnSchema("div_proc", "object", True, "实施进度"),
+        ColumnSchema("stk_div", "float64", True, "每股送转"),
+        ColumnSchema("stk_bo_rate", "float64", True, "每股送股比例"),
+        ColumnSchema("stk_co_rate", "float64", True, "每股转增比例"),
+        ColumnSchema("cash_div", "float64", True, "每股分红（税前）"),
+        ColumnSchema("cash_div_tax", "float64", True, "每股分红（税后）"),
+        ColumnSchema("record_date", "datetime64[ns]", True, "股权登记日"),
+        ColumnSchema("ex_date", "datetime64[ns]", True, "除权除息日"),
+        ColumnSchema("pay_date", "datetime64[ns]", True, "派息日"),
+        ColumnSchema("div_listdate", "datetime64[ns]", True, "红股上市日"),
+        ColumnSchema("imp_ann_date", "datetime64[ns]", True, "实施公告日"),
+        ColumnSchema("base_date", "datetime64[ns]", True, "基准日"),
+        ColumnSchema("base_share", "float64", True, "基准股本（万）"),
+    ],
+)
+
+StockRepurchaseSchema = DataFrameSchema(
+    name="stock_repurchase",
+    description="股票回购（Tushare repurchase）",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "股票代码"),
+        ColumnSchema("ann_date", "datetime64[ns]", False, "公告日期"),
+        ColumnSchema("end_date", "datetime64[ns]", True, "截止日期"),
+        ColumnSchema("proc", "object", True, "进度"),
+        ColumnSchema("exp_date", "datetime64[ns]", True, "过期日期"),
+        ColumnSchema("vol", "float64", True, "回购数量"),
+        ColumnSchema("amount", "float64", True, "回购金额"),
+        ColumnSchema("high_limit", "float64", True, "回购最高价"),
+        ColumnSchema("low_limit", "float64", True, "回购最低价"),
+    ],
+)
+
+MarginDetailSchema = DataFrameSchema(
+    name="margin_detail",
+    description="融资融券交易明细（Tushare margin_detail）",
+    columns=[
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("ts_code", "object", False, "股票代码"),
+        ColumnSchema("name", "object", True, "证券名称"),
+        ColumnSchema("rzye", "float64", True, "融资余额"),
+        ColumnSchema("rqye", "float64", True, "融券余额"),
+        ColumnSchema("rzmre", "float64", True, "融资买入额"),
+        ColumnSchema("rqyl", "float64", True, "融券余量"),
+        ColumnSchema("rzche", "float64", True, "融资偿还额"),
+        ColumnSchema("rqchl", "float64", True, "融券偿还量"),
+        ColumnSchema("rqmcl", "float64", True, "融券卖出量"),
+        ColumnSchema("rzrqye", "float64", True, "融资融券余额"),
+    ],
+)
+
+MoneyflowHsgtSchema = DataFrameSchema(
+    name="moneyflow_hsgt",
+    description="沪深港通资金流向（Tushare moneyflow_hsgt）",
+    columns=[
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("ggt_ss", "float64", True, "港股通（上海）"),
+        ColumnSchema("ggt_sz", "float64", True, "港股通（深圳）"),
+        ColumnSchema("hgt", "float64", True, "沪股通"),
+        ColumnSchema("sgt", "float64", True, "深股通"),
+        ColumnSchema("north_money", "float64", True, "北向资金"),
+        ColumnSchema("south_money", "float64", True, "南向资金"),
+    ],
+)
+
+
 # 公募基金基本信息 Schema
 FundBasicSchema = DataFrameSchema(
     name="fund_basic",

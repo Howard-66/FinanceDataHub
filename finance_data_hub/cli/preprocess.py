@@ -45,6 +45,7 @@ from ..preprocessing.storage import (
     ValuationFillStorage,
 )
 from ..preprocessing.technical.base import create_indicator
+from ..preprocessing.mainline import MAINLINE_HISTORY_START, MainlinePreprocessor
 from ..utils.market import exchanges_for_market, normalize_market
 
 console = Console(legacy_windows=False)
@@ -101,6 +102,15 @@ CALENDAR_DAYS_PER_FREQ = {
 # Phase 2: 并发控制配置
 DEFAULT_MAX_CONCURRENT_BATCHES = 4  # 默认并发批次数（I/O并发）
 DEFAULT_NUM_WORKERS = None  # 默认工作进程数（None表示自动：min(CPU核心数-1, 4)）
+
+
+def _resolve_mainline_start_date(
+    start_date: Optional[str], force: bool
+) -> Optional[str]:
+    """主线强制全量模式从策略历史起点开始，显式日期优先。"""
+    if start_date:
+        return start_date
+    return MAINLINE_HISTORY_START if force else None
 
 
 def _get_required_bars_for_freq(freq: str, indicators: Optional[List[str]] = None) -> int:
@@ -2250,7 +2260,7 @@ def run_preprocess(
         None,
         "--category",
         "-c",
-        help="预处理类别 (technical, valuation_fill, fundamental, quarterly_fundamental, industry_valuation, macro_cycle, all)"
+        help="预处理类别 (technical, valuation_fill, fundamental, quarterly_fundamental, industry_valuation, macro_cycle, mainline, all)"
     ),
     symbols: Optional[str] = typer.Option(
         None,
@@ -2345,7 +2355,7 @@ def run_preprocess(
     category = category or "technical"
     market_code = normalize_market(market, default="CN")
 
-    requires_symbol_scope = category not in ["macro_cycle"]
+    requires_symbol_scope = category not in ["macro_cycle", "mainline"]
 
     # 参数校验
     if requires_symbol_scope and not all_data and not symbols:
@@ -2353,8 +2363,8 @@ def run_preprocess(
         console.print("示例: fdh-cli preprocess run --all --category technical")
         raise typer.Exit(1)
 
-    if category == "macro_cycle" and symbol_list:
-        console.print("[yellow]macro_cycle 预处理不使用 --symbols 参数，将忽略该参数[/yellow]")
+    if category in {"macro_cycle", "mainline"} and symbol_list:
+        console.print(f"[yellow]{category} 预处理不使用 --symbols 参数，将忽略该参数[/yellow]")
         symbol_list = None
 
     if market_code != "CN" and category in {
@@ -2374,7 +2384,10 @@ def run_preprocess(
     # 如果使用 --force，清除日期限制进行全量处理
     if force:
         console.print("[yellow]强制模式: 将进行全量重新计算[/yellow]")
-        start_date = None
+        if category == "mainline":
+            start_date = _resolve_mainline_start_date(start_date, force=True)
+        else:
+            start_date = None
     
     console.print(f"类别: {category}")
     console.print(f"市场: {market_code}")
@@ -2506,6 +2519,44 @@ def run_preprocess(
                 console.print(f"  主表记录: {result['phase_records']}")
                 console.print(f"  行业快照记录: {result['industry_records']}")
                 console.print(f"  总处理记录: {result['records_processed']}\n")
+
+            if category in ["mainline", "all"]:
+                console.print("[bold cyan]== 量化主线事实与因子预处理 ==[/bold cyan]\n")
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[bold blue]{task.description}"),
+                    BarColumn(),
+                    TextColumn("[bold cyan]{task.completed:.0f}/{task.total:.0f} 分区"),
+                    TimeElapsedColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task("正在准备主线预处理...", total=1)
+
+                    def mainline_progress(
+                        completed: int, total: int, description: str
+                    ) -> None:
+                        progress.update(
+                            task,
+                            completed=completed,
+                            total=total,
+                            description=description,
+                        )
+
+                    counts = await MainlinePreprocessor(db_manager).run(
+                        start_date=_resolve_mainline_start_date(start_date, force),
+                        end_date=end_date,
+                        include_monthly=True,
+                        progress_callback=mainline_progress,
+                    )
+                result = {
+                    "records_processed": sum(counts.values()),
+                    "datasets": counts,
+                }
+                results["mainline"] = result
+                console.print("\n[green]量化主线因子处理完成[/green]")
+                for dataset, count in counts.items():
+                    console.print(f"  {dataset}: {count}")
+                console.print()
 
             # 汇总
             total_records = sum(r.get("records_processed", 0) for r in results.values())

@@ -57,6 +57,54 @@ ADJ_FACTOR_TABLE = Table(
 )
 
 
+# 固定白名单，供主线策略原始补充数据的通用 UPSERT/查询使用。
+MAINLINE_RAW_TABLES = {
+    "stock_st": {
+        "columns": ["ts_code", "trade_date", "name", "type", "type_name"],
+        "keys": ["ts_code", "trade_date"], "date_column": "trade_date",
+    },
+    "stock_namechange": {
+        "columns": ["ts_code", "name", "start_date", "end_date", "ann_date", "change_reason"],
+        "keys": ["ts_code", "start_date", "name"], "date_column": "start_date",
+    },
+    "stock_suspend": {
+        "columns": ["ts_code", "trade_date", "suspend_timing", "suspend_type"],
+        "keys": ["ts_code", "trade_date", "suspend_type"], "date_column": "trade_date",
+    },
+    "stock_dividend": {
+        "columns": [
+            "ts_code", "end_date", "ann_date", "div_proc", "stk_div",
+            "stk_bo_rate", "stk_co_rate", "cash_div", "cash_div_tax",
+            "record_date", "ex_date", "pay_date", "div_listdate",
+            "imp_ann_date", "base_date", "base_share",
+        ],
+        "keys": ["ts_code", "end_date", "ann_date", "div_proc"],
+        "date_column": "ann_date",
+    },
+    "stock_repurchase": {
+        "columns": [
+            "ts_code", "ann_date", "end_date", "proc", "exp_date", "vol",
+            "amount", "high_limit", "low_limit",
+        ],
+        "keys": ["ts_code", "ann_date", "proc"], "date_column": "ann_date",
+    },
+    "margin_detail": {
+        "columns": [
+            "trade_date", "ts_code", "name", "rzye", "rqye", "rzmre",
+            "rqyl", "rzche", "rqchl", "rqmcl", "rzrqye",
+        ],
+        "keys": ["ts_code", "trade_date"], "date_column": "trade_date",
+    },
+    "moneyflow_hsgt": {
+        "columns": [
+            "trade_date", "ggt_ss", "ggt_sz", "hgt", "sgt",
+            "north_money", "south_money",
+        ],
+        "keys": ["trade_date"], "date_column": "trade_date",
+    },
+}
+
+
 def _normalize_futures_minute_frequency(frequency: str) -> str:
     """Normalize futures minute frequency aliases to storage keys."""
     normalized = str(frequency or "1m").strip().lower()
@@ -179,6 +227,110 @@ class DataOperations:
             db_manager: 数据库管理器
         """
         self.db_manager = db_manager
+
+    async def upsert_mainline_raw_batch(
+        self, dataset: str, data: pd.DataFrame, batch_size: int = 1000
+    ) -> int:
+        """写入主线策略补充原始表；dataset 必须来自固定白名单。"""
+        config = MAINLINE_RAW_TABLES.get(dataset)
+        if config is None:
+            raise ValueError(f"Unsupported mainline raw dataset: {dataset}")
+        if data is None or data.empty:
+            return 0
+
+        columns = config["columns"]
+        missing = set(config["keys"]) - set(data.columns)
+        if missing:
+            raise ValueError(f"{dataset} missing key columns: {sorted(missing)}")
+
+        prepared = data.copy()
+        # SQL 主键中的事件阶段字段使用空字符串表达“接口未提供”，保持幂等。
+        for column in ("div_proc", "proc", "suspend_type"):
+            if column in columns:
+                if column not in prepared.columns:
+                    prepared[column] = ""
+                else:
+                    prepared[column] = prepared[column].fillna("")
+        for column in columns:
+            if column not in prepared.columns:
+                prepared[column] = None
+        prepared = prepared.drop_duplicates(subset=config["keys"], keep="last")
+
+        update_columns = [column for column in columns if column not in config["keys"]]
+        column_sql = ", ".join(columns)
+        value_sql = ", ".join(f":{column}" for column in columns)
+        conflict_sql = ", ".join(config["keys"])
+        update_sql = ", ".join(
+            f"{column} = EXCLUDED.{column}" for column in update_columns
+        )
+        statement = text(
+            f"INSERT INTO {dataset} ({column_sql}) VALUES ({value_sql}) "
+            f"ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql}, "
+            "updated_at = NOW()"
+        )
+
+        total = 0
+        async with self.db_manager._engine.begin() as conn:
+            for start in range(0, len(prepared), batch_size):
+                records = prepared.iloc[start:start + batch_size][columns].to_dict("records")
+                for record in records:
+                    for key, value in record.items():
+                        if pd.isna(value):
+                            record[key] = None
+                        elif isinstance(value, pd.Timestamp):
+                            record[key] = value.date()
+                await conn.execute(statement, records)
+                # asyncpg executemany reports rowcount=-1 even after a
+                # successful batch.  Every bound record was processed when no
+                # exception is raised, so report the actual batch size.
+                total += len(records)
+        logger.info(f"Upserted {total} records to {dataset}")
+        return total
+
+    async def get_mainline_raw(
+        self,
+        dataset: str,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        as_of: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """查询主线策略补充原始数据，namechange 支持点时区间查询。"""
+        config = MAINLINE_RAW_TABLES.get(dataset)
+        if config is None:
+            raise ValueError(f"Unsupported mainline raw dataset: {dataset}")
+        clauses = ["1=1"]
+        params: Dict[str, Any] = {}
+        if symbols and "ts_code" in config["columns"]:
+            clauses.append("ts_code = ANY(:symbols)")
+            params["symbols"] = symbols
+
+        date_column = config["date_column"]
+        if as_of and dataset == "stock_namechange":
+            clauses.extend([
+                "start_date <= :as_of",
+                "(end_date IS NULL OR end_date >= :as_of)",
+            ])
+            params["as_of"] = pd.Timestamp(as_of).date()
+        else:
+            if start_date:
+                clauses.append(f"{date_column} >= :start_date")
+                params["start_date"] = pd.Timestamp(start_date).date()
+            if end_date:
+                clauses.append(f"{date_column} <= :end_date")
+                params["end_date"] = pd.Timestamp(end_date).date()
+
+        order_columns = [date_column]
+        if "ts_code" in config["columns"]:
+            order_columns.insert(0, "ts_code")
+        query = text(
+            f"SELECT {', '.join(config['columns'])} FROM {dataset} "
+            f"WHERE {' AND '.join(clauses)} ORDER BY {', '.join(order_columns)}"
+        )
+        async with self.db_manager._engine.begin() as conn:
+            result = await conn.execute(query, params)
+            rows = result.fetchall()
+            return pd.DataFrame(rows, columns=result.keys())
 
     async def insert_symbol_daily_batch(
         self, data: pd.DataFrame, batch_size: int = 1000
@@ -5959,7 +6111,7 @@ class DataOperations:
                 :l1_code, :l1_name, :l2_code, :l2_name, :l3_code, :l3_name,
                 :ts_code, :name, :in_date, :out_date, :is_new
             )
-            ON CONFLICT (l3_code, ts_code) DO UPDATE SET
+            ON CONFLICT (l3_code, ts_code, in_date_key) DO UPDATE SET
                 l1_code = EXCLUDED.l1_code,
                 l1_name = EXCLUDED.l1_name,
                 l2_code = EXCLUDED.l2_code,
@@ -6010,6 +6162,7 @@ class DataOperations:
         l2_code: Optional[str] = None,
         l3_code: Optional[str] = None,
         ts_code: Optional[str] = None,
+        as_of: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         查询申万行业成分股
@@ -6019,6 +6172,7 @@ class DataOperations:
             l2_code: 二级行业代码
             l3_code: 三级行业代码
             ts_code: 股票代码，如 '600519.SH'，用于查询股票所属的行业
+            as_of: 点时日期；仅返回当日有效的行业归属
 
         Returns:
             Optional[pd.DataFrame]: 申万行业成分股数据
@@ -6043,6 +6197,12 @@ class DataOperations:
         if ts_code:
             query += " AND ts_code = :ts_code"
             params["ts_code"] = ts_code
+        if as_of:
+            query += (
+                " AND COALESCE(in_date, DATE '1900-01-01') <= :as_of"
+                " AND (out_date IS NULL OR out_date >= :as_of)"
+            )
+            params["as_of"] = pd.Timestamp(as_of).date()
 
         query += " ORDER BY l1_code, l2_code, l3_code, ts_code"
 

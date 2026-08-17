@@ -23,6 +23,13 @@ from finance_data_hub.providers.base import (
 from finance_data_hub.providers.registry import register_provider
 from finance_data_hub.providers.schema import (
     StockBasicSchema,
+    StockStSchema,
+    StockNameChangeSchema,
+    StockSuspendSchema,
+    StockDividendSchema,
+    StockRepurchaseSchema,
+    MarginDetailSchema,
+    MoneyflowHsgtSchema,
     FundBasicSchema,
     EtfBasicSchema,
     FundCompanySchema,
@@ -131,7 +138,9 @@ FUND_DAILY_MAX_RECORDS = 5000
 FUND_ADJ_MAX_RECORDS = 2000
 ETF_SHARE_SIZE_MAX_RECORDS = 5000
 ETF_CONS_MAX_RECORDS = 3000
+ETF_CONS_MAX_SAFE_OFFSET = 99000
 IDX_ANNS_MAX_RECORDS = 1000
+MAINLINE_SERIES_MAX_RECORDS = 5000
 TUSHARE_FUND_MARKETS = ["E", "O"]
 SUPPORTED_FUTURES_INDEX_CODES = [
     "NHCI.NH",  # 南华商品指数
@@ -191,6 +200,12 @@ class TushareProvider(BaseDataProvider):
         )
         self._api_rate_limits_per_minute: Dict[str, float] = {
             "fut_settle": 75.0,
+            # Both ETF basket endpoints require 8,000 points.  Tushare's
+            # published frequency table permits 500 calls/minute at 5,000+
+            # points, so keeping the generic 200/minute default here needlessly
+            # more than doubles full-history download time.
+            "etf_sh_cons": 500.0,
+            "etf_sz_cons": 500.0,
             **{
                 str(api_name): float(limit)
                 for api_name, limit in api_rate_limit_overrides.items()
@@ -291,26 +306,30 @@ class TushareProvider(BaseDataProvider):
         限频检查
 
         Tushare Pro API有调用频率限制，确保不超过限制。
-        先应用全局调用间隔，再按接口覆盖更严格的频率上限。
+        接口级配置会覆盖默认频率，可以比默认值更严格，也可以在
+        接口权限允许时更宽松。
         """
         current_time = time.time()
-        global_min_interval = self._per_minute_to_min_interval(
-            self._default_rate_limit_per_minute
+        effective_limit = self._api_rate_limits_per_minute.get(
+            api_name, self._default_rate_limit_per_minute
         )
-        api_limit = self._api_rate_limits_per_minute.get(api_name)
-        api_min_interval = (
-            self._per_minute_to_min_interval(api_limit) if api_limit else 0.0
+        effective_min_interval = self._per_minute_to_min_interval(
+            effective_limit
         )
 
         wait_time = 0.0
         if self._last_call_time > 0:
             time_since_last_call = current_time - self._last_call_time
-            wait_time = max(wait_time, global_min_interval - time_since_last_call)
+            wait_time = max(
+                wait_time, effective_min_interval - time_since_last_call
+            )
 
         last_api_call_time = self._last_call_time_by_api.get(api_name, 0.0)
-        if last_api_call_time > 0 and api_min_interval > 0:
+        if last_api_call_time > 0 and effective_min_interval > 0:
             time_since_api_call = current_time - last_api_call_time
-            wait_time = max(wait_time, api_min_interval - time_since_api_call)
+            wait_time = max(
+                wait_time, effective_min_interval - time_since_api_call
+            )
 
         if wait_time > 0:
             logger.debug(f"Rate limiting {api_name}: waiting {wait_time:.2f}s")
@@ -459,6 +478,22 @@ class TushareProvider(BaseDataProvider):
             logger.info(f"Fetched {len(df)} HK stocks from Tushare hk_basic")
             return df
 
+        # Tushare stock_basic 在不传 list_status 时仍可能只返回上市股票。
+        # 明确逐状态拉取，确保退市/暂停股票进入历史股票池，避免幸存者偏差。
+        if list_status is None:
+            frames = [
+                self.get_stock_basic(market=market, list_status=status)
+                for status in ("L", "D", "P")
+            ]
+            frames = [frame for frame in frames if not frame.empty]
+            if not frames:
+                return pd.DataFrame(columns=StockBasicSchema.get_required_columns())
+            return (
+                pd.concat(frames, ignore_index=True, sort=False)
+                .drop_duplicates(subset=["symbol"], keep="first")
+                .reset_index(drop=True)
+            )
+
         exchange_filter = None if market_code in (None, "CN", "ALL") else market_code
 
         # 调用Tushare API
@@ -495,6 +530,312 @@ class TushareProvider(BaseDataProvider):
 
         logger.info(f"Fetched {len(df)} stocks from Tushare")
         return df
+
+    def _get_mainline_series(
+        self,
+        api_name: str,
+        schema,
+        params: Dict[str, Any],
+        key_columns: List[str],
+        max_records: int = MAINLINE_SERIES_MAX_RECORDS,
+    ) -> pd.DataFrame:
+        """Fetch and normalize a paginated mainline-strategy source dataset."""
+        clean_params = {
+            key: (self._clean_api_date(value) if "date" in key else value)
+            for key, value in params.items()
+            if value is not None
+        }
+        frames: List[pd.DataFrame] = []
+        offset = 0
+        previous_fingerprint = None
+        while True:
+            page = self._call_api(
+                api_name,
+                fields=",".join(schema.get_required_columns()),
+                offset=offset,
+                **clean_params,
+            )
+            if page is None or page.empty:
+                break
+            fingerprint = tuple(
+                tuple(str(value) for value in row)
+                for row in page[key_columns].head(5).itertuples(index=False, name=None)
+            )
+            if offset and fingerprint == previous_fingerprint:
+                raise ProviderDataError(
+                    f"{api_name} ignored offset={offset}",
+                    provider_name=self.name,
+                )
+            frames.append(page)
+            if len(page) < max_records:
+                break
+            previous_fingerprint = fingerprint
+            offset += len(page)
+
+        if not frames:
+            return pd.DataFrame(columns=schema.get_required_columns())
+
+        result = pd.concat(frames, ignore_index=True, sort=False)
+        for column in schema.columns:
+            if column.dtype == "datetime64[ns]" and column.name in result.columns:
+                result[column.name] = pd.to_datetime(
+                    result[column.name], format="%Y%m%d", errors="coerce"
+                )
+        result = validate_dataframe(result, schema, provider_name=self.name)
+        for column in schema.columns:
+            if (
+                column.dtype == "object"
+                and column.nullable
+                and column.name in result.columns
+            ):
+                result[column.name] = result[column.name].replace(
+                    {"None": None, "nan": None, "<NA>": None}
+                )
+        return (
+            result.drop_duplicates(subset=key_columns, keep="last")
+            .reset_index(drop=True)
+        )
+
+    def _get_mainline_date_chunks(
+        self,
+        api_name: str,
+        schema,
+        params: Dict[str, Any],
+        key_columns: List[str],
+        start_date: str,
+        end_date: str,
+        chunk_frequency: str,
+        max_records: int = MAINLINE_SERIES_MAX_RECORDS,
+        minimum_start_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """按日/月/年切片后分页获取高密度历史数据。"""
+        range_start = pd.Timestamp(start_date)
+        if minimum_start_date:
+            range_start = max(range_start, pd.Timestamp(minimum_start_date))
+        range_end = pd.Timestamp(end_date)
+        if range_start > range_end:
+            raise ValueError(f"{api_name} start_date must not be later than end_date")
+
+        frames: List[pd.DataFrame] = []
+        window_start = range_start
+        while window_start <= range_end:
+            if chunk_frequency == "day":
+                natural_end = window_start
+            elif chunk_frequency == "month":
+                natural_end = window_start + pd.offsets.MonthEnd(0)
+            elif chunk_frequency == "year":
+                natural_end = window_start + pd.offsets.YearEnd(0)
+            else:
+                raise ValueError(f"Unsupported chunk frequency: {chunk_frequency}")
+            window_end = min(natural_end, range_end)
+            logger.info(
+                "Fetching {} {} window {} to {}",
+                api_name,
+                chunk_frequency,
+                window_start.strftime("%Y-%m-%d"),
+                window_end.strftime("%Y-%m-%d"),
+            )
+            chunk_params = dict(params)
+            chunk_params.update(
+                {
+                    "start_date": window_start.strftime("%Y-%m-%d"),
+                    "end_date": window_end.strftime("%Y-%m-%d"),
+                }
+            )
+            frame = self._get_mainline_series(
+                api_name,
+                schema,
+                chunk_params,
+                key_columns,
+                max_records=max_records,
+            )
+            if not frame.empty:
+                frames.append(frame)
+            window_start = window_end + pd.Timedelta(days=1)
+
+        if not frames:
+            return pd.DataFrame(columns=schema.get_required_columns())
+        date_columns = [
+            column.name
+            for column in schema.columns
+            if column.dtype == "datetime64[ns]" and column.name in key_columns
+        ]
+        sort_columns = date_columns + [
+            column for column in key_columns if column not in date_columns
+        ]
+        return (
+            pd.concat(frames, ignore_index=True, sort=False)
+            .drop_duplicates(subset=key_columns, keep="last")
+            .sort_values(sort_columns)
+            .reset_index(drop=True)
+        )
+
+    def get_stock_st(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取 2016 年以来的 ST 日快照。
+
+        ``stock_st`` 单次最多返回 1,000 行。直接提交多年区间会先在服务端
+        执行大范围查询，并可能以“查询数据失败”结束，而不是正常返回可分页的
+        第一页。因此范围查询按自然月拆分，再在每个月内使用 offset 分页。
+        """
+        if trade_date or (not start_date and not end_date):
+            return self._get_mainline_series(
+                "stock_st",
+                StockStSchema,
+                {"ts_code": ts_code, "trade_date": trade_date},
+                ["ts_code", "trade_date"],
+                max_records=1000,
+            )
+
+        return self._get_mainline_date_chunks(
+            "stock_st",
+            StockStSchema,
+            {"ts_code": ts_code},
+            ["ts_code", "trade_date"],
+            start_date=start_date or "2016-01-01",
+            end_date=end_date or str(datetime.now().date()),
+            chunk_frequency="month",
+            max_records=1000,
+            minimum_start_date="2016-01-01",
+        )
+
+    def get_stock_namechange(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取股票历史简称区间，用于点时名称和早期 ST 状态重建。"""
+        return self._get_mainline_series(
+            "namechange", StockNameChangeSchema,
+            {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+            ["ts_code", "start_date", "name"],
+        )
+
+    def get_stock_suspend(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取每日停复牌信息。"""
+        if start_date and end_date and not trade_date:
+            return self._get_mainline_date_chunks(
+                "suspend_d",
+                StockSuspendSchema,
+                {"ts_code": ts_code},
+                ["ts_code", "trade_date", "suspend_type"],
+                start_date=start_date,
+                end_date=end_date,
+                chunk_frequency="month",
+            )
+        return self._get_mainline_series(
+            "suspend_d", StockSuspendSchema,
+            {"ts_code": ts_code, "trade_date": trade_date,
+             "start_date": start_date, "end_date": end_date},
+            ["ts_code", "trade_date", "suspend_type"],
+        )
+
+    def get_stock_dividend(
+        self,
+        ts_code: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        record_date: Optional[str] = None,
+        ex_date: Optional[str] = None,
+        imp_ann_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取股票分红送转事件。"""
+        return self._get_mainline_series(
+            "dividend", StockDividendSchema,
+            {"ts_code": ts_code, "ann_date": ann_date,
+             "record_date": record_date, "ex_date": ex_date,
+             "imp_ann_date": imp_ann_date},
+            ["ts_code", "end_date", "div_proc", "ann_date"],
+        )
+
+    def get_stock_repurchase(
+        self,
+        ts_code: Optional[str] = None,
+        ann_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取股票回购事件。"""
+        if start_date and end_date and not ann_date:
+            return self._get_mainline_date_chunks(
+                "repurchase",
+                StockRepurchaseSchema,
+                {"ts_code": ts_code},
+                ["ts_code", "ann_date", "proc"],
+                start_date=start_date,
+                end_date=end_date,
+                chunk_frequency="year",
+            )
+        return self._get_mainline_series(
+            "repurchase", StockRepurchaseSchema,
+            {"ts_code": ts_code, "ann_date": ann_date,
+             "start_date": start_date, "end_date": end_date},
+            ["ts_code", "ann_date", "proc"],
+        )
+
+    def get_margin_detail(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取融资融券交易明细。"""
+        if start_date and end_date and not trade_date:
+            return self._get_mainline_date_chunks(
+                "margin_detail",
+                MarginDetailSchema,
+                {"ts_code": ts_code},
+                ["ts_code", "trade_date"],
+                start_date=start_date,
+                end_date=end_date,
+                chunk_frequency="day",
+                max_records=6000,
+            )
+        return self._get_mainline_series(
+            "margin_detail", MarginDetailSchema,
+            {"ts_code": ts_code, "trade_date": trade_date,
+             "start_date": start_date, "end_date": end_date},
+            ["ts_code", "trade_date"],
+            max_records=6000,
+        )
+
+    def get_moneyflow_hsgt(
+        self,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取沪深港通市场级资金流向。"""
+        if start_date and end_date and not trade_date:
+            return self._get_mainline_date_chunks(
+                "moneyflow_hsgt",
+                MoneyflowHsgtSchema,
+                {},
+                ["trade_date"],
+                start_date=start_date,
+                end_date=end_date,
+                chunk_frequency="year",
+                max_records=300,
+            )
+        return self._get_mainline_series(
+            "moneyflow_hsgt", MoneyflowHsgtSchema,
+            {"trade_date": trade_date, "start_date": start_date,
+             "end_date": end_date},
+            ["trade_date"],
+            max_records=300,
+        )
 
     def get_fund_basic(
         self,
@@ -679,7 +1020,7 @@ class TushareProvider(BaseDataProvider):
         con_code: Optional[str] = None, start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> pd.DataFrame:
-        """获取沪市 ETF 每日持仓组合；满 3,000 行时拆分日期范围。"""
+        """获取沪市 ETF 每日持仓组合；使用 offset 分页并在高 offset 处按日期分窗。"""
         return self._get_etf_cons_series(
             "etf_sh_cons", EtfShConsSchema,
             {"ts_code": ts_code, "trade_date": self._clean_api_date(trade_date),
@@ -692,7 +1033,7 @@ class TushareProvider(BaseDataProvider):
         con_code: Optional[str] = None, start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> pd.DataFrame:
-        """获取深市 ETF 每日持仓组合；满 3,000 行时拆分日期范围。"""
+        """获取深市 ETF 每日持仓组合；使用 offset 分页并在高 offset 处按日期分窗。"""
         return self._get_etf_cons_series(
             "etf_sz_cons", EtfSzConsSchema,
             {"ts_code": ts_code, "trade_date": self._clean_api_date(trade_date),
@@ -706,12 +1047,15 @@ class TushareProvider(BaseDataProvider):
         schema,
         api_params: Dict[str, Any],
     ) -> pd.DataFrame:
-        """Fetch ETF basket data without using the unsupported ``offset`` input.
+        """Fetch ETF basket data with offset plus a high-offset fallback.
 
-        The two PCF endpoints document code/date iteration instead of offset
-        pagination.  A saturated date range is therefore bisected until every
-        response is below the 3,000-row cap.  Callers should provide ``ts_code``
-        so a single-day request remains safely below the endpoint-wide cap.
+        The PCF endpoints accept ``offset``, but reject offsets above 99,000.
+        Pages are fetched normally up to that boundary.  If more data remains,
+        the observed populated date interval is partitioned before retrying.
+        This avoids recursively paging through years of empty history while
+        preserving completeness despite unstable date ordering across offset
+        pages.  Callers should provide ``ts_code`` so an indivisible single-day
+        request cannot exceed the cap.
         """
         fields = ",".join(schema.get_required_columns())
         base_params = {
@@ -727,37 +1071,105 @@ class TushareProvider(BaseDataProvider):
         def fetch_range(
             range_start: Optional[str], range_end: Optional[str]
         ) -> List[pd.DataFrame]:
-            params = dict(base_params)
-            if range_start:
-                params["start_date"] = range_start
-            if range_end:
-                params["end_date"] = range_end
-            df = self._call_api(
-                api_name,
-                fields=fields,
-                log_empty_as_warning=False,
-                **params,
-            )
-            if df is None or df.empty:
-                return []
-            fetched = len(df)
-            logger.info(
-                "{} ts_code={} range={}..{} fetched {} records",
-                api_name,
-                params.get("ts_code") or "all",
-                range_start or params.get("trade_date") or "all",
-                range_end or params.get("trade_date") or "all",
-                fetched,
-            )
-            if fetched < ETF_CONS_MAX_RECORDS:
-                return [df]
+            frames: List[pd.DataFrame] = []
+            offset = 0
+            while True:
+                params = dict(base_params)
+                if range_start:
+                    params["start_date"] = range_start
+                if range_end:
+                    params["end_date"] = range_end
+                params["offset"] = offset
+                df = self._call_api(
+                    api_name,
+                    fields=fields,
+                    log_empty_as_warning=False,
+                    **params,
+                )
+                if df is None or df.empty:
+                    return frames
+                fetched = len(df)
+                logger.info(
+                    "{} ts_code={} range={}..{} offset={} fetched {} records",
+                    api_name,
+                    params.get("ts_code") or "all",
+                    range_start or params.get("trade_date") or "all",
+                    range_end or params.get("trade_date") or "all",
+                    offset,
+                    fetched,
+                )
+                frames.append(df)
+                if fetched < ETF_CONS_MAX_RECORDS:
+                    return frames
+
+                next_offset = offset + fetched
+                if next_offset <= ETF_CONS_MAX_SAFE_OFFSET:
+                    offset = next_offset
+                    continue
+
+                # The API rejects offset=102000 and above.  Continue by date
+                # instead of issuing an invalid request.
+                break
 
             if range_start and range_end:
                 start_ts = pd.Timestamp(range_start)
                 end_ts = pd.Timestamp(range_end)
                 if start_ts < end_ts:
+                    page_bounds = []
+                    for page in frames:
+                        raw_dates = page.get("trade_date")
+                        if raw_dates is None:
+                            continue
+                        dates = pd.to_datetime(raw_dates, errors="coerce")
+                        dates = dates.dropna()
+                        if not dates.empty:
+                            page_bounds.append((dates.min(), dates.max()))
+
+                    if page_bounds:
+                        populated_start = max(
+                            start_ts, min(item[0] for item in page_bounds)
+                        )
+                        populated_end = min(
+                            end_ts, max(item[1] for item in page_bounds)
+                        )
+                        if populated_start <= populated_end:
+                            partitions = []
+                            before_end = populated_start - pd.Timedelta(days=1)
+                            if start_ts <= before_end:
+                                partitions.append((start_ts, before_end))
+
+                            if populated_start < populated_end:
+                                midpoint = populated_start + (
+                                    populated_end - populated_start
+                                ) // 2
+                                partitions.extend([
+                                    (populated_start, midpoint),
+                                    (midpoint + pd.Timedelta(days=1), populated_end),
+                                ])
+                            else:
+                                partitions.append((populated_start, populated_end))
+
+                            after_start = populated_end + pd.Timedelta(days=1)
+                            if after_start <= end_ts:
+                                partitions.append((after_start, end_ts))
+
+                            # Broad offset pages are not reliably ordered by
+                            # trade_date, so they cannot safely be retained as
+                            # a cursor.  Re-fetch only these bounded partitions;
+                            # the outer partitions normally collapse empty
+                            # history to one request each.
+                            frames.clear()
+                            refetched: List[pd.DataFrame] = []
+                            for part_start, part_end in partitions:
+                                refetched += fetch_range(
+                                    part_start.strftime("%Y%m%d"),
+                                    part_end.strftime("%Y%m%d"),
+                                )
+                            return refetched
+
                     midpoint = start_ts + (end_ts - start_ts) // 2
                     right_start = midpoint + pd.Timedelta(days=1)
+                    frames.clear()
                     return fetch_range(
                         start_ts.strftime("%Y%m%d"), midpoint.strftime("%Y%m%d")
                     ) + fetch_range(
@@ -765,8 +1177,9 @@ class TushareProvider(BaseDataProvider):
                     )
 
             raise ProviderDataError(
-                f"{api_name} returned the 3,000-row cap for one indivisible request; "
-                "please specify a single ETF ts_code or a narrower constituent filter"
+                f"{api_name} exceeded the safe offset boundary for one indivisible "
+                "request; please specify a single ETF ts_code or a narrower "
+                "constituent filter"
             )
 
         frames = fetch_range(initial_start, initial_end)
@@ -3770,7 +4183,7 @@ class TushareProvider(BaseDataProvider):
         l2_code: Optional[str] = None,
         l3_code: Optional[str] = None,
         ts_code: Optional[str] = None,
-        is_new: str = "Y",
+        is_new: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         获取申万行业成分股（按三级分类提取）
@@ -3781,7 +4194,7 @@ class TushareProvider(BaseDataProvider):
             l2_code: 二级行业代码
             l3_code: 三级行业代码
             ts_code: 股票代码
-            is_new: 是否最新 (默认为Y)
+            is_new: 是否最新；None 返回完整历史区间，Y 仅返回当前成分
 
         Returns:
             pd.DataFrame: 标准格式的申万行业成分股数据

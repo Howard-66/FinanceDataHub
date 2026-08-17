@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pandas as pd
 import pytest
@@ -79,7 +79,7 @@ def test_extended_provider_requests_all_fields_and_paginates(
         ("get_etf_sz_cons", "etf_sz_cons", EtfSzConsSchema),
     ],
 )
-def test_etf_cons_splits_saturated_date_range_without_offset(
+def test_etf_cons_splits_date_range_before_unsafe_offset(
     method_name, api_name, schema
 ):
     provider = TushareProvider(config={"token": "test-token"})
@@ -98,14 +98,15 @@ def test_etf_cons_splits_saturated_date_range_without_offset(
     })
     provider._call_api = Mock(side_effect=[saturated, day_one, day_two])
 
-    result = getattr(provider, method_name)(
-        ts_code="510300.SH", start_date="2024-01-01", end_date="2024-01-02"
-    )
+    with patch("finance_data_hub.providers.tushare.ETF_CONS_MAX_SAFE_OFFSET", 0):
+        result = getattr(provider, method_name)(
+            ts_code="510300.SH", start_date="2024-01-01", end_date="2024-01-02"
+        )
 
     assert len(result) == 2
     calls = provider._call_api.call_args_list
     assert [call.args[0] for call in calls] == [api_name, api_name, api_name]
-    assert all("offset" not in call.kwargs for call in calls)
+    assert [call.kwargs["offset"] for call in calls] == [0, 0, 0]
     assert set(calls[0].kwargs["fields"].split(",")) == set(
         schema.get_required_columns()
     )
@@ -129,10 +130,114 @@ def test_etf_cons_rejects_saturated_indivisible_request():
     })
     provider._call_api = Mock(return_value=saturated)
 
-    with pytest.raises(Exception, match="single ETF ts_code"):
-        provider.get_etf_sh_cons(trade_date="2024-01-01")
+    with patch("finance_data_hub.providers.tushare.ETF_CONS_MAX_SAFE_OFFSET", 0):
+        with pytest.raises(Exception, match="safe offset boundary"):
+            provider.get_etf_sh_cons(trade_date="2024-01-01")
 
-    assert "offset" not in provider._call_api.call_args.kwargs
+    assert provider._call_api.call_args.kwargs["offset"] == 0
+
+
+def test_etf_cons_partitions_descending_observed_range():
+    provider = TushareProvider(config={"token": "test-token"})
+    saturated = pd.DataFrame({
+        "trade_date": ["20240102"] * ETF_CONS_MAX_RECORDS,
+        "ts_code": ["159919.SZ"] * ETF_CONS_MAX_RECORDS,
+        "con_code": [f"{index:06d}.SZ" for index in range(ETF_CONS_MAX_RECORDS)],
+    })
+    day_one = pd.DataFrame({
+        "trade_date": ["20240101"], "ts_code": ["159919.SZ"],
+        "con_code": ["000001.SZ"],
+    })
+    day_two = pd.DataFrame({
+        "trade_date": ["20240102"], "ts_code": ["159919.SZ"],
+        "con_code": ["999999.SZ"],
+    })
+    provider._call_api = Mock(side_effect=[saturated, day_one, day_two])
+
+    with patch("finance_data_hub.providers.tushare.ETF_CONS_MAX_SAFE_OFFSET", 0):
+        result = provider.get_etf_sz_cons(
+            ts_code="159919.SZ", start_date="2024-01-01", end_date="2024-01-02"
+        )
+
+    assert len(result) == 2
+    calls = provider._call_api.call_args_list
+    assert [(call.kwargs["start_date"], call.kwargs["end_date"]) for call in calls] == [
+        ("20240101", "20240102"),
+        ("20240101", "20240101"),
+        ("20240102", "20240102"),
+    ]
+
+
+def test_etf_cons_partitions_observed_populated_interval():
+    provider = TushareProvider(config={"token": "test-token"})
+
+    def full_page(trade_date, prefix):
+        return pd.DataFrame({
+            "trade_date": [trade_date] * ETF_CONS_MAX_RECORDS,
+            "ts_code": ["159922.SZ"] * ETF_CONS_MAX_RECORDS,
+            "con_code": [f"{prefix}{index:05d}.SZ" for index in range(
+                ETF_CONS_MAX_RECORDS
+            )],
+        })
+
+    provider._call_api = Mock(side_effect=[
+        full_page("20240104", "A"),
+        full_page("20240103", "B"),
+        pd.DataFrame({
+            "trade_date": ["20240102"], "ts_code": ["159922.SZ"],
+            "con_code": ["000001.SZ"],
+        }),
+        pd.DataFrame({
+            "trade_date": ["20240103"], "ts_code": ["159922.SZ"],
+            "con_code": ["000002.SZ"],
+        }),
+        pd.DataFrame({
+            "trade_date": ["20240104"], "ts_code": ["159922.SZ"],
+            "con_code": ["000003.SZ"],
+        }),
+    ])
+
+    with patch(
+        "finance_data_hub.providers.tushare.ETF_CONS_MAX_SAFE_OFFSET",
+        ETF_CONS_MAX_RECORDS,
+    ):
+        result = provider.get_etf_sz_cons(
+            ts_code="159922.SZ", start_date="2024-01-01", end_date="2024-01-04"
+        )
+
+    assert len(result) == 3
+    calls = provider._call_api.call_args_list
+    assert [call.kwargs["offset"] for call in calls] == [
+        0, ETF_CONS_MAX_RECORDS, 0, 0, 0
+    ]
+    assert [(call.kwargs["start_date"], call.kwargs["end_date"]) for call in calls[2:]] == [
+        ("20240101", "20240102"),
+        ("20240103", "20240103"),
+        ("20240104", "20240104"),
+    ]
+
+
+def test_etf_cons_uses_supported_offset_for_normal_pagination():
+    provider = TushareProvider(config={"token": "test-token"})
+    first = pd.DataFrame({
+        "trade_date": ["20240101"] * ETF_CONS_MAX_RECORDS,
+        "ts_code": ["510300.SH"] * ETF_CONS_MAX_RECORDS,
+        "con_code": [f"{index:06d}.SH" for index in range(ETF_CONS_MAX_RECORDS)],
+    })
+    second = pd.DataFrame({
+        "trade_date": ["20240101"], "ts_code": ["510300.SH"],
+        "con_code": ["999999.SH"],
+    })
+    provider._call_api = Mock(side_effect=[first, second])
+
+    result = provider.get_etf_sh_cons(
+        ts_code="510300.SH", trade_date="2024-01-01"
+    )
+
+    assert len(result) == ETF_CONS_MAX_RECORDS + 1
+    assert [call.kwargs["offset"] for call in provider._call_api.call_args_list] == [
+        0, ETF_CONS_MAX_RECORDS
+    ]
 
 
 def test_extended_provider_rejects_repeated_full_page():
@@ -171,6 +276,35 @@ async def test_fund_adj_smart_incremental_uses_open_dates_and_persists_each_day(
     assert [call.kwargs["trade_date"] for call in updater.router.route.call_args_list] == [
         "2024-01-02", "2024-01-03"
     ]
+
+
+@pytest.mark.asyncio
+async def test_fund_daily_all_market_trade_date_routes_once_without_catalog_loop():
+    updater = object.__new__(DataUpdater)
+    updater.router = Mock(route=Mock(return_value=pd.DataFrame({
+        "ts_code": ["510300.SH", "159919.SZ"],
+        "trade_date": ["20240102", "20240102"],
+    })))
+    updater.data_ops = Mock(
+        insert_fund_daily_batch=AsyncMock(return_value=2),
+        get_etf_basic=AsyncMock(),
+        get_trade_dates=AsyncMock(),
+    )
+    progress = Mock()
+
+    count = await updater.update_fund_daily(
+        trade_date="2024-01-02", all_funds=True, progress_callback=progress
+    )
+
+    assert count == 2
+    updater.router.route.assert_called_once_with(
+        asset_class="fund", data_type="fund_daily", method_name="get_fund_daily",
+        trade_date="2024-01-02",
+    )
+    updater.data_ops.insert_fund_daily_batch.assert_awaited_once()
+    updater.data_ops.get_etf_basic.assert_not_awaited()
+    updater.data_ops.get_trade_dates.assert_not_awaited()
+    assert progress.call_args_list == [call(0, 1), call(1, 1)]
 
 
 @pytest.mark.asyncio
@@ -256,3 +390,26 @@ def test_cli_fund_adj_supports_all_force():
     assert kwargs["all_funds"] is True
     assert kwargs["smart_incremental"] is False
     assert kwargs["fund_codes"] is None
+
+
+def test_cli_fund_daily_all_trade_date_uses_single_date_mode():
+    fake_updater = Mock(update_fund_daily=AsyncMock(return_value=1801))
+    fake_context = Mock()
+    fake_context.__aenter__ = AsyncMock(return_value=fake_updater)
+    fake_context.__aexit__ = AsyncMock(return_value=None)
+    with patch("finance_data_hub.cli.main.DataUpdater", return_value=fake_context):
+        result = runner.invoke(
+            app, [
+                "update", "--dataset", "fund_daily", "--symbols", "all",
+                "--trade-date", "2024-01-02",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    kwargs = fake_updater.update_fund_daily.await_args.kwargs
+    assert kwargs["trade_date"] == "2024-01-02"
+    assert kwargs["all_funds"] is False
+    assert kwargs["smart_incremental"] is False
+    assert kwargs["fund_codes"] is None
+    assert "交易日" in result.output
+    assert "ETF代码" not in result.output

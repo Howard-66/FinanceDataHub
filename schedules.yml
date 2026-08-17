@@ -38,7 +38,9 @@ jobs:
       hour: 6
       minute: 50
     params:
+      asset_class: stock
       market: CN
+      force: true
     retry:
       max_retries: 3
       delay: 300
@@ -190,6 +192,24 @@ jobs:
       max_retries: 3
       delay: 600
 
+  # 早盘接口偶尔仍停留在前一交易日；收盘后再补一次当日份额规模。
+  etf_share_size_catchup:
+    enabled: true
+    type: download
+    dataset: etf_share_size
+    schedule:
+      type: cron
+      day_of_week: "mon-fri"
+      hour: 20
+      minute: 0
+    params:
+      asset_class: fund
+      trade_date: latest
+    depends_on: [fund_daily_update]
+    retry:
+      max_retries: 3
+      delay: 600
+
   idx_anns_update:
     enabled: true
     type: download
@@ -300,6 +320,9 @@ jobs:
       day: "1,15"
       hour: 7
       minute: 10
+    params:
+      asset_class: index
+      force: true
     retry:
       max_retries: 3
       delay: 300
@@ -313,6 +336,9 @@ jobs:
       day: "1,15"
       hour: 7
       minute: 20
+    params:
+      asset_class: index
+      force: true
     depends_on: [sw_classify_update]
     retry:
       max_retries: 3
@@ -875,9 +901,10 @@ jobs:
       workbook_path: "/Volumes/Repository/Projects/TradingNexus/BasisFlow/data/static/煤焦钢矿.xlsx"
       excel_app_path: "/Volumes/Repository/Applications/Microsoft Excel.app"
       load_wait_seconds: 90
+      load_timeout_seconds: 360
       refresh_wait_seconds: 150
       queue_root: "${DESKTOP_AUTOMATION_QUEUE_ROOT:-data/desktop_automation}"
-      timeout_seconds: 600
+      timeout_seconds: 900
     retry:
       max_retries: 1
       delay: 300
@@ -976,6 +1003,152 @@ jobs:
     retry:
       max_retries: 2
       delay: 600
+
+  # 主线策略的状态/公司行为/资金事实表。工作日增量保证当日因子及时更新；
+  # 每月首个周一再按策略历史起点做一次完整性复核（见下方 history 任务）。
+  stock_st_update:
+    enabled: true
+    type: download
+    dataset: stock_st
+    resource_group: tushare_mainline
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 19, minute: 5}
+    params: {asset_class: stock, trade_date: latest, market: CN}
+    retry: {max_retries: 3, delay: 600}
+
+  stock_suspend_update:
+    enabled: true
+    type: download
+    dataset: stock_suspend
+    resource_group: tushare_mainline
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 19, minute: 10}
+    params: {asset_class: stock, trade_date: latest, market: CN}
+    retry: {max_retries: 3, delay: 600}
+
+  margin_detail_update:
+    enabled: true
+    type: download
+    dataset: margin_detail
+    resource_group: tushare_mainline
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 19, minute: 15}
+    params: {asset_class: stock, trade_date: latest, market: CN}
+    retry: {max_retries: 3, delay: 600}
+
+  moneyflow_hsgt_update:
+    enabled: true
+    type: download
+    dataset: moneyflow_hsgt
+    resource_group: tushare_mainline
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 19, minute: 20}
+    params: {asset_class: stock, trade_date: latest, market: CN}
+    retry: {max_retries: 3, delay: 600}
+
+  stock_namechange_update:
+    enabled: true
+    type: download
+    dataset: stock_namechange
+    resource_group: tushare_mainline
+    schedule: {type: cron, day_of_week: "mon", hour: 7, minute: 45}
+    params: {asset_class: stock, force: true}
+    retry: {max_retries: 3, delay: 600}
+
+  stock_dividend_update:
+    enabled: true
+    type: download
+    dataset: stock_dividend
+    resource_group: tushare_mainline
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 19, minute: 25}
+    params: {asset_class: stock, trade_date: latest, market: CN}
+    retry: {max_retries: 3, delay: 600}
+
+  stock_repurchase_update:
+    enabled: true
+    type: download
+    dataset: stock_repurchase
+    resource_group: tushare_mainline
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 19, minute: 30}
+    params: {asset_class: stock, trade_date: latest, market: CN}
+    retry: {max_retries: 3, delay: 600}
+
+  mainline_preprocess:
+    enabled: true
+    type: preprocess
+    category: mainline
+    resource_group: mainline_preprocess
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 22, minute: 20}
+    params: {all: true, market: CN, start_date: "latest-400d", end_date: latest}
+    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, stock_st_update, stock_suspend_update, stock_dividend_update, stock_repurchase_update, margin_detail_update, moneyflow_hsgt_update]
+    retry: {max_retries: 2, delay: 900}
+
+  # 每月首个周一按首次回填口径复核完整历史。历史任务串行执行，避免
+  # Tushare 大范围分页请求互相争抢；主线全历史重算会等待日常基础预处理完成。
+  stock_st_history_update:
+    enabled: true
+    type: download
+    dataset: stock_st
+    resource_group: tushare_mainline
+    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 0}
+    params: {asset_class: stock, start_date: "2016-01-01", force: true}
+    retry: {max_retries: 3, delay: 600}
+
+  stock_suspend_history_update:
+    enabled: true
+    type: download
+    dataset: stock_suspend
+    resource_group: tushare_mainline
+    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 5}
+    params: {asset_class: stock, start_date: "2012-01-01", force: true}
+    depends_on: [stock_st_history_update]
+    retry: {max_retries: 3, delay: 600}
+
+  stock_dividend_history_update:
+    enabled: true
+    type: download
+    dataset: stock_dividend
+    resource_group: tushare_mainline
+    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 10}
+    params: {asset_class: stock, force: true}
+    depends_on: [stock_suspend_history_update]
+    retry: {max_retries: 3, delay: 600}
+
+  stock_repurchase_history_update:
+    enabled: true
+    type: download
+    dataset: stock_repurchase
+    resource_group: tushare_mainline
+    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 15}
+    params: {asset_class: stock, start_date: "2012-01-01", force: true}
+    depends_on: [stock_dividend_history_update]
+    retry: {max_retries: 3, delay: 600}
+
+  margin_detail_history_update:
+    enabled: true
+    type: download
+    dataset: margin_detail
+    resource_group: tushare_mainline
+    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 20}
+    params: {asset_class: stock, start_date: "2012-01-01", force: true}
+    depends_on: [stock_repurchase_history_update]
+    retry: {max_retries: 3, delay: 600}
+
+  moneyflow_hsgt_history_update:
+    enabled: true
+    type: download
+    dataset: moneyflow_hsgt
+    resource_group: tushare_mainline
+    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 25}
+    params: {asset_class: stock, start_date: "2012-01-01", force: true}
+    depends_on: [margin_detail_history_update]
+    retry: {max_retries: 3, delay: 600}
+
+  mainline_history_preprocess:
+    enabled: true
+    type: preprocess
+    category: mainline
+    resource_group: mainline_preprocess
+    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 22, minute: 40}
+    params: {all: true, start_date: "2012-01-01", end_date: today}
+    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, stock_namechange_update, moneyflow_hsgt_history_update]
+    retry: {max_retries: 2, delay: 900}
 
   # ========== 周六凌晨任务：补齐周五夜盘 / 周末复核 ==========
 

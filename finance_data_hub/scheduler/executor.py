@@ -689,6 +689,8 @@ class TaskExecutor:
             return self._preprocess_industry_valuation(params)
         elif category == "macro_cycle":
             return self._preprocess_macro_cycle(params)
+        elif category == "mainline":
+            return self._preprocess_mainline(params)
         else:
             raise ValueError(f"Unknown preprocess category: {category}")
 
@@ -853,6 +855,24 @@ class TaskExecutor:
         return {
             "records_processed": records_processed,
             "symbols_count": 0
+        }
+
+    def _preprocess_mainline(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """执行量化主线事实与因子预处理。"""
+        cmd = self._build_preprocess_command("mainline", params)
+        logger.info(f"Executing mainline preprocess command: {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd, cwd=str(self.project_root), capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            error_msg = result.stderr or result.stdout
+            raise RuntimeError(f"Mainline preprocess failed: {error_msg}")
+        output = result.stdout.strip() if result.stdout else ""
+        if output:
+            logger.info(f"Mainline preprocess output:\n{output}")
+        return {
+            "records_processed": self._parse_preprocess_output(output),
+            "symbols_count": 0,
         }
 
     def _build_preprocess_command(

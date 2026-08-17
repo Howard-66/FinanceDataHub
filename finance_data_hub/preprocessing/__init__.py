@@ -14,6 +14,7 @@ from .macro import MacroCycleCalculator
 from .resample import ResampleFreq, ResampleProcessor
 from .pipeline import PreprocessPipeline
 from .storage import ProcessedDataStorage
+from .mainline import MainlineDataStorage, MainlinePreprocessor
 
 __all__ = [
     "AdjustType",
@@ -23,4 +24,6 @@ __all__ = [
     "ResampleProcessor",
     "PreprocessPipeline",
     "ProcessedDataStorage",
+    "MainlineDataStorage",
+    "MainlinePreprocessor",
 ]

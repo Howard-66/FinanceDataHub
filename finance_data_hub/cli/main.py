@@ -470,6 +470,11 @@ FUTURE_DATASETS = {
     "term_metrics",
 }
 
+MAINLINE_RAW_DATASETS = {
+    "stock_st", "stock_namechange", "stock_suspend", "stock_dividend",
+    "stock_repurchase", "margin_detail", "moneyflow_hsgt",
+}
+
 
 async def _run_update(
     settings,
@@ -496,7 +501,7 @@ async def _run_update(
         "index_basic", "index_daily", "index_weight", "fund_basic", "fund_company",
         "fund_manager", "etf_basic", "etf_index", "mkt_idx_bmk", "sw_daily",
         "fund_daily", "fund_adj", "etf_share_size", "etf_sh_cons", "etf_sz_cons",
-        "idx_anns",
+        "idx_anns", *MAINLINE_RAW_DATASETS,
     } and symbol_list:
         _validate_symbols_all(symbol_list, "指数/基金模式下")
 
@@ -528,7 +533,7 @@ async def _run_update(
     if data_type in {
         "etf_basic", "fund_company", "fund_manager", "fund_share", "fund_nav", "fund_div",
         "fund_portfolio", "etf_index", "fund_daily", "fund_adj", "etf_share_size",
-        "etf_sh_cons", "etf_sz_cons", "idx_anns",
+        "etf_sh_cons", "etf_sz_cons", "idx_anns", *MAINLINE_RAW_DATASETS,
     }:
         return await _run_force_update(
             settings, asset_class, data_type, symbol_list,
@@ -1694,6 +1699,40 @@ async def _run_force_update(
     force_update: bool = False,
 ):
     """强制更新模式：忽略数据库状态，使用指定日期范围"""
+    if data_type in MAINLINE_RAW_DATASETS:
+        selected_symbols = None if _is_symbols_all(symbol_list) else symbol_list
+        count_unit = {
+            "stock_dividend": "股票",
+            "margin_detail": "日期",
+        }.get(data_type)
+        count_columns = [SymbolCountColumn(count_unit)] if count_unit else []
+        with Progress(
+            get_spinner(), TextColumn("[bold blue]{task.description}"),
+            BarColumn(), *count_columns, TimeElapsedColumn(), console=console,
+        ) as progress:
+            task = progress.add_task(f"正在更新 {data_type} ...", total=1)
+            final_scope_total = 1
+
+            def update_progress(completed: int, total: int) -> None:
+                nonlocal final_scope_total
+                final_scope_total = total
+                progress.update(task, completed=completed, total=total)
+
+            async with DataUpdater(settings, config_path="sources.yml") as updater:
+                count = await updater.update_mainline_raw(
+                    dataset=data_type,
+                    symbols=selected_symbols,
+                    trade_date=trade_date,
+                    start_date=start_date,
+                    end_date=end_date,
+                    progress_callback=update_progress,
+                )
+                progress.update(
+                    task, completed=final_scope_total, total=final_scope_total
+                )
+                console.print(f"[green][OK][/green] 已更新 {count} 条 {data_type} 数据")
+                return count
+
     if data_type in ("basic", "asset_basic"):
         if not quiet:
             console.print("[bold]强制更新策略:[/bold]")
@@ -1871,8 +1910,12 @@ async def _run_force_update(
         "fund_daily", "fund_adj", "etf_share_size", "etf_sh_cons", "etf_sz_cons",
     }:
         selected_codes = None if _is_symbols_all(symbol_list) else symbol_list
-        all_data = _is_symbols_all(symbol_list) or (
-            force_update and not selected_codes and not trade_date
+        # A supplied trade_date is an explicit all-market date query, even when
+        # the user also writes `--symbols all`. It must not be classified as a
+        # catalog-wide full-history download.
+        all_data = not trade_date and (
+            _is_symbols_all(symbol_list)
+            or force_update and not selected_codes
         )
         smart_incremental = not all_data and not selected_codes and not trade_date
         progress_unit = (

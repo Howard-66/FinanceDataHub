@@ -25,6 +25,19 @@ def test_fut_settle_rate_limit_uses_endpoint_specific_interval():
     mock_sleep.assert_called_once_with(pytest.approx(0.74, abs=1e-6))
 
 
+def test_etf_cons_rate_limit_can_exceed_generic_default():
+    provider = TushareProvider(config={"token": "test-token"})
+
+    with patch("finance_data_hub.providers.tushare.time.time") as mock_time:
+        with patch("finance_data_hub.providers.tushare.time.sleep") as mock_sleep:
+            mock_time.side_effect = [100.0, 100.0, 100.1, 100.126]
+
+            provider._rate_limit_check("etf_sh_cons")
+            provider._rate_limit_check("etf_sh_cons")
+
+    mock_sleep.assert_called_once_with(pytest.approx(0.026, abs=1e-6))
+
+
 def test_call_api_recognizes_futures_rate_limit_message():
     provider = TushareProvider(config={"token": "test-token"})
     provider._is_initialized = True

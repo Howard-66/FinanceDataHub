@@ -66,8 +66,8 @@ def _file_fingerprint(path: Path) -> Dict[str, Any]:
 
 _INSPECT_EXCEL = r"""
 set outputDelimiter to "|||FDH|||"
+if application id "com.microsoft.Excel" is not running then return "stopped"
 tell application id "com.microsoft.Excel"
-    if not running then return "stopped"
     set workbookCount to count of workbooks
     if workbookCount is 0 then return "running" & outputDelimiter & "0"
     set activeBook to active workbook
@@ -121,8 +121,8 @@ _CLEAN_UP_FAILED_RUN = r"""
 on run argv
     set expectedPath to item 1 of argv
     set shouldQuit to item 2 of argv
+    if application id "com.microsoft.Excel" is not running then return
     tell application id "com.microsoft.Excel"
-        if not running then return
         if (count of workbooks) is 1 then
             set targetBook to active workbook
             if (full name of targetBook) is expectedPath then close targetBook saving no
@@ -162,11 +162,50 @@ def _wait_for_excel_exit(
     raise WindExcelAutomationError("Microsoft Excel did not exit within 60 seconds")
 
 
+def _wait_for_workbook_ready(
+    workbook: Path,
+    sleep: Callable[[float], None],
+    timeout_seconds: int,
+) -> Dict[str, Any]:
+    """Wait until Excel answers automation requests and the target is active."""
+    deadline = time.monotonic() + timeout_seconds
+    last_issue = "Excel did not expose an active workbook"
+    while time.monotonic() < deadline:
+        try:
+            state = _parse_excel_state(_run_osascript(_INSPECT_EXCEL, timeout=20))
+        except (WindExcelAutomationError, subprocess.TimeoutExpired) as exc:
+            last_issue = str(exc)
+            sleep(10)
+            continue
+
+        workbook_count = state.get("workbook_count", 0)
+        if workbook_count == 1:
+            active_path = Path(str(state.get("workbook_path", ""))).resolve()
+            if active_path == workbook:
+                return state
+            raise WindExcelAutomationError(
+                "Another workbook became active while the configured workbook loaded"
+            )
+        if workbook_count > 1:
+            raise WindExcelAutomationError(
+                "More than one workbook opened while the configured workbook loaded"
+            )
+        if not state.get("running"):
+            last_issue = "Microsoft Excel exited while the workbook was loading"
+        sleep(10)
+
+    raise WindExcelAutomationError(
+        f"The configured workbook was not ready within {timeout_seconds} seconds: "
+        f"{last_issue}"
+    )
+
+
 def refresh_wind_workbook(
     workbook_path: str,
     excel_app_path: str,
     *,
     load_wait_seconds: int = 90,
+    load_timeout_seconds: int = 360,
     refresh_wait_seconds: int = 150,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Dict[str, Any]:
@@ -185,6 +224,8 @@ def refresh_wind_workbook(
         raise WindExcelAutomationError(f"Excel application does not exist: {excel_app}")
     if load_wait_seconds < 0 or refresh_wait_seconds < 0:
         raise ValueError("wait durations cannot be negative")
+    if load_timeout_seconds < 1:
+        raise ValueError("load timeout must be positive")
 
     before = _file_fingerprint(workbook)
     initial_state = _parse_excel_state(_run_osascript(_INSPECT_EXCEL))
@@ -205,13 +246,9 @@ def refresh_wind_workbook(
                 timeout=30,
             )
 
-        sleep(load_wait_seconds)
-        loaded_state = _parse_excel_state(_run_osascript(_INSPECT_EXCEL))
-        loaded_path = Path(str(loaded_state.get("workbook_path", ""))).resolve()
-        if loaded_state.get("workbook_count") != 1 or loaded_path != workbook:
-            raise WindExcelAutomationError(
-                "The configured workbook was not uniquely active after the load wait"
-            )
+        if opened_by_automation:
+            sleep(load_wait_seconds)
+            _wait_for_workbook_ready(workbook, sleep, load_timeout_seconds)
 
         refresh_output = _run_osascript(
             _REFRESH_ACTIVE_SHEET,

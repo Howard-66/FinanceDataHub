@@ -49,6 +49,19 @@ INDEX_DAILY_EXCLUDED_CATALOG_MARKETS = {"SW"}
 FUND_PORTFOLIO_HISTORY_START = "1998-01-01"
 IDX_ANNS_HISTORY_START = "1990-01-01"
 
+MAINLINE_RAW_UPDATE_CONFIG = {
+    "stock_st": ("get_stock_st", {"ts_code", "trade_date", "start_date", "end_date"}),
+    "stock_namechange": ("get_stock_namechange", {"ts_code", "start_date", "end_date"}),
+    "stock_suspend": ("get_stock_suspend", {"ts_code", "trade_date", "start_date", "end_date"}),
+    "stock_dividend": (
+        "get_stock_dividend",
+        {"ts_code", "ann_date", "imp_ann_date"},
+    ),
+    "stock_repurchase": ("get_stock_repurchase", {"ts_code", "ann_date", "start_date", "end_date"}),
+    "margin_detail": ("get_margin_detail", {"ts_code", "trade_date", "start_date", "end_date"}),
+    "moneyflow_hsgt": ("get_moneyflow_hsgt", {"trade_date", "start_date", "end_date"}),
+}
+
 
 def _is_all_symbol_request(symbols: Optional[List[str]]) -> bool:
     if not symbols:
@@ -644,6 +657,26 @@ class DataUpdater:
         params = dict(extra_params or {})
         insert_method = getattr(self.data_ops, insert_method_name)
         latest = None
+
+        # An explicit all-market trade date is already a complete query for
+        # endpoints such as fund_daily. Do not expand it into the ETF catalog;
+        # the provider will use offset pagination when that date exceeds one
+        # response page. Basket endpoints keep always_by_codes=True because a
+        # single all-market day can exceed their safe offset boundary.
+        if trade_date and not fund_codes and not always_by_codes:
+            normalized_trade_date = pd.Timestamp(trade_date).strftime("%Y-%m-%d")
+            if progress_callback:
+                progress_callback(0, 1)
+            data = self.router.route(
+                asset_class="fund", data_type=data_type, method_name=method_name,
+                trade_date=normalized_trade_date, **params,
+            )
+            count = 0
+            if data is not None and not data.empty:
+                count = await insert_method(data)
+            if progress_callback:
+                progress_callback(1, 1)
+            return count
 
         if fund_codes and not always_by_codes:
             total = 0
@@ -1690,7 +1723,9 @@ class DataUpdater:
                 data_type="basic",
                 method_name="get_stock_basic",
                 market=market_code,
-                list_status="L",
+                # CN 全量同步 L/D/P，保证历史回测股票池无幸存者偏差。
+                # HK 也由 provider 按接口能力处理完整状态。
+                list_status=None,
             )
 
             if data is None or data.empty:
@@ -1706,6 +1741,171 @@ class DataUpdater:
         except Exception as e:
             logger.exception("Failed to update stock basic")
             raise
+
+    async def update_mainline_raw(
+        self,
+        dataset: str,
+        symbols: Optional[List[str]] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """更新一个主线策略原始补充数据集。"""
+        if dataset not in MAINLINE_RAW_UPDATE_CONFIG:
+            raise ValueError(f"Unsupported mainline raw dataset: {dataset}")
+        method_name, allowed = MAINLINE_RAW_UPDATE_CONFIG[dataset]
+        selected_symbols = symbols or [None]
+        if dataset == "moneyflow_hsgt":
+            selected_symbols = [None]
+        elif dataset == "margin_detail" and start_date and end_date and not trade_date:
+            # margin_detail is safest as one all-market request per date.  Keep
+            # the date loop here so the CLI can report useful x/y progress and
+            # each successful day is committed independently.
+            range_start = pd.Timestamp(start_date)
+            range_end = pd.Timestamp(end_date)
+            if range_start > range_end:
+                raise ValueError(
+                    "margin_detail start_date must not be later than end_date"
+                )
+            scopes = [
+                (symbol, date.strftime("%Y-%m-%d"))
+                for symbol in selected_symbols
+                for date in pd.date_range(range_start, range_end, freq="D")
+            ]
+            scope_total = len(scopes)
+            if progress_callback:
+                progress_callback(0, scope_total)
+
+            total = 0
+            for position, (symbol, scope_date) in enumerate(scopes, start=1):
+                request = {"trade_date": scope_date}
+                if symbol:
+                    request["ts_code"] = symbol
+                data = self.router.route(
+                    asset_class="stock",
+                    data_type=dataset,
+                    method_name=method_name,
+                    market="CN",
+                    **request,
+                )
+                if data is not None and not data.empty:
+                    total += await self.data_ops.upsert_mainline_raw_batch(
+                        dataset, data
+                    )
+                if progress_callback:
+                    progress_callback(position, scope_total)
+            logger.info(f"Updated {total} records for {dataset}")
+            return total
+        elif dataset == "stock_dividend" and not symbols and not trade_date:
+            # dividend 接口不允许所有筛选条件均为空。完整回填必须按股票
+            # 查询，并包含退市/暂停股票，避免历史股东回报数据产生幸存者偏差。
+            basic = await self.data_ops.get_asset_basic(market="CN")
+            if basic is None or basic.empty:
+                raise ValueError(
+                    "stock_dividend full backfill requires asset_basic; "
+                    "run the CN basic update first"
+                )
+            selected_symbols = (
+                basic["symbol"].dropna().astype(str).drop_duplicates().sort_values().tolist()
+            )
+            logger.info(
+                "Full stock_dividend backfill will query {} L/D/P stocks",
+                len(selected_symbols),
+            )
+
+        total = 0
+        scope_total = len(selected_symbols)
+        if progress_callback:
+            progress_callback(0, scope_total)
+        for position, symbol in enumerate(selected_symbols, start=1):
+            candidates = {
+                "ts_code": symbol,
+                "trade_date": trade_date,
+                "ann_date": trade_date,
+                "start_date": start_date,
+                "end_date": end_date,
+            }
+            kwargs = {
+                key: value for key, value in candidates.items()
+                if key in allowed and value is not None
+            }
+            request_kwargs = [kwargs]
+            if dataset == "stock_dividend" and trade_date:
+                # ann_date and imp_ann_date are alternative event dates.  A
+                # single request containing both would apply AND semantics and
+                # miss implementation-only announcements, so query and merge
+                # the two daily slices.
+                symbol_kwargs = {"ts_code": symbol} if symbol else {}
+                request_kwargs = [
+                    {**symbol_kwargs, "ann_date": trade_date},
+                    {**symbol_kwargs, "imp_ann_date": trade_date},
+                ]
+
+            frames = []
+            for request in request_kwargs:
+                frame = self.router.route(
+                    asset_class="stock",
+                    data_type=dataset,
+                    method_name=method_name,
+                    market="CN",
+                    **request,
+                )
+                if frame is not None and not frame.empty:
+                    frames.append(frame)
+            data = (
+                pd.concat(frames, ignore_index=True, sort=False)
+                if frames
+                else pd.DataFrame()
+            )
+            if not data.empty:
+                data = data.drop_duplicates(
+                    subset=["ts_code", "end_date", "ann_date", "div_proc"]
+                    if dataset == "stock_dividend"
+                    else None,
+                    keep="last",
+                )
+            if data is None or data.empty:
+                if progress_callback:
+                    progress_callback(position, scope_total)
+                continue
+            if dataset == "stock_dividend":
+                # A few early Tushare dividend records have no preliminary
+                # announcement date, while the implementation announcement
+                # date is present.  Use that later, point-in-time-safe date for
+                # storage.  Rows without either date cannot be used safely by
+                # the strategy and cannot satisfy the table primary key.
+                data = data.copy()
+                missing_ann_date = data["ann_date"].isna()
+                fallback_ann_date = missing_ann_date & data["imp_ann_date"].notna()
+                data.loc[fallback_ann_date, "ann_date"] = data.loc[
+                    fallback_ann_date, "imp_ann_date"
+                ]
+                unusable = data["ann_date"].isna()
+                if fallback_ann_date.any():
+                    logger.warning(
+                        "Used imp_ann_date for {} stock_dividend records without ann_date",
+                        int(fallback_ann_date.sum()),
+                    )
+                if unusable.any():
+                    logger.warning(
+                        "Skipped {} stock_dividend records without ann_date or imp_ann_date",
+                        int(unusable.sum()),
+                    )
+                    data = data.loc[~unusable].copy()
+                if data.empty:
+                    if progress_callback:
+                        progress_callback(position, scope_total)
+                    continue
+                data = data.drop_duplicates(
+                    subset=["ts_code", "end_date", "ann_date", "div_proc"],
+                    keep="last",
+                )
+            total += await self.data_ops.upsert_mainline_raw_batch(dataset, data)
+            if progress_callback:
+                progress_callback(position, scope_total)
+        logger.info(f"Updated {total} records for {dataset}")
+        return total
 
     async def update_daily_data(
         self,
@@ -3584,6 +3784,7 @@ class DataUpdater:
         self,
         l1_code: Optional[str] = None,
         force_update: bool = False,
+        historical: bool = True,
         progress_callback: Optional[callable] = None,
     ) -> int:
         """
@@ -3592,6 +3793,7 @@ class DataUpdater:
         Args:
             l1_code: 一级行业代码，None表示更新所有行业
             force_update: 是否强制更新
+            historical: 是否同步完整历史区间（主线策略默认 True）
             progress_callback: 进度回调函数 (current, total)
 
         Returns:
@@ -3627,7 +3829,7 @@ class DataUpdater:
 
             # 如果不是强制更新，获取数据库中已有的L1行业列表
             existing_l1_codes = set()
-            if not force_update:
+            if not force_update and not historical:
                 try:
                     all_members = await self.data_ops.get_sw_industry_members()
                     if all_members is not None and not all_members.empty:
@@ -3640,7 +3842,7 @@ class DataUpdater:
             for l1_code_item in l1_codes:
                 try:
                     # 跳过已存在的L1行业
-                    if not force_update and l1_code_item in existing_l1_codes:
+                    if not force_update and not historical and l1_code_item in existing_l1_codes:
                         skipped_records += 1
                         logger.info(f"Skipping L1 {l1_code_item} - already exists")
                         completed += 1
@@ -3655,6 +3857,7 @@ class DataUpdater:
                         data_type="sw_member",
                         method_name="get_sw_industry_members",
                         l1_code=l1_code_item,
+                        is_new=None if historical else "Y",
                     )
 
                     if data is not None and not data.empty:

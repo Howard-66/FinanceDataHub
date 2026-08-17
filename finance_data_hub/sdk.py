@@ -29,6 +29,7 @@ from finance_data_hub.preprocessing.storage import (
     MacroCyclePhaseStorage,
 )
 from finance_data_hub.preprocessing.macro import CN_PHASE_METADATA
+from finance_data_hub.preprocessing.mainline import MainlineDataStorage
 from finance_data_hub.utils.market import infer_market_from_symbols
 
 
@@ -101,6 +102,7 @@ class FinanceDataHub:
         self.quarterly_storage = QuarterlyFundamentalDataStorage(self.db_manager)
         self.macro_cycle_phase_storage = MacroCyclePhaseStorage(self.db_manager)
         self.macro_cycle_industry_storage = MacroCycleIndustryStorage(self.db_manager)
+        self.mainline_storage = MainlineDataStorage(self.db_manager)
 
         # 初始化 SmartRouter（如果配置文件存在）
         try:
@@ -1770,6 +1772,7 @@ class FinanceDataHub:
         l2_code: Optional[str] = None,
         l3_code: Optional[str] = None,
         ts_code: Optional[str] = None,
+        as_of: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取申万行业成分股
@@ -1792,7 +1795,11 @@ class FinanceDataHub:
             >>> # 查询股票所属行业
             >>> members = fdh.get_sw_industry_members(ts_code="600519.SH")
         """
-        return asyncio.run(self.get_sw_industry_members_async(l1_code, l2_code, l3_code, ts_code))
+        return asyncio.run(
+            self.get_sw_industry_members_async(
+                l1_code, l2_code, l3_code, ts_code, as_of
+            )
+        )
 
     async def get_sw_industry_members_async(
         self,
@@ -1800,6 +1807,7 @@ class FinanceDataHub:
         l2_code: Optional[str] = None,
         l3_code: Optional[str] = None,
         ts_code: Optional[str] = None,
+        as_of: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         获取申万行业成分股（异步方法）
@@ -1813,11 +1821,69 @@ class FinanceDataHub:
         Returns:
             Optional[pd.DataFrame]: 申万行业成分股数据
         """
-        return await self.ops.get_sw_industry_members(l1_code, l2_code, l3_code, ts_code)
+        return await self.ops.get_sw_industry_members(
+            l1_code, l2_code, l3_code, ts_code, as_of
+        )
 
     # ============================================================================
     # 复权数据与预处理数据扩展方法
     # ============================================================================
+
+    def get_mainline_raw(
+        self,
+        dataset: str,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        as_of: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """查询主线策略补充原始数据。"""
+        return asyncio.run(
+            self.get_mainline_raw_async(dataset, symbols, start_date, end_date, as_of)
+        )
+
+    async def get_mainline_raw_async(
+        self,
+        dataset: str,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        as_of: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """查询主线策略补充原始数据（异步）。"""
+        return await self.ops.get_mainline_raw(
+            dataset, symbols=symbols, start_date=start_date,
+            end_date=end_date, as_of=as_of,
+        )
+
+    def get_processed_mainline(
+        self,
+        dataset: str,
+        codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        eligible_only: bool = False,
+    ) -> pd.DataFrame:
+        """查询主线策略因子宽表；dataset 例如 stock_daily/industry_daily。"""
+        return asyncio.run(
+            self.get_processed_mainline_async(
+                dataset, codes, start_date, end_date, eligible_only
+            )
+        )
+
+    async def get_processed_mainline_async(
+        self,
+        dataset: str,
+        codes: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        eligible_only: bool = False,
+    ) -> pd.DataFrame:
+        """查询主线策略因子宽表（异步）。"""
+        return await self.mainline_storage.query(
+            dataset, codes=codes, start_date=start_date, end_date=end_date,
+            eligible_only=eligible_only,
+        )
 
     def get_daily_adjusted(
         self,
