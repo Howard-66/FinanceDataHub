@@ -1075,9 +1075,31 @@ jobs:
     category: mainline
     resource_group: mainline_preprocess
     schedule: {type: cron, day_of_week: "mon-fri", hour: 22, minute: 20}
-    params: {all: true, market: CN, start_date: "latest-400d", end_date: latest}
-    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, stock_st_update, stock_suspend_update, stock_dividend_update, stock_repurchase_update, margin_detail_update, moneyflow_hsgt_update]
+    params: {all: true, market: CN, stage: "daily,publish", start_date: "latest-400d", end_date: latest}
+    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, sw_daily_update, index_daily_update, fund_daily_update, fund_adj_update, etf_share_size_update, index_weight_update, stock_st_update, stock_suspend_update, stock_dividend_update, stock_repurchase_update, margin_detail_update, moneyflow_hsgt_update]
     retry: {max_retries: 2, delay: 900}
+
+  # 披露数据按公告可用日进入因子表；可每天幂等执行，但不会把报告期当成可交易日。
+  mainline_crowding_preprocess:
+    enabled: true
+    type: preprocess
+    category: mainline
+    resource_group: mainline_preprocess
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 22, minute: 40}
+    params: {all: true, market: CN, stage: "crowding,publish", start_date: "2012-01-01", end_date: latest}
+    depends_on: [fund_portfolio_update, mainline_preprocess]
+    retry: {max_retries: 2, delay: 900}
+
+  # 月末窗口运行；模型只发布已结束月份，训练截止日写入结果表以供审计。
+  mainline_leadlag_month_end:
+    enabled: true
+    type: preprocess
+    category: mainline
+    resource_group: mainline_preprocess
+    schedule: {type: cron, day: "28-31", day_of_week: "mon-fri", hour: 23, minute: 0}
+    params: {all: true, market: CN, stage: "leadlag,publish", start_date: "2008-01-01", end_date: latest}
+    depends_on: [mainline_preprocess, mainline_crowding_preprocess]
+    retry: {max_retries: 1, delay: 1800}
 
   # 每月首个周一按首次回填口径复核完整历史。历史任务串行执行，避免
   # Tushare 大范围分页请求互相争抢；主线全历史重算会等待日常基础预处理完成。
@@ -1146,8 +1168,8 @@ jobs:
     category: mainline
     resource_group: mainline_preprocess
     schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 22, minute: 40}
-    params: {all: true, start_date: "2012-01-01", end_date: today}
-    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, stock_namechange_update, moneyflow_hsgt_history_update]
+    params: {all: true, stage: "daily,crowding,leadlag,publish", start_date: "2012-01-01", end_date: today}
+    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, stock_namechange_update, moneyflow_hsgt_history_update, fund_portfolio_update, index_weight_update]
     retry: {max_retries: 2, delay: 900}
 
   # ========== 周六凌晨任务：补齐周五夜盘 / 周末复核 ==========

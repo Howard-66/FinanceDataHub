@@ -1863,11 +1863,14 @@ class FinanceDataHub:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         eligible_only: bool = False,
+        factor_version: int = 1,
+        usable_on_or_before: Optional[str] = None,
     ) -> pd.DataFrame:
         """查询主线策略因子宽表；dataset 例如 stock_daily/industry_daily。"""
         return asyncio.run(
             self.get_processed_mainline_async(
-                dataset, codes, start_date, end_date, eligible_only
+                dataset, codes, start_date, end_date, eligible_only,
+                factor_version, usable_on_or_before,
             )
         )
 
@@ -1878,11 +1881,14 @@ class FinanceDataHub:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         eligible_only: bool = False,
+        factor_version: int = 1,
+        usable_on_or_before: Optional[str] = None,
     ) -> pd.DataFrame:
         """查询主线策略因子宽表（异步）。"""
         return await self.mainline_storage.query(
             dataset, codes=codes, start_date=start_date, end_date=end_date,
-            eligible_only=eligible_only,
+            eligible_only=eligible_only, factor_version=factor_version,
+            usable_on_or_before=usable_on_or_before,
         )
 
     def get_daily_adjusted(

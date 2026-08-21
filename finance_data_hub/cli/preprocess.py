@@ -2262,6 +2262,11 @@ def run_preprocess(
         "-c",
         help="预处理类别 (technical, valuation_fill, fundamental, quarterly_fundamental, industry_valuation, macro_cycle, mainline, all)"
     ),
+    stage: Optional[str] = typer.Option(
+        None,
+        "--stage",
+        help="主线处理阶段（逗号分隔：daily,crowding,leadlag,publish；仅 --category mainline 有效）",
+    ),
     symbols: Optional[str] = typer.Option(
         None,
         "--symbols",
@@ -2353,6 +2358,10 @@ def run_preprocess(
         freq_list = ["daily"]  # 默认只处理日线
 
     category = category or "technical"
+    mainline_stages = [item.strip().lower() for item in stage.split(",") if item.strip()] if stage else None
+    if stage and category != "mainline":
+        console.print("[bold red]ERROR:[/bold red] --stage 仅支持 --category mainline")
+        raise typer.Exit(1)
     market_code = normalize_market(market, default="CN")
 
     requires_symbol_scope = category not in ["macro_cycle", "mainline"]
@@ -2546,6 +2555,7 @@ def run_preprocess(
                         start_date=_resolve_mainline_start_date(start_date, force),
                         end_date=end_date,
                         include_monthly=True,
+                        stages=mainline_stages,
                         progress_callback=mainline_progress,
                     )
                 result = {

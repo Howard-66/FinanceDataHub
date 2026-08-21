@@ -419,7 +419,7 @@ async def test_mainline_stock_sql_preserves_time_index_predicates():
         pd.Timestamp("2025-01-01").date(), pd.Timestamp("2025-01-31").date()
     )
 
-    sql = preprocessor._execute.await_args.args[0]
+    sql = preprocessor._execute.await_args_list[0].args[0]
     assert "d.time::date BETWEEN" not in sql
     assert "db.time::date BETWEEN" not in sql
     assert "LEFT JOIN v_fundamental_combined" not in sql
@@ -523,6 +523,7 @@ def test_scheduler_accepts_mainline_jobs_and_dependencies():
     history_mainline = config.jobs["mainline_history_preprocess"]
     assert history_mainline.params == {
         "all": True,
+        "stage": "daily,crowding,leadlag,publish",
         "start_date": "2012-01-01",
         "end_date": "today",
     }

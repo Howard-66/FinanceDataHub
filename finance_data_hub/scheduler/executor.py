@@ -432,6 +432,13 @@ class TaskExecutor:
         market = params.get("market")
         if market:
             cmd.extend(["--market", str(market)])
+
+        # 主线阶段可独立调度，避免每天无意重训月度模型。
+        stage = params.get("stage")
+        if stage:
+            if isinstance(stage, list):
+                stage = ",".join(stage)
+            cmd.extend(["--stage", str(stage)])
         
         # 处理 trade_date 参数
         trade_date = self._resolve_date_param(

@@ -41,6 +41,7 @@ dependencies = [
     "akshare>=1.18.59",
     "jupyter>=1.1.1",
     "ipywidgets>=8.1.8",
+    "scikit-learn>=1.5.0",
 ]
 
 [project.optional-dependencies]
