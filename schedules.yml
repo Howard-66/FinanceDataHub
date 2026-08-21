@@ -1042,6 +1042,15 @@ jobs:
     params: {asset_class: stock, trade_date: latest, market: CN}
     retry: {max_retries: 3, delay: 600}
 
+  moneyflow_update:
+    enabled: true
+    type: download
+    dataset: moneyflow
+    resource_group: tushare_mainline
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 19, minute: 22}
+    params: {asset_class: stock, trade_date: latest, market: CN}
+    retry: {max_retries: 3, delay: 600}
+
   stock_namechange_update:
     enabled: true
     type: download
@@ -1076,7 +1085,7 @@ jobs:
     resource_group: mainline_preprocess
     schedule: {type: cron, day_of_week: "mon-fri", hour: 22, minute: 20}
     params: {all: true, market: CN, stage: "daily,publish", start_date: "latest-400d", end_date: latest}
-    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, sw_daily_update, index_daily_update, fund_daily_update, fund_adj_update, etf_share_size_update, index_weight_update, stock_st_update, stock_suspend_update, stock_dividend_update, stock_repurchase_update, margin_detail_update, moneyflow_hsgt_update]
+    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, sw_daily_update, index_daily_update, fund_daily_update, fund_adj_update, etf_share_size_update, index_weight_update, stock_st_update, stock_suspend_update, stock_dividend_update, stock_repurchase_update, margin_detail_update, moneyflow_update]
     retry: {max_retries: 2, delay: 900}
 
   # 披露数据按公告可用日进入因子表；可每天幂等执行，但不会把报告期当成可交易日。
@@ -1162,6 +1171,15 @@ jobs:
     depends_on: [margin_detail_history_update]
     retry: {max_retries: 3, delay: 600}
 
+  moneyflow_history_update:
+    enabled: true
+    type: download
+    dataset: moneyflow
+    resource_group: tushare_mainline
+    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 30}
+    params: {asset_class: stock, force: true}
+    retry: {max_retries: 3, delay: 600}
+
   mainline_history_preprocess:
     enabled: true
     type: preprocess
@@ -1169,7 +1187,7 @@ jobs:
     resource_group: mainline_preprocess
     schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 22, minute: 40}
     params: {all: true, stage: "daily,crowding,leadlag,publish", start_date: "2012-01-01", end_date: today}
-    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, stock_namechange_update, moneyflow_hsgt_history_update, fund_portfolio_update, index_weight_update]
+    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, stock_namechange_update, moneyflow_history_update, fund_portfolio_update, index_weight_update]
     retry: {max_retries: 2, delay: 900}
 
   # ========== 周六凌晨任务：补齐周五夜盘 / 周末复核 ==========

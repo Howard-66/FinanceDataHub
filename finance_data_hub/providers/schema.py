@@ -176,6 +176,33 @@ MoneyflowHsgtSchema = DataFrameSchema(
     ],
 )
 
+MoneyflowSchema = DataFrameSchema(
+    name="moneyflow",
+    description="个股主动买卖资金流向（Tushare moneyflow）",
+    columns=[
+        ColumnSchema("ts_code", "object", False, "股票代码"),
+        ColumnSchema("trade_date", "datetime64[ns]", False, "交易日期"),
+        ColumnSchema("buy_sm_vol", "float64", True, "小单买入量（手）"),
+        ColumnSchema("buy_sm_amount", "float64", True, "小单买入金额（万元）"),
+        ColumnSchema("sell_sm_vol", "float64", True, "小单卖出量（手）"),
+        ColumnSchema("sell_sm_amount", "float64", True, "小单卖出金额（万元）"),
+        ColumnSchema("buy_md_vol", "float64", True, "中单买入量（手）"),
+        ColumnSchema("buy_md_amount", "float64", True, "中单买入金额（万元）"),
+        ColumnSchema("sell_md_vol", "float64", True, "中单卖出量（手）"),
+        ColumnSchema("sell_md_amount", "float64", True, "中单卖出金额（万元）"),
+        ColumnSchema("buy_lg_vol", "float64", True, "大单买入量（手）"),
+        ColumnSchema("buy_lg_amount", "float64", True, "大单买入金额（万元）"),
+        ColumnSchema("sell_lg_vol", "float64", True, "大单卖出量（手）"),
+        ColumnSchema("sell_lg_amount", "float64", True, "大单卖出金额（万元）"),
+        ColumnSchema("buy_elg_vol", "float64", True, "特大单买入量（手）"),
+        ColumnSchema("buy_elg_amount", "float64", True, "特大单买入金额（万元）"),
+        ColumnSchema("sell_elg_vol", "float64", True, "特大单卖出量（手）"),
+        ColumnSchema("sell_elg_amount", "float64", True, "特大单卖出金额（万元）"),
+        ColumnSchema("net_mf_vol", "float64", True, "净流入量（手）"),
+        ColumnSchema("net_mf_amount", "float64", True, "净流入额（万元）"),
+    ],
+)
+
 
 # 公募基金基本信息 Schema
 FundBasicSchema = DataFrameSchema(

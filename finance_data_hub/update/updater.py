@@ -48,6 +48,8 @@ FUTURES_MINUTE_TRADING_DAY_END = datetime_time(15, 0, 0)
 INDEX_DAILY_EXCLUDED_CATALOG_MARKETS = {"SW"}
 FUND_PORTFOLIO_HISTORY_START = "1998-01-01"
 IDX_ANNS_HISTORY_START = "1990-01-01"
+MAINLINE_MONEYFLOW_SH_HISTORY_START = "2007-01-01"
+MAINLINE_MONEYFLOW_OTHER_HISTORY_START = "2010-01-01"
 
 MAINLINE_RAW_UPDATE_CONFIG = {
     "stock_st": ("get_stock_st", {"ts_code", "trade_date", "start_date", "end_date"}),
@@ -60,6 +62,7 @@ MAINLINE_RAW_UPDATE_CONFIG = {
     "stock_repurchase": ("get_stock_repurchase", {"ts_code", "ann_date", "start_date", "end_date"}),
     "margin_detail": ("get_margin_detail", {"ts_code", "trade_date", "start_date", "end_date"}),
     "moneyflow_hsgt": ("get_moneyflow_hsgt", {"trade_date", "start_date", "end_date"}),
+    "moneyflow": ("get_moneyflow", {"ts_code", "trade_date", "start_date", "end_date"}),
 }
 
 
@@ -76,6 +79,13 @@ def _validate_no_mixed_all(symbols: Optional[List[str]], scope_name: str) -> Non
     lowered = {symbol.lower() for symbol in symbols}
     if "all" in lowered and len(lowered) > 1:
         raise ValueError(f"{scope_name} --symbols all 不能与其他代码混用")
+
+
+def _moneyflow_history_start_for_symbol(symbol: str) -> str:
+    """Return the earliest supported standard-moneyflow date for a market."""
+    if str(symbol).upper().endswith(".SH"):
+        return MAINLINE_MONEYFLOW_SH_HISTORY_START
+    return MAINLINE_MONEYFLOW_OTHER_HISTORY_START
 
 
 def _as_positive_float(value: Any) -> Optional[float]:
@@ -1756,17 +1766,50 @@ class DataUpdater:
             raise ValueError(f"Unsupported mainline raw dataset: {dataset}")
         method_name, allowed = MAINLINE_RAW_UPDATE_CONFIG[dataset]
         selected_symbols = symbols or [None]
+        moneyflow_listing_dates: Dict[str, str] = {}
+        moneyflow_uses_default_start = False
         if dataset == "moneyflow_hsgt":
             selected_symbols = [None]
+        elif dataset == "moneyflow" and not trade_date:
+            # Standard moneyflow accepts a single stock and a historical date
+            # range. A stock-wise request needs fewer than 5,000 trading-day
+            # rows even at the 2007 Shanghai source floor, well under
+            # Tushare's 6,000-record page size.
+            # record page size.  This replaces the much slower all-market
+            # date loop (one request for every trading day).
+            if not symbols:
+                basic = await self.data_ops.get_asset_basic(market="CN")
+                if basic is None or basic.empty:
+                    raise ValueError(
+                        "moneyflow full backfill requires asset_basic; "
+                        "run the CN basic update first"
+                    )
+                selected_symbols = (
+                    basic["symbol"].dropna().astype(str).drop_duplicates()
+                    .sort_values().tolist()
+                )
+                if "list_date" in basic.columns:
+                    for row in basic[["symbol", "list_date"]].dropna(
+                        subset=["symbol"]
+                    ).itertuples(index=False):
+                        if pd.notna(row.list_date):
+                            moneyflow_listing_dates[str(row.symbol)] = pd.Timestamp(
+                                row.list_date
+                            ).strftime("%Y-%m-%d")
+                logger.info(
+                    "Full moneyflow backfill will query {} L/D/P stocks",
+                    len(selected_symbols),
+                )
+            moneyflow_uses_default_start = start_date is None
+            end_date = end_date or datetime.now().strftime("%Y-%m-%d")
         elif dataset == "margin_detail" and start_date and end_date and not trade_date:
-            # margin_detail is safest as one all-market request per date.  Keep
-            # the date loop here so the CLI can report useful x/y progress and
-            # each successful day is committed independently.
+            # margin_detail is safest as one all-market request per date. Keep
+            # the date loop so each successful day is committed independently.
             range_start = pd.Timestamp(start_date)
             range_end = pd.Timestamp(end_date)
             if range_start > range_end:
                 raise ValueError(
-                    "margin_detail start_date must not be later than end_date"
+                    f"{dataset} start_date must not be later than end_date"
                 )
             scopes = [
                 (symbol, date.strftime("%Y-%m-%d"))
@@ -1819,11 +1862,17 @@ class DataUpdater:
         if progress_callback:
             progress_callback(0, scope_total)
         for position, symbol in enumerate(selected_symbols, start=1):
+            resolved_start_date = start_date
+            if dataset == "moneyflow" and moneyflow_uses_default_start and symbol:
+                resolved_start_date = max(
+                    _moneyflow_history_start_for_symbol(symbol),
+                    moneyflow_listing_dates.get(symbol, ""),
+                )
             candidates = {
                 "ts_code": symbol,
                 "trade_date": trade_date,
                 "ann_date": trade_date,
-                "start_date": start_date,
+                "start_date": resolved_start_date,
                 "end_date": end_date,
             }
             kwargs = {

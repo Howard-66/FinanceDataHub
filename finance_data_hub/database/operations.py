@@ -102,6 +102,16 @@ MAINLINE_RAW_TABLES = {
         ],
         "keys": ["trade_date"], "date_column": "trade_date",
     },
+    "moneyflow": {
+        "columns": [
+            "ts_code", "trade_date", "buy_sm_vol", "buy_sm_amount",
+            "sell_sm_vol", "sell_sm_amount", "buy_md_vol", "buy_md_amount",
+            "sell_md_vol", "sell_md_amount", "buy_lg_vol", "buy_lg_amount",
+            "sell_lg_vol", "sell_lg_amount", "buy_elg_vol", "buy_elg_amount",
+            "sell_elg_vol", "sell_elg_amount", "net_mf_vol", "net_mf_amount",
+        ],
+        "keys": ["ts_code", "trade_date"], "date_column": "trade_date",
+    },
 }
 
 

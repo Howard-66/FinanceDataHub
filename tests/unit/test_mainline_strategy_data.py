@@ -169,6 +169,26 @@ def test_dense_mainline_datasets_use_bounded_date_windows(
     assert windows == expected_windows
 
 
+def test_moneyflow_stock_history_uses_one_request_per_stock_range():
+    provider = TushareProvider(config={"token": "test-token"})
+    provider._get_mainline_date_chunks = Mock(return_value=pd.DataFrame())
+    provider._get_mainline_series = Mock(return_value=pd.DataFrame())
+
+    provider.get_moneyflow(
+        ts_code="000001.SZ", start_date="2010-01-01", end_date="2025-02-01"
+    )
+
+    provider._get_mainline_date_chunks.assert_not_called()
+    request = provider._get_mainline_series.call_args
+    assert request.args[0] == "moneyflow"
+    assert request.args[2] == {
+        "ts_code": "000001.SZ",
+        "trade_date": None,
+        "start_date": "2010-01-01",
+        "end_date": "2025-02-01",
+    }
+
+
 @pytest.mark.asyncio
 async def test_mainline_updater_routes_and_persists_raw_dataset():
     updater = object.__new__(DataUpdater)
@@ -228,6 +248,7 @@ async def test_margin_detail_range_reports_date_progress_and_commits_each_day():
     assert [
         item.kwargs["trade_date"] for item in updater.router.route.call_args_list
     ] == ["2025-01-30", "2025-01-31", "2025-02-01"]
+    assert all(item.kwargs["data_type"] == "margin_detail" for item in updater.router.route.call_args_list)
     assert progress.call_args_list == [
         call(0, 3),
         call(1, 3),
@@ -235,6 +256,53 @@ async def test_margin_detail_range_reports_date_progress_and_commits_each_day():
         call(3, 3),
     ]
     updater.data_ops.upsert_mainline_raw_batch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_moneyflow_full_backfill_uses_stock_universe_and_exchange_floors():
+    updater = object.__new__(DataUpdater)
+    updater.router = Mock(
+        route=Mock(
+            return_value=pd.DataFrame(
+                {
+                    "ts_code": ["000001.SZ"],
+                    "trade_date": [pd.Timestamp("2010-01-04")],
+                    "net_mf_amount": [1.0],
+                }
+            )
+        )
+    )
+    updater.data_ops = Mock(
+        get_asset_basic=AsyncMock(
+            return_value=pd.DataFrame(
+                {
+                    "symbol": ["600001.SH", "000001.SZ"],
+                    "list_date": ["2008-01-01", "1991-04-03"],
+                }
+            )
+        ),
+        upsert_mainline_raw_batch=AsyncMock(return_value=1),
+    )
+    progress = Mock()
+
+    count = await updater.update_mainline_raw(
+        "moneyflow", end_date="2011-01-31", progress_callback=progress
+    )
+
+    assert count == 2
+    assert [item.kwargs["ts_code"] for item in updater.router.route.call_args_list] == [
+        "000001.SZ",
+        "600001.SH",
+    ]
+    assert [item.kwargs["start_date"] for item in updater.router.route.call_args_list] == [
+        "2010-01-01",
+        "2008-01-01",
+    ]
+    assert all(
+        item.kwargs["end_date"] == "2011-01-31"
+        for item in updater.router.route.call_args_list
+    )
+    assert progress.call_args_list == [call(0, 2), call(1, 2), call(2, 2)]
 
 
 @pytest.mark.asyncio
@@ -506,6 +574,13 @@ def test_scheduler_accepts_mainline_jobs_and_dependencies():
         assert job.schedule["day"] == "1-7"
         assert job.schedule["day_of_week"] == "mon"
 
+    moneyflow_history = config.jobs["moneyflow_history_update"]
+    assert moneyflow_history.params == {
+        "asset_class": "stock",
+        "force": True,
+    }
+    assert moneyflow_history.depends_on == []
+
     daily_mainline = config.jobs["mainline_preprocess"]
     assert daily_mainline.category == "mainline"
     assert {
@@ -517,8 +592,9 @@ def test_scheduler_accepts_mainline_jobs_and_dependencies():
         "stock_dividend_update",
         "stock_repurchase_update",
         "margin_detail_update",
-        "moneyflow_hsgt_update",
+        "moneyflow_update",
     }.issubset(daily_mainline.depends_on)
+    assert "moneyflow_hsgt_update" not in daily_mainline.depends_on
 
     history_mainline = config.jobs["mainline_history_preprocess"]
     assert history_mainline.params == {
@@ -527,7 +603,7 @@ def test_scheduler_accepts_mainline_jobs_and_dependencies():
         "start_date": "2012-01-01",
         "end_date": "today",
     }
-    assert "moneyflow_hsgt_history_update" in history_mainline.depends_on
+    assert "moneyflow_history_update" in history_mainline.depends_on
     assert "stock_namechange_update" in history_mainline.depends_on
     assert config.jobs["etf_share_size_catchup"].params["trade_date"] == "latest"
 
@@ -540,3 +616,13 @@ def test_mainline_migration_keeps_strategy_scoring_outside_data_hub():
     assert "processed_mainline_stock_daily" in sql
     assert "processed_mainline_etf_daily" in sql
     assert "strategy_score" not in sql.lower()
+
+
+def test_standard_moneyflow_migration_only_adds_the_approved_source():
+    root = Path(__file__).resolve().parents[2]
+    sql = (root / "sql/migrations/040_add_mainline_standard_moneyflow.sql").read_text()
+
+    assert "CREATE TABLE IF NOT EXISTS moneyflow" in sql
+    assert "moneyflow_net_amount_20d" in sql
+    assert "moneyflow_ths" not in sql
+    assert "moneyflow_dc" not in sql

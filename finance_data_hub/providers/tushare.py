@@ -29,6 +29,7 @@ from finance_data_hub.providers.schema import (
     StockDividendSchema,
     StockRepurchaseSchema,
     MarginDetailSchema,
+    MoneyflowSchema,
     MoneyflowHsgtSchema,
     FundBasicSchema,
     EtfBasicSchema,
@@ -835,6 +836,35 @@ class TushareProvider(BaseDataProvider):
              "end_date": end_date},
             ["trade_date"],
             max_records=300,
+        )
+
+    def get_moneyflow(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """获取标准个股主动买卖资金流；沪市自 2007 年、深市自 2010 年。"""
+        if start_date and end_date and not trade_date and not ts_code:
+            return self._get_mainline_date_chunks(
+                "moneyflow",
+                MoneyflowSchema,
+                {"ts_code": ts_code},
+                ["ts_code", "trade_date"],
+                start_date=start_date,
+                end_date=end_date,
+                chunk_frequency="day",
+                max_records=6000,
+                minimum_start_date="2007-01-01",
+            )
+        return self._get_mainline_series(
+            "moneyflow",
+            MoneyflowSchema,
+            {"ts_code": ts_code, "trade_date": trade_date,
+             "start_date": start_date, "end_date": end_date},
+            ["ts_code", "trade_date"],
+            max_records=6000,
         )
 
     def get_fund_basic(

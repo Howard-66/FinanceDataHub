@@ -70,6 +70,10 @@ routing_strategy:
       income:
         providers: [tushare]
         fallback: false
+      # 主线策略：标准个股主动买卖资金流。不要用 THS/DC 数据替代历史主序列。
+      moneyflow:
+        providers: [tushare]
+        fallback: false
       tick:
         providers: [xtquant]
         fallback: false

@@ -16,6 +16,7 @@ FinanceDataHub 为“个人投资者量化主线策略”提供事实数据、�
 | 回购 | `stock_repurchase` | 股东回报事件 | 接口可用历史 |
 | 融资融券 | `margin_detail` | 个股/行业资金共识 | 接口可用历史 |
 | 沪深港通 | `moneyflow_hsgt` | 市场级北向资金 | 仅市场汇总，不等同于当前个股北向持仓 |
+| 个股资金流 | `moneyflow` | 行业资金共识候选增强（按 SW2021 L2 聚合） | 标准 Tushare：沪市自 2007 年、深市自 2010 年；回测从 2012 年使用 |
 | 申万成分 | `sw_industry_member` | SW2021 L2 点时行业归属 | 同一股票可保存多段纳入/剔除区间 |
 
 申万查询支持 `as_of`：区间条件为 `in_date <= as_of <= out_date`，`out_date` 为空表示仍有效。
@@ -70,6 +71,7 @@ fdh-cli update --dataset stock_dividend --asset-class stock --force
 fdh-cli update --dataset stock_repurchase --asset-class stock --start-date 2012-01-01 --force
 fdh-cli update --dataset margin_detail --asset-class stock --start-date 2012-01-01 --force
 fdh-cli update --dataset moneyflow_hsgt --asset-class stock --start-date 2012-01-01 --force
+fdh-cli update --dataset moneyflow --asset-class stock --symbols all --force
 
 # 4. 基础技术/估值/基本面预处理完成后，生成主线因子。
 fdh-cli preprocess run --category mainline --all \
@@ -113,7 +115,9 @@ etfs = await fdh.get_processed_mainline_async(
 
 - 无分析师一致预期数据：不伪造，第一版使用已公告财务数据和价格/资金因子。
 - 无结构化产业链上下游关系：`calculate_leadlag_monthly` 只计算调用方明确给出的候选关系；不对全市场盲目做笛卡尔积。
-- 无当前个股级北向持仓：仅保留市场级 `moneyflow_hsgt`，个股/行业资金项以融资余额、ETF 份额和成交额替代。
+- `moneyflow_hsgt` 仅作为市场级北向辅助信息。其数据从 2014-11-17 开始，2012—2014 的北向字段保持缺失状态，不补零且不阻断核心快照。
+- `moneyflow` 是唯一正式个股资金流底座。它按观察日收盘后可得、下一个交易日可用，聚合为 SW2021 L2 的净流入、大小单净流入、5/20 日累计、正流入股票占比和龙头贡献；这些是独立回测的候选增强证据，不改变既定主线评分公式或权重。
+- 不接入 `moneyflow_ths`、`moneyflow_dc`、THS/DC 的行业/概念板块资金流或大盘资金流；它们最多用于近期研究终端的交叉验证，不能拼接为 2012 年起的正式历史因子。
 - 2016 年前无官方 ST 快照：使用 `namechange` 中包含 ST/*ST 的有效简称区间重建，并通过 `st_source=namechange_reconstructed` 标记。
 - ETF 缺跟踪基准：直接排除并记录原因，不使用 Wind 或主观代理指数。
 

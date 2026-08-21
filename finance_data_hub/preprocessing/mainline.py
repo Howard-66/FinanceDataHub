@@ -355,6 +355,11 @@ class MainlinePreprocessor:
                      NULLIF(db.max_turnover_20d-db.min_turnover_20d,0) AS turnover_pct_20d,
                    v.pe_ttm_pct_1250d AS pe_pct_5y, v.pb_pct_1250d AS pb_pct_5y,
                    md.rzye, md.rqye, md.rzmre,
+                   mf.net_mf_amount AS moneyflow_net_amount,
+                   mf.net_mf_amount * 10 / NULLIF(f.amount, 0) AS moneyflow_net_amount_ratio,
+                   (mf.buy_lg_amount-mf.sell_lg_amount+mf.buy_elg_amount-mf.sell_elg_amount) AS moneyflow_large_net_amount,
+                   (mf.buy_lg_amount-mf.sell_lg_amount+mf.buy_elg_amount-mf.sell_elg_amount) * 10 / NULLIF(f.amount, 0) AS moneyflow_large_net_ratio,
+                   (mf.ts_code IS NOT NULL) AS moneyflow_available,
                    EXISTS (SELECT 1 FROM stock_dividend x
                            WHERE x.ts_code=f.ts_code AND x.ann_date BETWEEN f.trade_date-119 AND f.trade_date)
                        AS dividend_event_120d,
@@ -388,6 +393,7 @@ class MainlinePreprocessor:
                 LIMIT 1
             ) fi ON TRUE
             LEFT JOIN margin_detail md ON md.ts_code=f.ts_code AND md.trade_date=f.trade_date
+            LEFT JOIN moneyflow mf ON mf.ts_code=f.ts_code AND mf.trade_date=f.trade_date
             LEFT JOIN LATERAL (
                 SELECT m.l1_code,m.l1_name,m.l2_code,m.l2_name
                 FROM sw_industry_member m
@@ -414,7 +420,7 @@ class MainlinePreprocessor:
             revenue_yoy,profit_yoy,
             ocf_to_profit,debt_to_assets,financial_available_date,return_20d,return_60d,return_120d,volatility_20d,
             drawdown_120d,amount_pct_20d,turnover_pct_20d,pe_pct_5y,pb_pct_5y,
-            rzye,rqye,rzmre,dividend_event_120d,repurchase_event_120d,source_asof
+            rzye,rqye,rzmre,moneyflow_net_amount,moneyflow_net_amount_ratio,moneyflow_large_net_amount,moneyflow_large_net_ratio,moneyflow_available,dividend_event_120d,repurchase_event_120d,source_asof
         )
         SELECT :factor_version,trade_date,trade_date,
                COALESCE((SELECT MIN(tc.cal_date::date) FROM trade_cal tc
@@ -432,7 +438,7 @@ class MainlinePreprocessor:
                roe_ttm,roa_ttm,roic,grossprofit_margin,revenue_yoy,profit_yoy,
                ocf_to_profit,debt_to_assets,financial_available_date,
                return_20d,return_60d,return_120d,volatility_20d,drawdown_120d,
-               amount_pct_20d,turnover_pct_20d,pe_pct_5y,pb_pct_5y,rzye,rqye,rzmre,
+               amount_pct_20d,turnover_pct_20d,pe_pct_5y,pb_pct_5y,rzye,rqye,rzmre,moneyflow_net_amount,moneyflow_net_amount_ratio,moneyflow_large_net_amount,moneyflow_large_net_ratio,moneyflow_available,
                dividend_event_120d,repurchase_event_120d,NOW()
         FROM enriched e
         ON CONFLICT (factor_version,ts_code,trade_date) DO UPDATE SET
@@ -453,6 +459,9 @@ class MainlinePreprocessor:
             turnover_pct_20d=EXCLUDED.turnover_pct_20d,
             pe_pct_5y=EXCLUDED.pe_pct_5y,pb_pct_5y=EXCLUDED.pb_pct_5y,
             rzye=EXCLUDED.rzye,rqye=EXCLUDED.rqye,rzmre=EXCLUDED.rzmre,
+            moneyflow_net_amount=EXCLUDED.moneyflow_net_amount,moneyflow_net_amount_ratio=EXCLUDED.moneyflow_net_amount_ratio,
+            moneyflow_large_net_amount=EXCLUDED.moneyflow_large_net_amount,moneyflow_large_net_ratio=EXCLUDED.moneyflow_large_net_ratio,
+            moneyflow_available=EXCLUDED.moneyflow_available,
             dividend_event_120d=EXCLUDED.dividend_event_120d,
             repurchase_event_120d=EXCLUDED.repurchase_event_120d,
             source_asof=EXCLUDED.source_asof,processed_at=NOW()
@@ -488,7 +497,9 @@ class MainlinePreprocessor:
             STDDEV_SAMP(r1) OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS vol60,
             STDDEV_SAMP(r1) OVER(w ROWS BETWEEN 119 PRECEDING AND CURRENT ROW) AS vol120,
             SUM(ABS(r1)) OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS path_length,
-            MIN(r1) OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS tail_p05
+            MIN(r1) OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS tail_p05,
+            SUM(moneyflow_net_amount) OVER(w ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS moneyflow5,
+            SUM(moneyflow_net_amount) OVER(w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS moneyflow20
           FROM raw WINDOW w AS (PARTITION BY ts_code ORDER BY trade_date)
         )
         UPDATE processed_mainline_stock_daily target SET
@@ -498,6 +509,7 @@ class MainlinePreprocessor:
           ma200_gap=source.close/NULLIF(source.ma200,0)-1, volatility_60d=source.vol60, volatility_120d=source.vol120,
           path_efficiency_60d=source.path_displacement/NULLIF(source.path_length,0), tail_return_p05_60d=source.tail_p05,
           turnover_pct_2y=source.turnover_rank, revenue_yoy_prev=source.revenue_prev, profit_yoy_prev=source.profit_prev,
+          moneyflow_net_amount_5d=source.moneyflow5,moneyflow_net_amount_20d=source.moneyflow20,
           revenue_acceleration=target.revenue_yoy-source.revenue_prev, profit_acceleration=target.profit_yoy-source.profit_prev,
           is_market_breadth_eligible=(target.is_listed AND NOT target.is_st AND NOT target.is_suspended AND source.trades20 >= 20 AND target.close IS NOT NULL),
           is_industry_breadth_eligible=(target.is_listed AND NOT target.is_st AND NOT target.is_suspended AND target.l2_code IS NOT NULL AND source.trades20 >= 20),
@@ -510,7 +522,7 @@ class MainlinePreprocessor:
             CASE WHEN source.trades20 < 20 THEN 'insufficient_trading_days_20d' END, CASE WHEN COALESCE(target.amount,0)<=0 THEN 'not_tradable' END
           ], NULL),
           data_quality=jsonb_build_object('st_source',target.st_source,'tail_proxy','rolling_min_return_if_p05_unavailable'),
-          source_watermark=jsonb_build_object('prices_as_of',target.trade_date,'financial_available_date',target.financial_available_date), processed_at=NOW()
+          source_watermark=jsonb_build_object('prices_as_of',target.trade_date,'financial_available_date',target.financial_available_date,'moneyflow',CASE WHEN target.moneyflow_available THEN target.trade_date ELSE NULL END), processed_at=NOW()
         FROM source
         WHERE target.factor_version=source.factor_version AND target.ts_code=source.ts_code AND target.trade_date=source.trade_date
           AND target.trade_date BETWEEN :start_date AND :end_date
@@ -564,7 +576,7 @@ class MainlinePreprocessor:
             benchmark_return_60d,benchmark_return_120d,benchmark_ma20_gap,
             benchmark_ma60_gap,benchmark_ma200_gap,benchmark_volatility_20d,breadth_above_ma20,
             breadth_above_ma60,breadth_above_ma120,breadth_denominator,breadth_above_ma60_count,breadth_above_ma120_count,effective_stock_count,advance_decline_ratio,north_money,north_money_20d,
-            market_regime,source_asof
+            market_regime,northbound_available,northbound_available_from,data_quality,source_watermark,source_asof
         )
         SELECT :factor_version,b.trade_date,b.trade_date,
                COALESCE((SELECT MIN(tc.cal_date::date) FROM trade_cal tc WHERE tc.exchange='SSE' AND tc.is_open=1 AND tc.cal_date::date>b.trade_date), b.trade_date+1),
@@ -574,7 +586,9 @@ class MainlinePreprocessor:
                SUM(m.north_money) OVER (ORDER BY b.trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW),
                CASE WHEN b.close>b.ma60 AND x.above60>=0.5 THEN 'risk_on'
                     WHEN b.close<b.ma60 AND x.above60<0.5 THEN 'risk_off' ELSE 'neutral' END,
-               NOW()
+               m.north_money IS NOT NULL,(SELECT MIN(trade_date) FROM moneyflow_hsgt WHERE north_money IS NOT NULL),
+               jsonb_build_object('northbound_available',m.north_money IS NOT NULL,'northbound_optional',true),
+               jsonb_build_object('benchmark',b.trade_date,'moneyflow_hsgt',CASE WHEN m.north_money IS NOT NULL THEN b.trade_date ELSE NULL END),NOW()
         FROM benchmark b LEFT JOIN breadth x USING(trade_date)
         LEFT JOIN moneyflow_hsgt m USING(trade_date)
         WHERE b.trade_date BETWEEN :start_date AND :end_date
@@ -596,7 +610,8 @@ class MainlinePreprocessor:
             effective_stock_count=EXCLUDED.effective_stock_count,
             advance_decline_ratio=EXCLUDED.advance_decline_ratio,
             north_money=EXCLUDED.north_money,north_money_20d=EXCLUDED.north_money_20d,
-            market_regime=EXCLUDED.market_regime,source_asof=EXCLUDED.source_asof,
+            market_regime=EXCLUDED.market_regime,northbound_available=EXCLUDED.northbound_available,northbound_available_from=EXCLUDED.northbound_available_from,
+            data_quality=EXCLUDED.data_quality,source_watermark=EXCLUDED.source_watermark,source_asof=EXCLUDED.source_asof,
             processed_at=NOW()
         """
         return await self._execute(
@@ -632,7 +647,10 @@ class MainlinePreprocessor:
           cap_weight_return,relative_return_20d,relative_return_60d,relative_return_120d,breadth_above_ma20,
           breadth_above_ma60,breadth_above_ma120,strong_stock_count,strong_stock_ratio,return_dispersion,amount_share,median_pe_ttm,median_pb,
           median_roe_ttm,median_roic,median_grossprofit_margin,median_revenue_yoy,
-          median_profit_yoy,margin_balance_change_20d,data_quality,source_watermark,source_asof
+          median_profit_yoy,margin_balance_change_20d,
+          moneyflow_net_amount,moneyflow_net_amount_ratio,moneyflow_large_net_amount,moneyflow_large_net_ratio,
+          moneyflow_net_amount_5d,moneyflow_net_amount_20d,moneyflow_positive_stock_ratio,moneyflow_top_stock_contribution,moneyflow_coverage,moneyflow_available,
+          data_quality,source_watermark,source_asof
         )
         SELECT :factor_version,b.trade_date,b.trade_date,
           COALESCE((SELECT MIN(tc.cal_date::date) FROM trade_cal tc WHERE tc.exchange='SSE' AND tc.is_open=1 AND tc.cal_date::date>b.trade_date), b.trade_date+1),
@@ -651,8 +669,15 @@ class MainlinePreprocessor:
           PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY b.grossprofit_margin),
           PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY b.revenue_yoy),
           PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY b.profit_yoy),SUM(b.rz20),
-          jsonb_build_object('published_sw2021_l2',true,'industry_index_available',MAX(ii.close) IS NOT NULL),
-          jsonb_build_object('sw_daily',MAX(ii.trade_date)),NOW()
+          SUM(b.moneyflow_net_amount),SUM(b.moneyflow_net_amount)*10/NULLIF(SUM(b.amount),0),
+          SUM(b.moneyflow_large_net_amount),SUM(b.moneyflow_large_net_amount)*10/NULLIF(SUM(b.amount),0),
+          SUM(b.moneyflow_net_amount_5d),SUM(b.moneyflow_net_amount_20d),
+          COUNT(*) FILTER(WHERE b.moneyflow_net_amount>0)::numeric/NULLIF(COUNT(*) FILTER(WHERE b.moneyflow_available),0),
+          MAX(GREATEST(COALESCE(b.moneyflow_net_amount,0),0))/NULLIF(SUM(GREATEST(COALESCE(b.moneyflow_net_amount,0),0)),0),
+          COUNT(*) FILTER(WHERE b.moneyflow_available)::numeric/NULLIF(COUNT(*),0),
+          COUNT(*) FILTER(WHERE b.moneyflow_available)::numeric/NULLIF(COUNT(*),0)>=0.95,
+          jsonb_build_object('published_sw2021_l2',true,'industry_index_available',MAX(ii.close) IS NOT NULL,'moneyflow_coverage',COUNT(*) FILTER(WHERE b.moneyflow_available)::numeric/NULLIF(COUNT(*),0)),
+          jsonb_build_object('sw_daily',MAX(ii.trade_date),'moneyflow',CASE WHEN COUNT(*) FILTER(WHERE b.moneyflow_available)>0 THEN b.trade_date ELSE NULL END),NOW()
         FROM base b
         JOIN sw_industry_classify ic ON ic.industry_code=b.l2_code AND ic.level='L2' AND ic.is_pub='1'
         LEFT JOIN industry_index ii ON ii.l2_code=b.l2_code AND ii.trade_date=b.trade_date
@@ -676,6 +701,11 @@ class MainlinePreprocessor:
           median_revenue_yoy=EXCLUDED.median_revenue_yoy,
           median_profit_yoy=EXCLUDED.median_profit_yoy,
           margin_balance_change_20d=EXCLUDED.margin_balance_change_20d,
+          moneyflow_net_amount=EXCLUDED.moneyflow_net_amount,moneyflow_net_amount_ratio=EXCLUDED.moneyflow_net_amount_ratio,
+          moneyflow_large_net_amount=EXCLUDED.moneyflow_large_net_amount,moneyflow_large_net_ratio=EXCLUDED.moneyflow_large_net_ratio,
+          moneyflow_net_amount_5d=EXCLUDED.moneyflow_net_amount_5d,moneyflow_net_amount_20d=EXCLUDED.moneyflow_net_amount_20d,
+          moneyflow_positive_stock_ratio=EXCLUDED.moneyflow_positive_stock_ratio,moneyflow_top_stock_contribution=EXCLUDED.moneyflow_top_stock_contribution,
+          moneyflow_coverage=EXCLUDED.moneyflow_coverage,moneyflow_available=EXCLUDED.moneyflow_available,
           index_code=EXCLUDED.index_code,index_close=EXCLUDED.index_close,
           data_quality=EXCLUDED.data_quality,source_watermark=EXCLUDED.source_watermark,
           source_asof=EXCLUDED.source_asof,processed_at=NOW()

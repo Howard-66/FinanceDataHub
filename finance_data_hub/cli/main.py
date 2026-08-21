@@ -151,7 +151,7 @@ def update(
         None,
         "--symbols",
         "-s",
-        help="代码列表，用逗号分隔，如: 600519.SH,000858.SZ；期货和指数支持 --symbols all 表示更新全量代码池"
+        help="代码列表，用逗号分隔，如: 600519.SH,000858.SZ；期货、指数及 moneyflow 支持 --symbols all 表示更新全量代码池"
     ),
     start_date: Optional[str] = typer.Option(
         None,
@@ -472,7 +472,7 @@ FUTURE_DATASETS = {
 
 MAINLINE_RAW_DATASETS = {
     "stock_st", "stock_namechange", "stock_suspend", "stock_dividend",
-    "stock_repurchase", "margin_detail", "moneyflow_hsgt",
+    "stock_repurchase", "margin_detail", "moneyflow_hsgt", "moneyflow",
 }
 
 
@@ -1704,6 +1704,7 @@ async def _run_force_update(
         count_unit = {
             "stock_dividend": "股票",
             "margin_detail": "日期",
+            "moneyflow": "股票",
         }.get(data_type)
         count_columns = [SymbolCountColumn(count_unit)] if count_unit else []
         with Progress(
