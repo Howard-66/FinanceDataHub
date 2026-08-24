@@ -1,4 +1,6 @@
 from pathlib import Path
+from decimal import Decimal
+import json
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
 import numpy as np
@@ -7,11 +9,13 @@ import pytest
 
 from finance_data_hub.preprocessing.mainline import (
     MainlinePreprocessor,
+    calculate_leadlag_lasso,
     calculate_leadlag_monthly,
 )
 from finance_data_hub.database.operations import DataOperations
 from finance_data_hub.cli.preprocess import _resolve_mainline_start_date
 from finance_data_hub.providers.tushare import TushareProvider
+from finance_data_hub.scheduler.executor import TaskExecutor
 from finance_data_hub.scheduler.models import ScheduleConfig
 from finance_data_hub.update.updater import DataUpdater
 
@@ -478,6 +482,96 @@ async def test_mainline_preprocessor_commits_monthly_partitions_with_progress():
     assert progress.call_args_list[-1].args == (16, 16, "data_status")
 
 
+def test_mainline_long_backfill_uses_six_month_partitions():
+    preprocessor = MainlinePreprocessor(Mock())
+
+    partitions = preprocessor._build_partitions(
+        pd.Timestamp("2012-01-01").date(),
+        pd.Timestamp("2014-01-15").date(),
+    )
+
+    assert partitions == [
+        (pd.Timestamp("2012-01-01").date(), pd.Timestamp("2012-06-30").date()),
+        (pd.Timestamp("2012-07-01").date(), pd.Timestamp("2012-12-31").date()),
+        (pd.Timestamp("2013-01-01").date(), pd.Timestamp("2013-06-30").date()),
+        (pd.Timestamp("2013-07-01").date(), pd.Timestamp("2013-12-31").date()),
+        (pd.Timestamp("2014-01-01").date(), pd.Timestamp("2014-01-15").date()),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mainline_etf_recovery_stage_skips_other_daily_materializers():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._materialize_etf = AsyncMock(return_value=4)
+    preprocessor._materialize_etf_exposure = AsyncMock(return_value=6)
+    preprocessor._materialize_stock = AsyncMock()
+    preprocessor._materialize_market = AsyncMock()
+    preprocessor._materialize_industry = AsyncMock()
+
+    counts = await preprocessor.run(
+        start_date="2026-07-01", end_date="2026-08-21", stages=["etf"]
+    )
+
+    assert counts == {"etf_daily": 8, "etf_exposure_monthly": 12}
+    preprocessor._materialize_stock.assert_not_awaited()
+    preprocessor._materialize_market.assert_not_awaited()
+    preprocessor._materialize_industry.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mainline_industry_recovery_stage_skips_other_materializers():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._materialize_industry = AsyncMock(return_value=3)
+    preprocessor._materialize_stock = AsyncMock()
+    preprocessor._materialize_market = AsyncMock()
+    preprocessor._materialize_etf = AsyncMock()
+
+    counts = await preprocessor.run(
+        start_date="2026-08-20", end_date="2026-08-20", stages=["industry"]
+    )
+
+    assert counts == {"industry_daily": 3}
+    preprocessor._materialize_stock.assert_not_awaited()
+    preprocessor._materialize_market.assert_not_awaited()
+    preprocessor._materialize_etf.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mainline_stock_recovery_stage_skips_other_materializers():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._materialize_stock = AsyncMock(return_value=7)
+    preprocessor._materialize_market = AsyncMock()
+    preprocessor._materialize_industry = AsyncMock()
+    preprocessor._materialize_etf = AsyncMock()
+
+    counts = await preprocessor.run(
+        start_date="2026-08-20", end_date="2026-08-20", stages=["stock"]
+    )
+
+    assert counts == {"stock_daily": 7}
+    preprocessor._materialize_market.assert_not_awaited()
+    preprocessor._materialize_industry.assert_not_awaited()
+    preprocessor._materialize_etf.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mainline_market_recovery_stage_skips_other_materializers():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._materialize_market = AsyncMock(return_value=1)
+    preprocessor._materialize_stock = AsyncMock()
+    preprocessor._materialize_industry = AsyncMock()
+    preprocessor._materialize_etf = AsyncMock()
+
+    counts = await preprocessor.run(
+        start_date="2026-08-20", end_date="2026-08-20", stages=["market"]
+    )
+
+    assert counts == {"market_daily": 1}
+    preprocessor._materialize_stock.assert_not_awaited()
+    preprocessor._materialize_industry.assert_not_awaited()
+    preprocessor._materialize_etf.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_mainline_stock_sql_preserves_time_index_predicates():
     preprocessor = MainlinePreprocessor(Mock())
@@ -492,6 +586,21 @@ async def test_mainline_stock_sql_preserves_time_index_predicates():
     assert "db.time::date BETWEEN" not in sql
     assert "LEFT JOIN v_fundamental_combined" not in sql
     assert "FROM processed_valuation_pct pv" in sql
+    assert "ic.index_code=m.l2_code" in sql
+
+
+@pytest.mark.asyncio
+async def test_mainline_etf_sql_marks_missing_list_date_not_tradable():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._execute = AsyncMock(return_value=1)
+
+    await preprocessor._materialize_etf(
+        pd.Timestamp("2026-07-01").date(), pd.Timestamp("2026-08-21").date()
+    )
+
+    sql = preprocessor._execute.await_args.args[0]
+    assert "COALESCE(list_date<=trade_date,FALSE)" in sql
+    assert "missing_list_date" in sql
 
 
 @pytest.mark.asyncio
@@ -503,6 +612,68 @@ async def test_mainline_status_casts_json_parameter_for_asyncpg():
 
     sql = preprocessor._execute.await_args.args[0]
     assert "CAST(:benchmark AS text)" in sql
+
+
+@pytest.mark.asyncio
+async def test_mainline_crowding_limits_incremental_runs_to_recently_written_periods():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._execute = AsyncMock(return_value=2)
+
+    await preprocessor._materialize_crowding(
+        pd.Timestamp("2026-08-11").date(),
+        pd.Timestamp("2026-08-21").date(),
+        source_updated_since="2026-08-11",
+    )
+
+    sql, params = preprocessor._execute.await_args.args
+    assert "WITH impacted_periods AS" in sql
+    assert "updated_at >= CAST(:source_updated_since AS date)" in sql
+    assert "end_date IN (SELECT end_date FROM impacted_periods)" in sql
+    assert params["source_updated_since"] == "2026-08-11"
+
+
+@pytest.mark.asyncio
+async def test_mainline_industry_crowding_uses_the_same_incremental_source_window():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._execute = AsyncMock(return_value=2)
+
+    await preprocessor._materialize_industry_crowding(
+        pd.Timestamp("2026-08-11").date(),
+        pd.Timestamp("2026-08-21").date(),
+        source_updated_since="2026-08-11",
+    )
+
+    sql, params = preprocessor._execute.await_args.args
+    assert "WITH impacted_periods AS" in sql
+    assert "fp.end_date IN (SELECT end_date FROM impacted_periods)" in sql
+    assert params["source_updated_since"] == "2026-08-11"
+
+
+@pytest.mark.asyncio
+async def test_mainline_publish_snapshot_reads_dataset_coverage_without_tuple_attributes():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._read_dataframe = AsyncMock(return_value=pd.DataFrame([
+        {
+            "dataset": "stock_daily", "partition_date": pd.Timestamp("2026-08-21").date(),
+            "completeness": 1.0, "status": "ready", "blocker_reasons": [], "details": {},
+        },
+        {
+            "dataset": "industry_daily", "partition_date": pd.Timestamp("2026-08-21").date(),
+            "completeness": 0.98, "status": "ready", "blocker_reasons": [], "details": {},
+        },
+    ]))
+    preprocessor._execute = AsyncMock(return_value=1)
+
+    count = await preprocessor._publish_snapshot(pd.Timestamp("2026-08-21").date())
+
+    assert count == 1
+    params = preprocessor._execute.await_args.args[1]
+    assert json.loads(params["coverage"]) == {"stock_daily": 1.0, "industry_daily": 0.98}
+    assert json.loads(params["watermark"]) == {"market": "2026-08-21"}
+    assert "dataset,partition_date,completeness" in preprocessor._read_dataframe.await_args.args[0]
+    assert "CAST(:status AS VARCHAR(16))" in preprocessor._execute.await_args.args[0]
+    assert "CAST(:coverage AS JSONB)" in preprocessor._execute.await_args.args[0]
+    assert "ON CONFLICT(factor_version,as_of_trade_date) DO UPDATE SET" in preprocessor._execute.await_args.args[0]
 
 
 def test_leadlag_calculator_finds_known_delay():
@@ -517,6 +688,29 @@ def test_leadlag_calculator_finds_known_delay():
 
     assert result.iloc[0]["best_lag_days"] == 3
     assert result.iloc[0]["correlation"] == pytest.approx(1.0)
+
+
+def test_leadlag_lasso_accepts_decimal_database_values():
+    dates = pd.date_range("2020-01-01", periods=300, freq="B")
+    rows = []
+    for index, trade_date in enumerate(dates):
+        rows.extend([
+            {
+                "trade_date": trade_date,
+                "l2_code": "801010.SI",
+                "relative_return_20d": Decimal(str(index / 10_000)),
+            },
+            {
+                "trade_date": trade_date,
+                "l2_code": "801020.SI",
+                "relative_return_20d": Decimal(str((index % 17) / 10_000)),
+            },
+        ])
+
+    relation, score = calculate_leadlag_lasso(pd.DataFrame(rows), dates[-1])
+
+    assert not relation.empty
+    assert set(score["l2_code"]) == {"801010.SI", "801020.SI"}
 
 
 def test_scheduler_accepts_mainline_jobs_and_dependencies():
@@ -536,50 +730,16 @@ def test_scheduler_accepts_mainline_jobs_and_dependencies():
             "force": True,
         }
 
-    expected_history_params = {
-        "stock_st_history_update": {
-            "asset_class": "stock",
-            "start_date": "2016-01-01",
-            "force": True,
-        },
-        "stock_suspend_history_update": {
-            "asset_class": "stock",
-            "start_date": "2012-01-01",
-            "force": True,
-        },
-        "stock_dividend_history_update": {
-            "asset_class": "stock",
-            "force": True,
-        },
-        "stock_repurchase_history_update": {
-            "asset_class": "stock",
-            "start_date": "2012-01-01",
-            "force": True,
-        },
-        "margin_detail_history_update": {
-            "asset_class": "stock",
-            "start_date": "2012-01-01",
-            "force": True,
-        },
-        "moneyflow_hsgt_history_update": {
-            "asset_class": "stock",
-            "start_date": "2012-01-01",
-            "force": True,
-        },
-    }
-    for job_id, params in expected_history_params.items():
-        job = config.jobs[job_id]
-        assert job.params == params
-        assert job.resource_group == "tushare_mainline"
-        assert job.schedule["day"] == "1-7"
-        assert job.schedule["day_of_week"] == "mon"
-
-    moneyflow_history = config.jobs["moneyflow_history_update"]
-    assert moneyflow_history.params == {
-        "asset_class": "stock",
-        "force": True,
-    }
-    assert moneyflow_history.depends_on == []
+    assert not {
+        "stock_st_history_update",
+        "stock_suspend_history_update",
+        "stock_dividend_history_update",
+        "stock_repurchase_history_update",
+        "margin_detail_history_update",
+        "moneyflow_hsgt_history_update",
+        "moneyflow_history_update",
+        "mainline_history_preprocess",
+    }.intersection(config.jobs)
 
     daily_mainline = config.jobs["mainline_preprocess"]
     assert daily_mainline.category == "mainline"
@@ -594,18 +754,56 @@ def test_scheduler_accepts_mainline_jobs_and_dependencies():
         "margin_detail_update",
         "moneyflow_update",
     }.issubset(daily_mainline.depends_on)
-    assert "moneyflow_hsgt_update" not in daily_mainline.depends_on
+    assert "moneyflow_hsgt_update" in daily_mainline.depends_on
+    assert "etf_share_size_catchup" in daily_mainline.depends_on
+    assert "etf_share_size_update" not in daily_mainline.depends_on
+    assert "index_weight_update" not in daily_mainline.depends_on
+    assert daily_mainline.params["start_date"] == "latest-10bd"
 
-    history_mainline = config.jobs["mainline_history_preprocess"]
-    assert history_mainline.params == {
-        "all": True,
-        "stage": "daily,crowding,leadlag,publish",
-        "start_date": "2012-01-01",
-        "end_date": "today",
+    crowding_mainline = config.jobs["mainline_crowding_preprocess"]
+    assert crowding_mainline.schedule["hour"] == 23
+    assert crowding_mainline.schedule["minute"] == 25
+    assert crowding_mainline.params["stage"] == "crowding"
+    assert crowding_mainline.params["start_date"] == "latest-10bd"
+    assert crowding_mainline.params["source_updated_since"] == "latest-10bd"
+
+    leadlag_mainline = config.jobs["mainline_leadlag_month_end"]
+    assert leadlag_mainline.schedule == {
+        "type": "cron", "day": "1-7", "day_of_week": "mon", "hour": 23, "minute": 55
     }
-    assert "moneyflow_history_update" in history_mainline.depends_on
-    assert "stock_namechange_update" in history_mainline.depends_on
+    assert leadlag_mainline.params["end_date"] == "previous_month_last_trade_date"
     assert config.jobs["etf_share_size_catchup"].params["trade_date"] == "latest"
+
+
+def test_scheduler_forwards_mainline_stage_to_preprocess_cli(tmp_path):
+    executor = TaskExecutor(project_root=str(tmp_path), python_path="python")
+
+    command = executor._build_preprocess_command(
+        "mainline",
+        {
+            "all": True,
+            "stage": "crowding",
+            "start_date": "2026-08-11",
+            "source_updated_since": "2026-08-11",
+        },
+    )
+
+    assert command == [
+        "python", "-m", "finance_data_hub.cli.main", "preprocess", "run",
+        "--category", "mainline", "--all", "--stage", "crowding",
+        "--start-date", "2026-08-11", "--source-updated-since", "2026-08-11",
+    ]
+
+
+def test_scheduler_resolves_previous_month_last_trade_date(monkeypatch, tmp_path):
+    executor = TaskExecutor(project_root=str(tmp_path), python_path="python")
+    monkeypatch.setattr(
+        executor,
+        "_query_trade_calendar_date",
+        Mock(return_value="2026-07-31"),
+    )
+
+    assert executor._resolve_date_param("previous_month_last_trade_date") == "2026-07-31"
 
 
 def test_mainline_migration_keeps_strategy_scoring_outside_data_hub():

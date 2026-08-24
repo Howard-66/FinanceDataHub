@@ -5,6 +5,7 @@
 
 from datetime import date, timedelta
 from hashlib import sha256
+import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
@@ -51,6 +52,13 @@ MAINLINE_TABLES = {
 # 默认增量窗口；CLI 的全量模式会显式传入该日期。
 MAINLINE_HISTORY_START = "2012-01-01"
 MAINLINE_FACTOR_VERSION = 1
+# Monthly partitions make incremental repairs cheap, but are prohibitively
+# expensive for a 10+ year rebuild because every partition re-reads its rolling
+# source window.  Six months keeps individual WindowAgg operations bounded
+# while removing most of that redundant I/O.
+MAINLINE_LONG_RANGE_PARTITION_MONTHS = 6
+MAINLINE_LONG_RANGE_THRESHOLD_DAYS = 730
+MAINLINE_QUERY_WORK_MEM = "128MB"
 
 
 class MainlineDataStorage:
@@ -189,35 +197,69 @@ class MainlinePreprocessor:
             raise ValueError("start_date must not be later than end_date")
         return start, end
 
+    @staticmethod
+    def _build_partitions(start: date, end: date) -> List[tuple[date, date]]:
+        """Split long rebuilds coarsely, while keeping routine repairs monthly."""
+        partition_months = (
+            MAINLINE_LONG_RANGE_PARTITION_MONTHS
+            if (end - start).days > MAINLINE_LONG_RANGE_THRESHOLD_DAYS
+            else 1
+        )
+        partitions: List[tuple[date, date]] = []
+        partition_start = start
+        while partition_start <= end:
+            if partition_months == 1:
+                next_end = (
+                    pd.Timestamp(partition_start) + pd.offsets.MonthEnd(0)
+                ).date()
+            else:
+                next_end = (
+                    pd.Timestamp(partition_start)
+                    + pd.DateOffset(months=partition_months)
+                    - pd.Timedelta(days=1)
+                ).date()
+            partition_end = min(
+                next_end,
+                end,
+            )
+            partitions.append((partition_start, partition_end))
+            partition_start = partition_end + timedelta(days=1)
+        return partitions
+
     async def run(
         self,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         include_monthly: bool = True,
         stages: Optional[List[str]] = None,
+        source_updated_since: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ) -> Dict[str, int]:
         """Materialize only the requested layers.
 
-        ``daily,crowding,leadlag,publish`` is intentionally explicit: daily
+        ``daily,stock,market,industry,etf,crowding,leadlag,publish`` is intentionally explicit: daily
         facts may be recomputed often, while disclosure-driven crowding and the
         expensive monthly Lasso model are not safe to run as a side effect.
         """
         start, end = self._dates(start_date, end_date)
         explicit_stages = stages is not None
         requested = set(stages or (["daily", "crowding"] if include_monthly else ["daily"]))
-        unknown = requested - {"daily", "crowding", "leadlag", "publish"}
+        unknown = requested - {
+            "daily", "stock", "market", "industry", "etf", "crowding", "leadlag", "publish"
+        }
         if unknown:
             raise ValueError(f"Unsupported mainline stage(s): {sorted(unknown)}")
-        partitions = []
-        partition_start = start
-        while partition_start <= end:
-            month_end = (
-                pd.Timestamp(partition_start) + pd.offsets.MonthEnd(0)
-            ).date()
-            partition_end = min(month_end, end)
-            partitions.append((partition_start, partition_end))
-            partition_start = partition_end + timedelta(days=1)
+        partitions = self._build_partitions(start, end)
+        partition_months = (
+            MAINLINE_LONG_RANGE_PARTITION_MONTHS
+            if (end - start).days > MAINLINE_LONG_RANGE_THRESHOLD_DAYS
+            else 1
+        )
+        logger.info(
+            "Mainline preprocessing uses {}-month partitions ({} partitions)",
+            partition_months,
+            len(partitions),
+        )
 
         materializers: List[tuple[str, Callable[[date, date], Any]]] = []
         if "daily" in requested:
@@ -229,10 +271,40 @@ class MainlinePreprocessor:
             ])
             if explicit_stages:
                 materializers.append(("etf_exposure_monthly", self._materialize_etf_exposure))
+        else:
+            # Targeted recovery stages keep a failed materializer from forcing
+            # a full rebuild of the other daily fact tables.
+            if "stock" in requested:
+                materializers.append(("stock_daily", self._materialize_stock))
+            if "market" in requested:
+                materializers.append(("market_daily", self._materialize_market))
+            if "industry" in requested:
+                materializers.append(("industry_daily", self._materialize_industry))
+        if "etf" in requested and "daily" not in requested:
+            # Recovery stage: ETF facts and their exposure summary have no
+            # dependency on the stock/market/industry materializers.
+            materializers.extend([
+                ("etf_daily", self._materialize_etf),
+                ("etf_exposure_monthly", self._materialize_etf_exposure),
+            ])
         if "crowding" in requested:
-            materializers.append(("fund_crowding_monthly", self._materialize_crowding))
+            materializers.append((
+                "fund_crowding_monthly",
+                lambda partition_start, partition_end: self._materialize_crowding(
+                    partition_start,
+                    partition_end,
+                    source_updated_since=source_updated_since,
+                ),
+            ))
             if explicit_stages:
-                materializers.append(("industry_crowding_monthly", self._materialize_industry_crowding))
+                materializers.append((
+                    "industry_crowding_monthly",
+                    lambda partition_start, partition_end: self._materialize_industry_crowding(
+                        partition_start,
+                        partition_end,
+                        source_updated_since=source_updated_since,
+                    ),
+                ))
 
         counts = {name: 0 for name, _ in materializers}
         if "leadlag" in requested:
@@ -282,6 +354,11 @@ class MainlinePreprocessor:
         engine = self.db_manager._engine
         assert engine is not None
         async with engine.begin() as conn:
+            # The factor SQL has several WindowAgg sorts.  The PostgreSQL
+            # default is commonly 4MB, which spills ordinary six-month A-share
+            # partitions to temporary files.  SET LOCAL confines this memory
+            # budget to the current statement transaction.
+            await conn.execute(text(f"SET LOCAL work_mem = '{MAINLINE_QUERY_WORK_MEM}'"))
             result = await conn.execute(text(sql), params)
             return int(max(result.rowcount, 0))
 
@@ -398,7 +475,7 @@ class MainlinePreprocessor:
                 SELECT m.l1_code,m.l1_name,m.l2_code,m.l2_name
                 FROM sw_industry_member m
                 JOIN sw_industry_classify ic
-                  ON ic.industry_code=m.l2_code AND ic.level='L2' AND ic.is_pub='1'
+                  ON ic.index_code=m.l2_code AND ic.level='L2' AND ic.is_pub='1'
                 WHERE m.ts_code=f.ts_code
                   AND COALESCE(m.in_date, DATE '1900-01-01') <= f.trade_date
                   AND (m.out_date IS NULL OR m.out_date >= f.trade_date)
@@ -679,7 +756,7 @@ class MainlinePreprocessor:
           jsonb_build_object('published_sw2021_l2',true,'industry_index_available',MAX(ii.close) IS NOT NULL,'moneyflow_coverage',COUNT(*) FILTER(WHERE b.moneyflow_available)::numeric/NULLIF(COUNT(*),0)),
           jsonb_build_object('sw_daily',MAX(ii.trade_date),'moneyflow',CASE WHEN COUNT(*) FILTER(WHERE b.moneyflow_available)>0 THEN b.trade_date ELSE NULL END),NOW()
         FROM base b
-        JOIN sw_industry_classify ic ON ic.industry_code=b.l2_code AND ic.level='L2' AND ic.is_pub='1'
+        JOIN sw_industry_classify ic ON ic.index_code=b.l2_code AND ic.level='L2' AND ic.is_pub='1'
         LEFT JOIN industry_index ii ON ii.l2_code=b.l2_code AND ii.trade_date=b.trade_date
         LEFT JOIN processed_mainline_market_daily m ON m.trade_date=b.trade_date AND m.factor_version=:factor_version
         WHERE b.is_industry_breadth_eligible AND b.l2_code IS NOT NULL AND b.trade_date BETWEEN :start_date AND :end_date
@@ -756,11 +833,11 @@ class MainlinePreprocessor:
           COALESCE((SELECT MIN(tc.cal_date::date) FROM trade_cal tc WHERE tc.exchange='SSE' AND tc.is_open=1 AND tc.cal_date::date>z.trade_date),z.trade_date+1),
           ts_code,index_code,list_date,index_close IS NOT NULL,
           (adj_close IS NOT NULL AND amount20 IS NOT NULL AND total_share IS NOT NULL AND total_size IS NOT NULL AND nav IS NOT NULL),
-          (COALESCE(amount,0)>0 AND list_date<=trade_date),
-          (index_close IS NOT NULL AND adj_close IS NOT NULL AND amount20 IS NOT NULL AND total_share IS NOT NULL AND total_size IS NOT NULL AND nav IS NOT NULL AND COALESCE(amount,0)>0 AND list_date<=trade_date),
+          (COALESCE(amount,0)>0 AND COALESCE(list_date<=trade_date,FALSE)),
+          (index_close IS NOT NULL AND adj_close IS NOT NULL AND amount20 IS NOT NULL AND total_share IS NOT NULL AND total_size IS NOT NULL AND nav IS NOT NULL AND COALESCE(amount,0)>0 AND COALESCE(list_date<=trade_date,FALSE)),
           CASE WHEN index_code IS NULL THEN 'missing_index_code' WHEN index_close IS NULL THEN 'missing_benchmark_daily'
-               WHEN total_size IS NULL THEN 'missing_size' WHEN total_share IS NULL THEN 'missing_share' WHEN nav IS NULL THEN 'missing_nav' WHEN COALESCE(amount,0)<=0 THEN 'not_tradable' END,
-          ARRAY_REMOVE(ARRAY[CASE WHEN index_code IS NULL THEN 'missing_index_code' END,CASE WHEN index_close IS NULL THEN 'missing_benchmark_daily' END,CASE WHEN total_size IS NULL THEN 'missing_size' END,CASE WHEN total_share IS NULL THEN 'missing_share' END,CASE WHEN nav IS NULL THEN 'missing_nav' END,CASE WHEN COALESCE(amount,0)<=0 THEN 'not_tradable' END],NULL),
+               WHEN list_date IS NULL THEN 'missing_list_date' WHEN total_size IS NULL THEN 'missing_size' WHEN total_share IS NULL THEN 'missing_share' WHEN nav IS NULL THEN 'missing_nav' WHEN COALESCE(amount,0)<=0 THEN 'not_tradable' END,
+          ARRAY_REMOVE(ARRAY[CASE WHEN index_code IS NULL THEN 'missing_index_code' END,CASE WHEN index_close IS NULL THEN 'missing_benchmark_daily' END,CASE WHEN list_date IS NULL THEN 'missing_list_date' END,CASE WHEN total_size IS NULL THEN 'missing_size' END,CASE WHEN total_share IS NULL THEN 'missing_share' END,CASE WHEN nav IS NULL THEN 'missing_nav' END,CASE WHEN COALESCE(amount,0)<=0 THEN 'not_tradable' END],NULL),
           adj_close,adj_close/NULLIF(ma60,0)-1,r20,r60,r120,vol20,amount,amount20,amount60,amount20/NULLIF(amount60,0),(amount-amin)/NULLIF(amax-amin,0),
           total_share,total_size,share5,share20,share5*nav,share20*nav,te60,te120,raw_close/NULLIF(nav,0)-1,
           jsonb_build_object('benchmark_available',index_close IS NOT NULL,'size_available',total_size IS NOT NULL),jsonb_build_object('fund_daily',trade_date,'share_size',trade_date),NOW()
@@ -782,13 +859,29 @@ class MainlinePreprocessor:
         """
         return await self._execute(sql, {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION})
 
-    async def _materialize_crowding(self, start: date, end: date) -> int:
+    async def _materialize_crowding(
+        self,
+        start: date,
+        end: date,
+        source_updated_since: Optional[str] = None,
+    ) -> int:
         sql = """
-        WITH agg AS (
+        WITH impacted_periods AS (
+          SELECT DISTINCT end_date
+          FROM fund_portfolio
+          WHERE CAST(:source_updated_since AS date) IS NOT NULL
+            AND updated_at >= CAST(:source_updated_since AS date)
+            AND updated_at < (CAST(:end_date AS date) + INTERVAL '1 day')
+        ), agg AS (
           SELECT end_date AS report_period,MAX(ann_date) AS available_date,symbol AS ts_code,
                  COUNT(DISTINCT ts_code) AS fund_count,SUM(mkv) AS holding_value,
                  SUM(stk_float_ratio) AS holding_ratio
-          FROM fund_portfolio WHERE end_date BETWEEN :start_date AND :end_date
+          FROM fund_portfolio
+          WHERE end_date <= :end_date
+            AND (
+              (CAST(:source_updated_since AS date) IS NULL AND end_date >= :start_date)
+              OR end_date IN (SELECT end_date FROM impacted_periods)
+            )
           GROUP BY end_date,symbol
         ), ranked AS (
           SELECT agg.*,PERCENT_RANK() OVER(PARTITION BY report_period ORDER BY holding_value) AS pct
@@ -808,7 +901,12 @@ class MainlinePreprocessor:
           crowding_pct=EXCLUDED.crowding_pct,data_quality=EXCLUDED.data_quality,source_watermark=EXCLUDED.source_watermark,source_asof=EXCLUDED.source_asof,
           processed_at=NOW()
         """
-        return await self._execute(sql, {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION})
+        return await self._execute(sql, {
+            "start_date": start,
+            "end_date": end,
+            "source_updated_since": source_updated_since,
+            "factor_version": MAINLINE_FACTOR_VERSION,
+        })
 
     async def _materialize_etf_exposure(self, start: date, end: date) -> int:
         """Map ETF benchmark constituent weights to published SW2021 L2 sectors.
@@ -826,7 +924,7 @@ class MainlinePreprocessor:
           SELECT w.ts_code,w.weight_date,m.l2_code,SUM(w.weight) AS weight
           FROM weights w JOIN LATERAL (
              SELECT sm.l2_code FROM sw_industry_member sm
-             JOIN sw_industry_classify ic ON ic.industry_code=sm.l2_code AND ic.level='L2' AND ic.is_pub='1'
+             JOIN sw_industry_classify ic ON ic.index_code=sm.l2_code AND ic.level='L2' AND ic.is_pub='1'
              WHERE sm.ts_code=w.con_code AND COALESCE(sm.in_date,DATE '1900-01-01')<=w.weight_date
                AND (sm.out_date IS NULL OR sm.out_date>=w.weight_date)
              ORDER BY sm.in_date DESC NULLS LAST LIMIT 1
@@ -851,27 +949,52 @@ class MainlinePreprocessor:
         summary = """
         WITH latest AS (
           SELECT DISTINCT ON (e.ts_code,e.as_of_trade_date) e.ts_code,e.as_of_trade_date,e.l2_code,e.weight,e.exposure_hhi
-          FROM processed_mainline_etf_exposure_monthly e WHERE e.factor_version=:factor_version
+          FROM processed_mainline_etf_exposure_monthly e
+          WHERE e.factor_version=:factor_version
+            AND e.as_of_trade_date BETWEEN :start_date AND :end_date
           ORDER BY e.ts_code,e.as_of_trade_date,e.weight DESC
         ) UPDATE processed_mainline_etf_daily d SET primary_l2_code=latest.l2_code,primary_l2_weight=latest.weight,
           exposure_hhi=latest.exposure_hhi,processed_at=NOW()
           FROM latest WHERE d.factor_version=:factor_version AND d.ts_code=latest.ts_code AND d.trade_date=latest.as_of_trade_date
         """
-        await self._execute(summary, {"factor_version": MAINLINE_FACTOR_VERSION})
+        await self._execute(
+            summary,
+            {
+                "factor_version": MAINLINE_FACTOR_VERSION,
+                "start_date": start,
+                "end_date": end,
+            },
+        )
         return count
 
-    async def _materialize_industry_crowding(self, start: date, end: date) -> int:
+    async def _materialize_industry_crowding(
+        self,
+        start: date,
+        end: date,
+        source_updated_since: Optional[str] = None,
+    ) -> int:
         sql = """
-        WITH positions AS (
+        WITH impacted_periods AS (
+          SELECT DISTINCT end_date
+          FROM fund_portfolio
+          WHERE CAST(:source_updated_since AS date) IS NOT NULL
+            AND updated_at >= CAST(:source_updated_since AS date)
+            AND updated_at < (CAST(:end_date AS date) + INTERVAL '1 day')
+        ), positions AS (
           SELECT fp.end_date AS report_period,MAX(fp.ann_date) OVER(PARTITION BY fp.end_date) AS available_date,
             fp.ts_code AS fund_code, sm.l2_code, fp.mkv
           FROM fund_portfolio fp JOIN LATERAL (
             SELECT m.l2_code FROM sw_industry_member m
-            JOIN sw_industry_classify ic ON ic.industry_code=m.l2_code AND ic.level='L2' AND ic.is_pub='1'
+            JOIN sw_industry_classify ic ON ic.index_code=m.l2_code AND ic.level='L2' AND ic.is_pub='1'
             WHERE m.ts_code=fp.symbol AND COALESCE(m.in_date,DATE '1900-01-01')<=fp.end_date
               AND (m.out_date IS NULL OR m.out_date>=fp.end_date)
             ORDER BY m.in_date DESC NULLS LAST LIMIT 1
-          ) sm ON TRUE WHERE fp.end_date BETWEEN :start_date AND :end_date
+          ) sm ON TRUE
+          WHERE fp.end_date <= :end_date
+            AND (
+              (CAST(:source_updated_since AS date) IS NULL AND fp.end_date >= :start_date)
+              OR fp.end_date IN (SELECT end_date FROM impacted_periods)
+            )
         ), agg AS (
           SELECT report_period,MAX(available_date) available_date,l2_code,COUNT(DISTINCT fund_code) fund_count,SUM(mkv) holding_value,
                  SUM(mkv)/NULLIF(SUM(SUM(mkv)) OVER(PARTITION BY report_period),0) concentration
@@ -890,7 +1013,12 @@ class MainlinePreprocessor:
           fund_count=EXCLUDED.fund_count,holding_change=EXCLUDED.holding_change,concentration=EXCLUDED.concentration,disclosure_coverage=EXCLUDED.disclosure_coverage,
           data_quality=EXCLUDED.data_quality,source_watermark=EXCLUDED.source_watermark,processed_at=NOW()
         """
-        return await self._execute(sql, {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION})
+        return await self._execute(sql, {
+            "start_date": start,
+            "end_date": end,
+            "source_updated_since": source_updated_since,
+            "factor_version": MAINLINE_FACTOR_VERSION,
+        })
 
     async def _read_dataframe(self, sql: str, params: Dict[str, Any]) -> pd.DataFrame:
         if self.db_manager._engine is None:
@@ -998,7 +1126,8 @@ class MainlinePreprocessor:
     async def _publish_snapshot(self, requested_date: date) -> int:
         """Publish only complete, auditable factors for the latest trading day."""
         statuses = await self._read_dataframe(
-            """SELECT partition_date,status,blocker_reasons,details FROM processed_mainline_data_status
+            """SELECT dataset,partition_date,completeness,status,blocker_reasons,details
+                FROM processed_mainline_data_status
                 WHERE factor_version=:factor_version AND partition_date<=:requested_date ORDER BY partition_date DESC""",
             {"factor_version": MAINLINE_FACTOR_VERSION, "requested_date": requested_date},
         )
@@ -1014,13 +1143,29 @@ class MainlinePreprocessor:
             factor_version,snapshot_id,as_of_trade_date,usable_from_trade_date,status,formula_hash,input_watermark,coverage,blocker_reasons,published_at
           ) VALUES (:factor_version,:snapshot_id,:as_of_trade_date,
             COALESCE((SELECT MIN(tc.cal_date::date) FROM trade_cal tc WHERE tc.exchange='SSE' AND tc.is_open=1 AND tc.cal_date::date>:as_of_trade_date),:as_of_trade_date+1),
-            :status,:formula_hash,:watermark,:coverage,:blockers,CASE WHEN :status='ready' THEN NOW() END)
-          ON CONFLICT(factor_version,as_of_trade_date) DO NOTHING
+            CAST(:status AS VARCHAR(16)),:formula_hash,CAST(:watermark AS JSONB),CAST(:coverage AS JSONB),:blockers,
+            CASE WHEN CAST(:status AS VARCHAR(16))='ready' THEN NOW() END)
+          ON CONFLICT(factor_version,as_of_trade_date) DO UPDATE SET
+            snapshot_id=EXCLUDED.snapshot_id,
+            usable_from_trade_date=EXCLUDED.usable_from_trade_date,
+            status=EXCLUDED.status,
+            formula_hash=EXCLUDED.formula_hash,
+            input_watermark=EXCLUDED.input_watermark,
+            coverage=EXCLUDED.coverage,
+            blocker_reasons=EXCLUDED.blocker_reasons,
+            published_at=EXCLUDED.published_at
         """
+        coverage = {
+            str(item["dataset"]): float(item["completeness"])
+            if pd.notna(item["completeness"])
+            else 0.0
+            for item in latest[["dataset", "completeness"]].to_dict("records")
+        }
         return await self._execute(statement, {
             "factor_version": MAINLINE_FACTOR_VERSION, "snapshot_id": str(uuid4()), "as_of_trade_date": as_of,
             "status": "ready" if is_ready else "blocked", "formula_hash": formula_hash,
-            "watermark": {"market": as_of.isoformat()}, "coverage": {str(row.dataset): float(row.completeness or 0) for row in latest.itertuples()},
+            "watermark": json.dumps({"market": as_of.isoformat()}),
+            "coverage": json.dumps(coverage),
             "blockers": sorted(set(blockers)),
         })
 
@@ -1083,9 +1228,17 @@ def calculate_leadlag_lasso(
         raise ValueError(f"industry_returns must contain {sorted(required)}")
     from sklearn.linear_model import Lasso, LinearRegression
 
-    pivot = industry_returns.pivot_table(
+    # PostgreSQL NUMERIC values are returned by asyncpg/SQLAlchemy as Decimal.
+    # Pandas keeps the pivot object-typed in that case, causing std() to mix a
+    # float mean with Decimal observations.  The model has to run on a single
+    # floating-point dtype anyway, so normalize at the numerical boundary.
+    observations = industry_returns.copy()
+    observations["relative_return_20d"] = pd.to_numeric(
+        observations["relative_return_20d"], errors="coerce"
+    ).astype("float64")
+    pivot = observations.pivot_table(
         index="trade_date", columns="l2_code", values="relative_return_20d", aggfunc="last"
-    ).sort_index().tail(lookback_days + 21)
+    ).astype("float64").sort_index().tail(lookback_days + 21)
     if len(pivot) < 252 or pivot.shape[1] < 2:
         return pd.DataFrame(), pd.DataFrame()
     feature_values = pivot.shift(20).iloc[20:]

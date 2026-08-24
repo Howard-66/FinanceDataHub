@@ -2265,7 +2265,7 @@ def run_preprocess(
     stage: Optional[str] = typer.Option(
         None,
         "--stage",
-        help="主线处理阶段（逗号分隔：daily,crowding,leadlag,publish；仅 --category mainline 有效）",
+        help="主线处理阶段（逗号分隔：daily,stock,market,industry,etf,crowding,leadlag,publish；仅 --category mainline 有效）",
     ),
     symbols: Optional[str] = typer.Option(
         None,
@@ -2287,6 +2287,11 @@ def run_preprocess(
         None,
         "--end-date",
         help="结束日期 (YYYY-MM-DD)"
+    ),
+    source_updated_since: Optional[str] = typer.Option(
+        None,
+        "--source-updated-since",
+        help="主线 crowding 源数据最早写入日期（YYYY-MM-DD；仅 mainline crowding 阶段）",
     ),
     freq: Optional[str] = typer.Option(
         None,
@@ -2362,6 +2367,14 @@ def run_preprocess(
     if stage and category != "mainline":
         console.print("[bold red]ERROR:[/bold red] --stage 仅支持 --category mainline")
         raise typer.Exit(1)
+    if source_updated_since and (
+        category != "mainline" or not mainline_stages or "crowding" not in mainline_stages
+    ):
+        console.print(
+            "[bold red]ERROR:[/bold red] --source-updated-since 仅支持 "
+            "--category mainline --stage crowding"
+        )
+        raise typer.Exit(1)
     market_code = normalize_market(market, default="CN")
 
     requires_symbol_scope = category not in ["macro_cycle", "mainline"]
@@ -2410,6 +2423,8 @@ def run_preprocess(
         console.print(f"开始日期: {start_date}")
     if end_date:
         console.print(f"结束日期: {end_date}")
+    if source_updated_since:
+        console.print(f"crowding 源数据写入起点: {source_updated_since}")
     console.print()
     
     async def _run():
@@ -2556,6 +2571,7 @@ def run_preprocess(
                         end_date=end_date,
                         include_monthly=True,
                         stages=mainline_stages,
+                        source_updated_since=source_updated_since,
                         progress_callback=mainline_progress,
                     )
                 result = {

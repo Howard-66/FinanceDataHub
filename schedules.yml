@@ -1004,8 +1004,8 @@ jobs:
       max_retries: 2
       delay: 600
 
-  # 主线策略的状态/公司行为/资金事实表。工作日增量保证当日因子及时更新；
-  # 每月首个周一再按策略历史起点做一次完整性复核（见下方 history 任务）。
+  # 主线策略的状态/公司行为/资金事实表。仅保留工作日增量；历史修复按
+  # docs/mainline-data-rebuild-runbook.md 的独立指令链人工触发。
   stock_st_update:
     enabled: true
     type: download
@@ -1084,111 +1084,37 @@ jobs:
     category: mainline
     resource_group: mainline_preprocess
     schedule: {type: cron, day_of_week: "mon-fri", hour: 22, minute: 20}
-    params: {all: true, market: CN, stage: "daily,publish", start_date: "latest-400d", end_date: latest}
-    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, sw_daily_update, index_daily_update, fund_daily_update, fund_adj_update, etf_share_size_update, index_weight_update, stock_st_update, stock_suspend_update, stock_dividend_update, stock_repurchase_update, margin_detail_update, moneyflow_update]
+    # 每日只回看近期修订窗口；各物化 SQL 自带 120~420 日滚动窗口。
+    params: {all: true, market: CN, stage: "daily,publish", start_date: "latest-10bd", end_date: latest}
+    # index_weight 是月度数据，不能作为日任务的“同一调度日”依赖；ETF
+    # 份额/规模则必须等待 20:00 的收盘后补抓，而非早盘快照。
+    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, sw_daily_update, index_daily_update, fund_daily_update, fund_adj_update, etf_share_size_catchup, stock_st_update, stock_suspend_update, stock_dividend_update, stock_repurchase_update, margin_detail_update, moneyflow_hsgt_update, moneyflow_update]
     retry: {max_retries: 2, delay: 900}
 
-  # 披露数据按公告可用日进入因子表；可每天幂等执行，但不会把报告期当成可交易日。
+  # 披露数据按公告可用日进入因子表。仅重算近期写入 fund_portfolio 的报告期，
+  # 不把报告期当成可交易日，也不在日常任务中回放完整历史。
   mainline_crowding_preprocess:
     enabled: true
     type: preprocess
     category: mainline
     resource_group: mainline_preprocess
-    schedule: {type: cron, day_of_week: "mon-fri", hour: 22, minute: 40}
-    params: {all: true, market: CN, stage: "crowding,publish", start_date: "2012-01-01", end_date: latest}
+    # 日处理实测约 55 分钟，预留十分钟后再触发；resource_group 仍作为超时保护。
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 23, minute: 25}
+    params: {all: true, market: CN, stage: "crowding", start_date: "latest-10bd", end_date: latest, source_updated_since: "latest-10bd"}
     depends_on: [fund_portfolio_update, mainline_preprocess]
     retry: {max_retries: 2, delay: 900}
 
-  # 月末窗口运行；模型只发布已结束月份，训练截止日写入结果表以供审计。
+  # 每月首个周一在日处理和拥挤度处理之后运行：结束日固定为上月最后交易日，
+  # 避免跨日 pending 状态以及与日常主线任务争抢资源。
   mainline_leadlag_month_end:
     enabled: true
     type: preprocess
     category: mainline
     resource_group: mainline_preprocess
-    schedule: {type: cron, day: "28-31", day_of_week: "mon-fri", hour: 23, minute: 0}
-    params: {all: true, market: CN, stage: "leadlag,publish", start_date: "2008-01-01", end_date: latest}
+    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 23, minute: 55}
+    params: {all: true, market: CN, stage: "leadlag,publish", start_date: "2008-01-01", end_date: previous_month_last_trade_date}
     depends_on: [mainline_preprocess, mainline_crowding_preprocess]
     retry: {max_retries: 1, delay: 1800}
-
-  # 每月首个周一按首次回填口径复核完整历史。历史任务串行执行，避免
-  # Tushare 大范围分页请求互相争抢；主线全历史重算会等待日常基础预处理完成。
-  stock_st_history_update:
-    enabled: true
-    type: download
-    dataset: stock_st
-    resource_group: tushare_mainline
-    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 0}
-    params: {asset_class: stock, start_date: "2016-01-01", force: true}
-    retry: {max_retries: 3, delay: 600}
-
-  stock_suspend_history_update:
-    enabled: true
-    type: download
-    dataset: stock_suspend
-    resource_group: tushare_mainline
-    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 5}
-    params: {asset_class: stock, start_date: "2012-01-01", force: true}
-    depends_on: [stock_st_history_update]
-    retry: {max_retries: 3, delay: 600}
-
-  stock_dividend_history_update:
-    enabled: true
-    type: download
-    dataset: stock_dividend
-    resource_group: tushare_mainline
-    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 10}
-    params: {asset_class: stock, force: true}
-    depends_on: [stock_suspend_history_update]
-    retry: {max_retries: 3, delay: 600}
-
-  stock_repurchase_history_update:
-    enabled: true
-    type: download
-    dataset: stock_repurchase
-    resource_group: tushare_mainline
-    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 15}
-    params: {asset_class: stock, start_date: "2012-01-01", force: true}
-    depends_on: [stock_dividend_history_update]
-    retry: {max_retries: 3, delay: 600}
-
-  margin_detail_history_update:
-    enabled: true
-    type: download
-    dataset: margin_detail
-    resource_group: tushare_mainline
-    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 20}
-    params: {asset_class: stock, start_date: "2012-01-01", force: true}
-    depends_on: [stock_repurchase_history_update]
-    retry: {max_retries: 3, delay: 600}
-
-  moneyflow_hsgt_history_update:
-    enabled: true
-    type: download
-    dataset: moneyflow_hsgt
-    resource_group: tushare_mainline
-    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 25}
-    params: {asset_class: stock, start_date: "2012-01-01", force: true}
-    depends_on: [margin_detail_history_update]
-    retry: {max_retries: 3, delay: 600}
-
-  moneyflow_history_update:
-    enabled: true
-    type: download
-    dataset: moneyflow
-    resource_group: tushare_mainline
-    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 8, minute: 30}
-    params: {asset_class: stock, force: true}
-    retry: {max_retries: 3, delay: 600}
-
-  mainline_history_preprocess:
-    enabled: true
-    type: preprocess
-    category: mainline
-    resource_group: mainline_preprocess
-    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 22, minute: 40}
-    params: {all: true, stage: "daily,crowding,leadlag,publish", start_date: "2012-01-01", end_date: today}
-    depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, stock_namechange_update, moneyflow_history_update, fund_portfolio_update, index_weight_update]
-    retry: {max_retries: 2, delay: 900}
 
   # ========== 周六凌晨任务：补齐周五夜盘 / 周末复核 ==========
 

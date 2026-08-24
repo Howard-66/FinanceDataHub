@@ -495,7 +495,7 @@ class TaskExecutor:
             str(asset_class).strip().lower() if asset_class is not None else None
         )
 
-        for key in ("trade_date", "start_date", "end_date"):
+        for key in ("trade_date", "start_date", "end_date", "source_updated_since"):
             if key in resolved:
                 resolved[key] = self._resolve_date_param(
                     resolved.get(key),
@@ -518,6 +518,18 @@ class TaskExecutor:
         normalized = value.strip().lower()
         if not normalized:
             return None
+
+        if normalized == "previous_month_last_trade_date":
+            first_of_month = date.today().replace(day=1)
+            month_end = first_of_month - timedelta(days=1)
+            resolved_value = self._query_trade_calendar_date(
+                asset_class=asset_class,
+                as_of=month_end,
+                previous_to=None,
+            )
+            if resolved_value:
+                return resolved_value
+            return self._fallback_latest_business_date(month_end).strftime("%Y-%m-%d")
 
         placeholder_match = re.fullmatch(
             r"(latest|previous_trade_date|today)(?:([+-])(\d+)(bd|d))?",
@@ -872,7 +884,7 @@ class TaskExecutor:
             cmd, cwd=str(self.project_root), capture_output=True, text=True
         )
         if result.returncode != 0:
-            error_msg = result.stderr or result.stdout
+            error_msg = self._format_subprocess_error(result)
             raise RuntimeError(f"Mainline preprocess failed: {error_msg}")
         output = result.stdout.strip() if result.stdout else ""
         if output:
@@ -917,6 +929,15 @@ class TaskExecutor:
         if adjust:
             cmd.extend(["--adjust", adjust])
 
+        # Mainline materializers are intentionally split into explicit stages.
+        # Without forwarding this option, every scheduled mainline job falls
+        # back to the CLI default and silently runs the wrong layers.
+        stage = params.get("stage")
+        if stage:
+            if isinstance(stage, list):
+                stage = ",".join(stage)
+            cmd.extend(["--stage", str(stage)])
+
         # 处理 force 参数（全量重新计算）
         if params.get("force"):
             cmd.append("--force")
@@ -937,6 +958,10 @@ class TaskExecutor:
         end_date = params.get("end_date")
         if end_date:
             cmd.extend(["--end-date", end_date])
+
+        source_updated_since = params.get("source_updated_since")
+        if source_updated_since:
+            cmd.extend(["--source-updated-since", source_updated_since])
 
         # 添加 verbose 参数
         if params.get("verbose"):

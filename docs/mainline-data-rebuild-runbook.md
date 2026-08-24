@@ -92,7 +92,71 @@ fdh-cli preprocess run --category mainline --stage publish --all --end-date "$MA
 fdh-cli preprocess status
 ```
 
-## 4. 验收后创建查询索引
+## 4. 按需历史修复（不进入定时调度）
+
+历史修复只在原始数据被追溯更正、因子公式/表结构变更，或覆盖率审计发现缺口时
+执行；日常调度不会再重复回放 2012 年以来的全部数据。先选择最早受影响日期，并
+额外向前留出 420 个自然日的滚动窗口；只有首次建库或覆盖全历史的修复才从 2012 年
+开始。以下示例保留了完整的状态、公司行为和资金流修复链，未受影响的数据集可跳过：
+
+```bash
+export MAINLINE_END_DATE="$(date +%F)"
+export REPAIR_START=2012-01-01 # 局部修复改为“最早受影响日 - 420 天”
+
+fdh-cli update --dataset basic --asset-class stock --market CN --force
+fdh-cli update --dataset sw_industry_classify --asset-class index --force
+fdh-cli update --dataset sw_industry_member --asset-class index --force
+fdh-cli update --dataset stock_st --asset-class stock --start-date 2016-01-01 --end-date "$MAINLINE_END_DATE" --force
+fdh-cli update --dataset stock_namechange --asset-class stock --force
+fdh-cli update --dataset stock_suspend --asset-class stock --start-date "$REPAIR_START" --end-date "$MAINLINE_END_DATE" --force
+fdh-cli update --dataset stock_dividend --asset-class stock --force
+fdh-cli update --dataset stock_repurchase --asset-class stock --start-date "$REPAIR_START" --end-date "$MAINLINE_END_DATE" --force
+fdh-cli update --dataset margin_detail --asset-class stock --start-date "$REPAIR_START" --end-date "$MAINLINE_END_DATE" --force
+fdh-cli update --dataset moneyflow_hsgt --asset-class stock --start-date "$REPAIR_START" --end-date "$MAINLINE_END_DATE" --force
+fdh-cli update --dataset moneyflow --asset-class stock --symbols all --end-date "$MAINLINE_END_DATE" --force
+
+fdh-cli preprocess run --category mainline --stage daily,crowding --all \
+  --start-date "$REPAIR_START" --end-date "$MAINLINE_END_DATE" --force
+fdh-cli preprocess run --category mainline --stage leadlag --all \
+  --start-date 2008-01-01 --end-date "$MAINLINE_END_DATE" --force
+fdh-cli preprocess run --category mainline --stage publish --all \
+  --end-date "$MAINLINE_END_DATE"
+```
+
+`crowding` 日常任务以 `fund_portfolio.updated_at` 的近 10 个交易日为输入，只重算
+受影响的报告期；上面的人工修复不传该参数，因此按 `REPAIR_START` 至结束日完整重算。
+
+## 5. 分区与局部恢复
+
+全量跨度超过两年时，主线预处理会自动采用六个月分区（短期增量仍按月），
+以避免每月重复扫描 120～420 日滚动窗口；终端进度的分区总数会相应下降。
+修改代码前已经启动的任务不会自动切换该策略，应停止后从同一命令重新执行。
+
+若全量任务仅在 `etf_daily` 失败，可只回补失败的时间分区，避免重跑股票、
+市场和行业层；`etf` 同时重建 ETF 日表及其行业暴露：
+
+```bash
+fdh-cli preprocess run --category mainline --stage etf,crowding --all \
+  --start-date 2026-07-01 --end-date "$MAINLINE_END_DATE" --force
+```
+
+若行业日表为空、且 `leadlag` 返回零记录，先确认 `stock_daily` 的申万 L2
+归属已正确写入；行业因子以个股和市场层为输入。若需要从 2012 年回测首月
+就有领先滞后信号，必须从 2008 年开始重建这三层作为 756 交易日训练预热。
+以下命令不重跑 ETF 日表：
+
+```bash
+fdh-cli preprocess run --category mainline --stage stock,market,industry --all \
+  --start-date 2008-01-01 --end-date "$MAINLINE_END_DATE" --force
+
+fdh-cli preprocess run --category mainline --stage leadlag --all \
+  --start-date 2008-01-01 --end-date "$MAINLINE_END_DATE" --force
+```
+
+若只接受 2012 年之后积累训练样本，可把上述两个命令的开始日期改为
+`2012-01-01`；模型最少需要 252 个有效交易日，早期月份不会产生信号。
+
+## 6. 验收后创建查询索引
 
 ```bash
 "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 \
