@@ -1863,7 +1863,7 @@ class FinanceDataHub:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         eligible_only: bool = False,
-        factor_version: int = 1,
+        factor_version: int = 2,
         usable_on_or_before: Optional[str] = None,
     ) -> pd.DataFrame:
         """查询主线策略因子宽表；dataset 例如 stock_daily/industry_daily。"""
@@ -1881,7 +1881,7 @@ class FinanceDataHub:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         eligible_only: bool = False,
-        factor_version: int = 1,
+        factor_version: int = 2,
         usable_on_or_before: Optional[str] = None,
     ) -> pd.DataFrame:
         """查询主线策略因子宽表（异步）。"""
@@ -1889,6 +1889,84 @@ class FinanceDataHub:
             dataset, codes=codes, start_date=start_date, end_date=end_date,
             eligible_only=eligible_only, factor_version=factor_version,
             usable_on_or_before=usable_on_or_before,
+        )
+
+    def get_mainline_manifest(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        status: Optional[str] = None,
+        factor_version: int = 2,
+    ) -> pd.DataFrame:
+        """查询主线因子快照清单（同步）。"""
+        return asyncio.run(self.get_mainline_manifest_async(
+            start_date=start_date, end_date=end_date, status=status,
+            factor_version=factor_version,
+        ))
+
+    async def get_mainline_manifest_async(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        status: Optional[str] = None,
+        factor_version: int = 2,
+    ) -> pd.DataFrame:
+        """查询主线因子快照清单（异步）。"""
+        return await self.mainline_storage.get_manifest(
+            start_date=start_date, end_date=end_date, status=status,
+            factor_version=factor_version,
+        )
+
+    def get_mainline_data_status(
+        self,
+        partition_date: Optional[str] = None,
+        factor_version: int = 2,
+    ) -> pd.DataFrame:
+        """查询主线 Gate 0 数据质量状态（同步）。"""
+        return asyncio.run(self.get_mainline_data_status_async(
+            partition_date=partition_date, factor_version=factor_version,
+        ))
+
+    async def get_mainline_data_status_async(
+        self,
+        partition_date: Optional[str] = None,
+        factor_version: int = 2,
+    ) -> pd.DataFrame:
+        """查询主线 Gate 0 数据质量状态（异步）。"""
+        return await self.mainline_storage.get_data_status(
+            partition_date=partition_date, factor_version=factor_version,
+        )
+
+    def get_processed_mainline_asof(
+        self,
+        dataset: str,
+        as_of_date: str,
+        execution_date: str,
+        codes: Optional[List[str]] = None,
+        eligible_only: bool = False,
+        factor_version: int = 2,
+    ) -> pd.DataFrame:
+        """查询观察日已知、执行日已可用的主线数据（同步）。"""
+        return asyncio.run(self.get_processed_mainline_asof_async(
+            dataset=dataset, as_of_date=as_of_date, execution_date=execution_date,
+            codes=codes, eligible_only=eligible_only,
+            factor_version=factor_version,
+        ))
+
+    async def get_processed_mainline_asof_async(
+        self,
+        dataset: str,
+        as_of_date: str,
+        execution_date: str,
+        codes: Optional[List[str]] = None,
+        eligible_only: bool = False,
+        factor_version: int = 2,
+    ) -> pd.DataFrame:
+        """查询观察日已知、执行日已可用的主线数据（异步）。"""
+        return await self.mainline_storage.query_asof(
+            dataset=dataset, as_of_date=as_of_date,
+            execution_date=execution_date, codes=codes,
+            eligible_only=eligible_only, factor_version=factor_version,
         )
 
     def get_daily_adjusted(

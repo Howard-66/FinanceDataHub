@@ -1,6 +1,5 @@
 from pathlib import Path
 from decimal import Decimal
-import json
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
 import numpy as np
@@ -650,30 +649,88 @@ async def test_mainline_industry_crowding_uses_the_same_incremental_source_windo
 
 
 @pytest.mark.asyncio
-async def test_mainline_publish_snapshot_reads_dataset_coverage_without_tuple_attributes():
+async def test_mainline_publish_snapshot_uses_set_based_immutable_manifest():
     preprocessor = MainlinePreprocessor(Mock())
-    preprocessor._read_dataframe = AsyncMock(return_value=pd.DataFrame([
-        {
-            "dataset": "stock_daily", "partition_date": pd.Timestamp("2026-08-21").date(),
-            "completeness": 1.0, "status": "ready", "blocker_reasons": [], "details": {},
-        },
-        {
-            "dataset": "industry_daily", "partition_date": pd.Timestamp("2026-08-21").date(),
-            "completeness": 0.98, "status": "ready", "blocker_reasons": [], "details": {},
-        },
-    ]))
     preprocessor._execute = AsyncMock(return_value=1)
 
     count = await preprocessor._publish_snapshot(pd.Timestamp("2026-08-21").date())
 
     assert count == 1
+    sql = preprocessor._execute.await_args.args[0]
     params = preprocessor._execute.await_args.args[1]
-    assert json.loads(params["coverage"]) == {"stock_daily": 1.0, "industry_daily": 0.98}
-    assert json.loads(params["watermark"]) == {"market": "2026-08-21"}
-    assert "dataset,partition_date,completeness" in preprocessor._read_dataframe.await_args.args[0]
-    assert "CAST(:status AS VARCHAR(16))" in preprocessor._execute.await_args.args[0]
-    assert "CAST(:coverage AS JSONB)" in preprocessor._execute.await_args.args[0]
-    assert "ON CONFLICT(factor_version,as_of_trade_date) DO UPDATE SET" in preprocessor._execute.await_args.args[0]
+    assert params["start_date"] == pd.Timestamp("2026-08-21").date()
+    assert params["end_date"] == pd.Timestamp("2026-08-21").date()
+    assert "JSONB_OBJECT_AGG(dataset,completeness)" in sql
+    assert "dataset_count=4" in sql
+    assert "ON CONFLICT(factor_version,as_of_trade_date) DO UPDATE SET" in sql
+    assert "processed_mainline_snapshot_manifest.status<>'ready'" in sql
+
+
+@pytest.mark.asyncio
+async def test_mainline_v2_financial_acceleration_uses_prior_report_not_prior_day():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._execute = AsyncMock(return_value=1)
+
+    await preprocessor._materialize_stock(
+        pd.Timestamp("2026-08-21").date(), pd.Timestamp("2026-08-21").date()
+    )
+
+    stock_sql = preprocessor._execute.await_args_list[0].args[0]
+    enrich_sql = preprocessor._execute.await_args_list[1].args[0]
+    assert "LAG(q_sales_yoy) OVER(ORDER BY end_date_time)" in stock_sql
+    assert "DISTINCT ON (x.end_date_time)" in stock_sql
+    assert "revenue_yoy-revenue_yoy_prev" in stock_sql
+    assert "LAG(s.revenue_yoy)" not in enrich_sql
+
+
+@pytest.mark.asyncio
+async def test_etf_exposure_is_carried_forward_with_usable_date_cutoff():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._execute = AsyncMock(return_value=1)
+
+    await preprocessor._materialize_etf_exposure(
+        pd.Timestamp("2026-08-01").date(), pd.Timestamp("2026-08-21").date()
+    )
+
+    summary_sql = preprocessor._execute.await_args_list[1].args[0]
+    assert "e.as_of_trade_date<=d.trade_date" in summary_sql
+    assert "e.usable_from_trade_date<=d.trade_date" in summary_sql
+    assert "top5_l2_exposure" in summary_sql
+
+
+@pytest.mark.asyncio
+async def test_gate_zero_requires_industry_and_etf_coverage():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._execute = AsyncMock(return_value=1)
+
+    await preprocessor._refresh_status_range(
+        pd.Timestamp("2026-08-01").date(), pd.Timestamp("2026-08-21").date()
+    )
+
+    sql = preprocessor._execute.await_args.args[0]
+    assert "industry_economic_coverage_below_90pct" in sql
+    assert "etf_size_share_nav_coverage_below_95pct" in sql
+    assert "etf_basic_whitelist_below_3" in sql
+    assert "selectable_etf_missing_pit_exposure" in sql
+    assert "e.data_complete AND e.benchmark_available AND e.is_tradable" in sql
+
+
+@pytest.mark.asyncio
+async def test_stock_materialization_excludes_hk_equities_from_mainline_universe():
+    preprocessor = MainlinePreprocessor(Mock())
+    preprocessor._execute = AsyncMock(return_value=1)
+
+    await preprocessor._materialize_stock(
+        pd.Timestamp("2026-08-01").date(), pd.Timestamp("2026-08-21").date()
+    )
+
+    # _materialize_stock first writes raw PIT facts, then issues a separate
+    # rolling-feature enrichment statement. The A-share filter is in the
+    # former.
+    sql = preprocessor._execute.await_args_list[0].args[0]
+    assert "d.symbol LIKE '%.SH' OR d.symbol LIKE '%.SZ'" in sql
+    assert "DELETE FROM processed_mainline_stock_daily" in sql
+    assert "ts_code LIKE '%.HK'" in sql
 
 
 def test_leadlag_calculator_finds_known_delay():
@@ -759,11 +816,12 @@ def test_scheduler_accepts_mainline_jobs_and_dependencies():
     assert "etf_share_size_update" not in daily_mainline.depends_on
     assert "index_weight_update" not in daily_mainline.depends_on
     assert daily_mainline.params["start_date"] == "latest-10bd"
+    assert daily_mainline.params["stage"] == "stock,market,etf"
 
     crowding_mainline = config.jobs["mainline_crowding_preprocess"]
     assert crowding_mainline.schedule["hour"] == 23
     assert crowding_mainline.schedule["minute"] == 25
-    assert crowding_mainline.params["stage"] == "crowding"
+    assert crowding_mainline.params["stage"] == "crowding,industry,publish"
     assert crowding_mainline.params["start_date"] == "latest-10bd"
     assert crowding_mainline.params["source_updated_since"] == "latest-10bd"
 
@@ -772,6 +830,7 @@ def test_scheduler_accepts_mainline_jobs_and_dependencies():
         "type": "cron", "day": "1-7", "day_of_week": "mon", "hour": 23, "minute": 55
     }
     assert leadlag_mainline.params["end_date"] == "previous_month_last_trade_date"
+    assert leadlag_mainline.params["start_date"] == "previous_month_start"
     assert config.jobs["etf_share_size_catchup"].params["trade_date"] == "latest"
 
 

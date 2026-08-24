@@ -18,8 +18,9 @@ services:
       - ./sql/init:/docker-entrypoint-initdb.d
       # 初始化脚本从独立目录读取迁移，避免与上方目录挂载发生重叠。
       - ./sql/migrations:/app/sql/migrations:ro
-    # 2. 【关键操作】删除了 command 这一行
-    # 让容器使用默认的启动命令，这能解决 "exec: trading_nexus: not found" 错误
+    # 主线超表已有近千个分区。创建父表索引会同时锁住各分区，默认 64
+    # 个事务锁不足；该参数只能在 PostgreSQL 启动时设置。
+    command: ["postgres", "-c", "max_locks_per_transaction=2048"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U trading_nexus -d trading_nexus_db"]
       interval: 10s

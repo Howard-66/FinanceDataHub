@@ -1085,7 +1085,8 @@ jobs:
     resource_group: mainline_preprocess
     schedule: {type: cron, day_of_week: "mon-fri", hour: 22, minute: 20}
     # 每日只回看近期修订窗口；各物化 SQL 自带 120~420 日滚动窗口。
-    params: {all: true, market: CN, stage: "daily,publish", start_date: "latest-10bd", end_date: latest}
+    # stock/market/ETF 先更新；行业在 crowding 披露数据完成后只计算一次。
+    params: {all: true, market: CN, stage: "stock,market,etf", start_date: "latest-10bd", end_date: latest}
     # index_weight 是月度数据，不能作为日任务的“同一调度日”依赖；ETF
     # 份额/规模则必须等待 20:00 的收盘后补抓，而非早盘快照。
     depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, sw_daily_update, index_daily_update, fund_daily_update, fund_adj_update, etf_share_size_catchup, stock_st_update, stock_suspend_update, stock_dividend_update, stock_repurchase_update, margin_detail_update, moneyflow_hsgt_update, moneyflow_update]
@@ -1100,7 +1101,7 @@ jobs:
     resource_group: mainline_preprocess
     # 日处理实测约 55 分钟，预留十分钟后再触发；resource_group 仍作为超时保护。
     schedule: {type: cron, day_of_week: "mon-fri", hour: 23, minute: 25}
-    params: {all: true, market: CN, stage: "crowding", start_date: "latest-10bd", end_date: latest, source_updated_since: "latest-10bd"}
+    params: {all: true, market: CN, stage: "crowding,industry,publish", start_date: "latest-10bd", end_date: latest, source_updated_since: "latest-10bd"}
     depends_on: [fund_portfolio_update, mainline_preprocess]
     retry: {max_retries: 2, delay: 900}
 
@@ -1112,7 +1113,7 @@ jobs:
     category: mainline
     resource_group: mainline_preprocess
     schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 23, minute: 55}
-    params: {all: true, market: CN, stage: "leadlag,publish", start_date: "2008-01-01", end_date: previous_month_last_trade_date}
+    params: {all: true, market: CN, stage: "leadlag", start_date: previous_month_start, end_date: previous_month_last_trade_date}
     depends_on: [mainline_preprocess, mainline_crowding_preprocess]
     retry: {max_retries: 1, delay: 1800}
 

@@ -5,9 +5,7 @@
 
 from datetime import date, timedelta
 from hashlib import sha256
-import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
-from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -51,7 +49,7 @@ MAINLINE_TABLES = {
 # 主线策略的统一历史回测起点。无 --force 时仍保留最近 400 天的
 # 默认增量窗口；CLI 的全量模式会显式传入该日期。
 MAINLINE_HISTORY_START = "2012-01-01"
-MAINLINE_FACTOR_VERSION = 1
+MAINLINE_FACTOR_VERSION = 2
 # Monthly partitions make incremental repairs cheap, but are prohibitively
 # expensive for a 10+ year rebuild because every partition re-reads its rolling
 # source window.  Six months keeps individual WindowAgg operations bounded
@@ -117,6 +115,107 @@ class MainlineDataStorage:
         assert engine is not None
         async with engine.begin() as conn:
             result = await conn.execute(statement, params)
+            rows = result.fetchall()
+            return pd.DataFrame(rows, columns=result.keys())
+
+    async def get_manifest(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        status: Optional[str] = None,
+        factor_version: int = MAINLINE_FACTOR_VERSION,
+    ) -> pd.DataFrame:
+        """Return immutable manifest rows for one factor formula version."""
+        clauses = ["factor_version = :factor_version"]
+        params: Dict[str, Any] = {"factor_version": factor_version}
+        if start_date:
+            clauses.append("as_of_trade_date >= :start_date")
+            params["start_date"] = pd.Timestamp(start_date).date()
+        if end_date:
+            clauses.append("as_of_trade_date <= :end_date")
+            params["end_date"] = pd.Timestamp(end_date).date()
+        if status:
+            clauses.append("status = :status")
+            params["status"] = status
+        return await self._read(
+            "SELECT * FROM processed_mainline_snapshot_manifest "
+            f"WHERE {' AND '.join(clauses)} ORDER BY as_of_trade_date",
+            params,
+        )
+
+    async def get_data_status(
+        self,
+        partition_date: Optional[str] = None,
+        factor_version: int = MAINLINE_FACTOR_VERSION,
+    ) -> pd.DataFrame:
+        """Return Gate 0 evidence, defaulting to the latest completed partition."""
+        params: Dict[str, Any] = {"factor_version": factor_version}
+        if partition_date:
+            date_clause = "AND partition_date = :partition_date"
+            params["partition_date"] = pd.Timestamp(partition_date).date()
+        else:
+            date_clause = """AND partition_date = (
+                SELECT MAX(partition_date) FROM processed_mainline_data_status
+                WHERE factor_version = :factor_version
+            )"""
+        return await self._read(
+            f"""SELECT * FROM processed_mainline_data_status
+                WHERE factor_version = :factor_version {date_clause}
+                ORDER BY dataset""",
+            params,
+        )
+
+    async def query_asof(
+        self,
+        dataset: str,
+        as_of_date: str,
+        execution_date: str,
+        codes: Optional[List[str]] = None,
+        eligible_only: bool = False,
+        factor_version: int = MAINLINE_FACTOR_VERSION,
+    ) -> pd.DataFrame:
+        """Read the latest PIT-safe row per entity as known on an observation day."""
+        config = MAINLINE_TABLES.get(dataset)
+        if config is None or dataset in {"snapshot_manifest", "data_status"}:
+            raise ValueError(f"Unsupported as-of mainline dataset: {dataset}")
+        table_name, code_column, date_column = config
+        clauses = [
+            "factor_version = :factor_version",
+            "as_of_trade_date <= :as_of_date",
+            "usable_from_trade_date <= :execution_date",
+        ]
+        params: Dict[str, Any] = {
+            "factor_version": factor_version,
+            "as_of_date": pd.Timestamp(as_of_date).date(),
+            "execution_date": pd.Timestamp(execution_date).date(),
+        }
+        if codes and code_column:
+            clauses.append(f"{code_column} = ANY(:codes)")
+            params["codes"] = codes
+        if eligible_only:
+            if dataset not in {"stock_daily", "etf_daily"}:
+                raise ValueError("eligible_only only supports stock_daily and etf_daily")
+            clauses.append("is_eligible = TRUE")
+        if code_column:
+            statement = (
+                f"SELECT DISTINCT ON ({code_column}) * FROM {table_name} "
+                f"WHERE {' AND '.join(clauses)} "
+                f"ORDER BY {code_column}, as_of_trade_date DESC, {date_column} DESC"
+            )
+        else:
+            statement = (
+                f"SELECT * FROM {table_name} WHERE {' AND '.join(clauses)} "
+                f"ORDER BY as_of_trade_date DESC, {date_column} DESC LIMIT 1"
+            )
+        return await self._read(statement, params)
+
+    async def _read(self, statement: str, params: Dict[str, Any]) -> pd.DataFrame:
+        if self.db_manager._engine is None:
+            await self.db_manager.initialize()
+        engine = self.db_manager._engine
+        assert engine is not None
+        async with engine.begin() as conn:
+            result = await conn.execute(text(statement), params)
             rows = result.fetchall()
             return pd.DataFrame(rows, columns=result.keys())
 
@@ -266,7 +365,6 @@ class MainlinePreprocessor:
             materializers.extend([
                 ("stock_daily", self._materialize_stock),
                 ("market_daily", self._materialize_market),
-                ("industry_daily", self._materialize_industry),
                 ("etf_daily", self._materialize_etf),
             ])
             if explicit_stages:
@@ -305,6 +403,10 @@ class MainlinePreprocessor:
                         source_updated_since=source_updated_since,
                     ),
                 ))
+        if "daily" in requested:
+            # Industry enrichment consumes both ETF exposure and the latest
+            # disclosed crowding snapshot, so it must be last in a combined run.
+            materializers.append(("industry_daily", self._materialize_industry))
 
         counts = {name: 0 for name, _ in materializers}
         if "leadlag" in requested:
@@ -335,8 +437,8 @@ class MainlinePreprocessor:
         if "publish" in requested:
             if progress_callback:
                 progress_callback(completed, total_steps, "publish")
-            await self._refresh_status(end)
-            counts["snapshot_manifest"] = await self._publish_snapshot(end)
+            await self._refresh_status_range(start, end)
+            counts["snapshot_manifest"] = await self._publish_snapshots(start, end)
             completed += 1
         elif legacy_status:
             if progress_callback:
@@ -364,7 +466,16 @@ class MainlinePreprocessor:
 
     async def _materialize_stock(self, start: date, end: date) -> int:
         sql = """
-        WITH prices AS (
+        WITH purged_non_mainland AS (
+            -- A previous version materialized cross-market rows.  Make each
+            -- requested partition self-healing instead of retaining stale HK
+            -- rows after an incremental or forced repair.
+            DELETE FROM processed_mainline_stock_daily
+            WHERE factor_version=:factor_version
+              AND trade_date BETWEEN :start_date AND :end_date
+              AND ts_code LIKE '%.HK'
+            RETURNING ts_code
+        ), prices AS (
             SELECT d.time::date AS trade_date, d.symbol AS ts_code,
                    d.close, d.amount,
                    d.close / NULLIF(LAG(d.close, 1) OVER w, 0) - 1 AS daily_return,
@@ -377,6 +488,9 @@ class MainlinePreprocessor:
             FROM processed_daily_qfq d
             WHERE d.time >= (CAST(:start_date AS date) - INTERVAL '260 days')
               AND d.time < (CAST(:end_date AS date) + INTERVAL '1 day')
+              -- processed_daily_qfq is cross-market; the SW2021 mainline
+              -- universe is mainland A shares, not Hong Kong equities.
+              AND (d.symbol LIKE '%.SH' OR d.symbol LIKE '%.SZ')
             WINDOW w AS (PARTITION BY d.symbol ORDER BY d.time)
         ), features AS (
             SELECT p.*,
@@ -415,12 +529,15 @@ class MainlinePreprocessor:
                            WHERE ss.ts_code=f.ts_code AND ss.trade_date=f.trade_date
                              AND UPPER(ss.suspend_type)='S') AS is_suspended,
                    f.trade_date - ab.list_date AS listing_days,
-                   f.close, f.amount, db.total_mv, db.circ_mv, db.turnover_rate,
+                   f.close, f.amount * 1000 AS amount,
+                   db.total_mv * 10000 AS total_mv, db.circ_mv * 10000 AS circ_mv,
+                   db.turnover_rate,
                    COALESCE(v.pe_ttm, db.pe_ttm) AS pe_ttm,
                    COALESCE(v.pb, db.pb) AS pb, COALESCE(v.dv_ttm, db.dv_ttm) AS dv_ttm,
                    COALESCE(qf.roe_5y_avg,fi.roe_dt) AS roe_ttm, qf.roa_ttm,
                    fi.roic,fi.grossprofit_margin,
                    fi.q_sales_yoy AS revenue_yoy,fi.q_profit_yoy AS profit_yoy,
+                   fi.revenue_yoy_prev,fi.profit_yoy_prev,
                    COALESCE(qf.cfo_to_ni_ttm,fi.ocf_to_profit) AS ocf_to_profit,
                    COALESCE(qf.debt_ratio,fi.debt_to_assets) AS debt_to_assets,
                    COALESCE(qf.available_date,fi.available_date) AS financial_available_date,
@@ -431,10 +548,10 @@ class MainlinePreprocessor:
                    (db.turnover_rate-db.min_turnover_20d) /
                      NULLIF(db.max_turnover_20d-db.min_turnover_20d,0) AS turnover_pct_20d,
                    v.pe_ttm_pct_1250d AS pe_pct_5y, v.pb_pct_1250d AS pb_pct_5y,
-                   md.rzye, md.rqye, md.rzmre,
-                   mf.net_mf_amount AS moneyflow_net_amount,
+                   md.rzye,md.rqye,md.rzmre,
+                   mf.net_mf_amount * 10000 AS moneyflow_net_amount,
                    mf.net_mf_amount * 10 / NULLIF(f.amount, 0) AS moneyflow_net_amount_ratio,
-                   (mf.buy_lg_amount-mf.sell_lg_amount+mf.buy_elg_amount-mf.sell_elg_amount) AS moneyflow_large_net_amount,
+                   (mf.buy_lg_amount-mf.sell_lg_amount+mf.buy_elg_amount-mf.sell_elg_amount) * 10000 AS moneyflow_large_net_amount,
                    (mf.buy_lg_amount-mf.sell_lg_amount+mf.buy_elg_amount-mf.sell_elg_amount) * 10 / NULLIF(f.amount, 0) AS moneyflow_large_net_ratio,
                    (mf.ts_code IS NOT NULL) AS moneyflow_available,
                    EXISTS (SELECT 1 FROM stock_dividend x
@@ -459,14 +576,27 @@ class MainlinePreprocessor:
                 LIMIT 1
             ) qf ON TRUE
             LEFT JOIN LATERAL (
-                SELECT x.roe_dt,x.roic,x.grossprofit_margin,x.q_sales_yoy,x.q_profit_yoy,
-                       x.ocf_to_profit,x.debt_to_assets,
-                       COALESCE(x.ann_date_time,TO_TIMESTAMP(x.ann_date,'YYYYMMDD'))::date AS available_date
-                FROM fina_indicator x
-                WHERE x.ts_code=f.ts_code
-                  AND COALESCE(x.ann_date_time,TO_TIMESTAMP(x.ann_date,'YYYYMMDD')) <= f.trade_date
-                ORDER BY COALESCE(x.ann_date_time,TO_TIMESTAMP(x.ann_date,'YYYYMMDD')) DESC,
-                         x.end_date_time DESC
+                SELECT reports.roe_dt,reports.roic,reports.grossprofit_margin,
+                       reports.q_sales_yoy,reports.q_profit_yoy,
+                       reports.revenue_yoy_prev,reports.profit_yoy_prev,
+                       reports.ocf_to_profit,reports.debt_to_assets,reports.available_date
+                FROM (
+                    SELECT revisions.*,
+                           LAG(q_sales_yoy) OVER(ORDER BY end_date_time) AS revenue_yoy_prev,
+                           LAG(q_profit_yoy) OVER(ORDER BY end_date_time) AS profit_yoy_prev
+                    FROM (
+                        SELECT DISTINCT ON (x.end_date_time)
+                               x.end_date_time,x.roe_dt,x.roic,x.grossprofit_margin,
+                               x.q_sales_yoy,x.q_profit_yoy,x.ocf_to_profit,x.debt_to_assets,
+                               COALESCE(x.ann_date_time,TO_TIMESTAMP(x.ann_date,'YYYYMMDD'))::date AS available_date
+                        FROM fina_indicator x
+                        WHERE x.ts_code=f.ts_code
+                          AND COALESCE(x.ann_date_time,TO_TIMESTAMP(x.ann_date,'YYYYMMDD')) <= f.trade_date
+                        ORDER BY x.end_date_time,
+                                 COALESCE(x.ann_date_time,TO_TIMESTAMP(x.ann_date,'YYYYMMDD')) DESC
+                    ) revisions
+                ) reports
+                ORDER BY reports.end_date_time DESC
                 LIMIT 1
             ) fi ON TRUE
             LEFT JOIN margin_detail md ON md.ts_code=f.ts_code AND md.trade_date=f.trade_date
@@ -494,7 +624,8 @@ class MainlinePreprocessor:
             ts_code,l1_code,l1_name,l2_code,l2_name,is_listed,is_st,st_source,
             is_suspended,is_eligible,exclusion_reason,listing_days,close,amount,total_mv,circ_mv,
             turnover_rate,pe_ttm,pb,dv_ttm,roe_ttm,roa_ttm,roic,grossprofit_margin,
-            revenue_yoy,profit_yoy,
+            revenue_yoy,profit_yoy,revenue_yoy_prev,profit_yoy_prev,
+            revenue_acceleration,profit_acceleration,
             ocf_to_profit,debt_to_assets,financial_available_date,return_20d,return_60d,return_120d,volatility_20d,
             drawdown_120d,amount_pct_20d,turnover_pct_20d,pe_pct_5y,pb_pct_5y,
             rzye,rqye,rzmre,moneyflow_net_amount,moneyflow_net_amount_ratio,moneyflow_large_net_amount,moneyflow_large_net_ratio,moneyflow_available,dividend_event_120d,repurchase_event_120d,source_asof
@@ -513,6 +644,8 @@ class MainlinePreprocessor:
                     WHEN close IS NULL OR COALESCE(amount,0)<=0 THEN 'not_tradable' END,
                listing_days,close,amount,total_mv,circ_mv,turnover_rate,pe_ttm,pb,dv_ttm,
                roe_ttm,roa_ttm,roic,grossprofit_margin,revenue_yoy,profit_yoy,
+               revenue_yoy_prev,profit_yoy_prev,
+               revenue_yoy-revenue_yoy_prev,profit_yoy-profit_yoy_prev,
                ocf_to_profit,debt_to_assets,financial_available_date,
                return_20d,return_60d,return_120d,volatility_20d,drawdown_120d,
                amount_pct_20d,turnover_pct_20d,pe_pct_5y,pb_pct_5y,rzye,rqye,rzmre,moneyflow_net_amount,moneyflow_net_amount_ratio,moneyflow_large_net_amount,moneyflow_large_net_ratio,moneyflow_available,
@@ -529,6 +662,8 @@ class MainlinePreprocessor:
             roe_ttm=EXCLUDED.roe_ttm,roa_ttm=EXCLUDED.roa_ttm,
             roic=EXCLUDED.roic,grossprofit_margin=EXCLUDED.grossprofit_margin,
             revenue_yoy=EXCLUDED.revenue_yoy,profit_yoy=EXCLUDED.profit_yoy,
+            revenue_yoy_prev=EXCLUDED.revenue_yoy_prev,profit_yoy_prev=EXCLUDED.profit_yoy_prev,
+            revenue_acceleration=EXCLUDED.revenue_acceleration,profit_acceleration=EXCLUDED.profit_acceleration,
             ocf_to_profit=EXCLUDED.ocf_to_profit,debt_to_assets=EXCLUDED.debt_to_assets,financial_available_date=EXCLUDED.financial_available_date,
             return_20d=EXCLUDED.return_20d,return_60d=EXCLUDED.return_60d,
             return_120d=EXCLUDED.return_120d,volatility_20d=EXCLUDED.volatility_20d,
@@ -563,8 +698,7 @@ class MainlinePreprocessor:
                  ABS(s.close / NULLIF(LAG(s.close,60) OVER w, 0) - 1) AS path_displacement,
                  PERCENT_RANK() OVER(PARTITION BY s.trade_date ORDER BY s.circ_mv) AS circ_rank,
                  PERCENT_RANK() OVER(PARTITION BY s.ts_code ORDER BY s.turnover_rate
-                    ROWS BETWEEN 503 PRECEDING AND CURRENT ROW) AS turnover_rank,
-                 LAG(s.revenue_yoy) OVER w AS revenue_prev, LAG(s.profit_yoy) OVER w AS profit_prev
+                    ROWS BETWEEN 503 PRECEDING AND CURRENT ROW) AS turnover_rank
           FROM processed_mainline_stock_daily s
           WHERE s.factor_version=:factor_version
             AND s.trade_date BETWEEN (CAST(:start_date AS date) - INTERVAL '420 days') AND :end_date
@@ -585,9 +719,8 @@ class MainlinePreprocessor:
           ma60_gap=source.close/NULLIF(source.ma60,0)-1, ma120_gap=source.close/NULLIF(source.ma120,0)-1,
           ma200_gap=source.close/NULLIF(source.ma200,0)-1, volatility_60d=source.vol60, volatility_120d=source.vol120,
           path_efficiency_60d=source.path_displacement/NULLIF(source.path_length,0), tail_return_p05_60d=source.tail_p05,
-          turnover_pct_2y=source.turnover_rank, revenue_yoy_prev=source.revenue_prev, profit_yoy_prev=source.profit_prev,
+          turnover_pct_2y=source.turnover_rank,
           moneyflow_net_amount_5d=source.moneyflow5,moneyflow_net_amount_20d=source.moneyflow20,
-          revenue_acceleration=target.revenue_yoy-source.revenue_prev, profit_acceleration=target.profit_yoy-source.profit_prev,
           is_market_breadth_eligible=(target.is_listed AND NOT target.is_st AND NOT target.is_suspended AND source.trades20 >= 20 AND target.close IS NOT NULL),
           is_industry_breadth_eligible=(target.is_listed AND NOT target.is_st AND NOT target.is_suspended AND target.l2_code IS NOT NULL AND source.trades20 >= 20),
           is_stock_candidate_eligible=(target.is_listed AND NOT target.is_st AND NOT target.is_suspended AND target.listing_days >= 120 AND target.l2_code IS NOT NULL AND source.trades20 >= 20 AND COALESCE(target.amount,0)>0),
@@ -628,7 +761,7 @@ class MainlinePreprocessor:
                    AVG(d.close) OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60
                    ,AVG(d.close) OVER(w ROWS BETWEEN 119 PRECEDING AND CURRENT ROW) AS ma120
             FROM processed_daily_qfq d
-            WHERE d.time >= (CAST(:start_date AS date)-INTERVAL '120 days')
+            WHERE d.time >= (CAST(:start_date AS date)-INTERVAL '200 days')
               AND d.time < (CAST(:end_date AS date)+INTERVAL '1 day')
             WINDOW w AS(PARTITION BY d.symbol ORDER BY d.time)
         ), breadth AS (
@@ -714,10 +847,12 @@ class MainlinePreprocessor:
                  AVG(s.close) OVER(PARTITION BY s.ts_code ORDER BY s.trade_date
                                    ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS ma20,
                  AVG(s.close) OVER(PARTITION BY s.ts_code ORDER BY s.trade_date
-                                   ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60
+                                   ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60,
+                 AVG(s.close) OVER(PARTITION BY s.ts_code ORDER BY s.trade_date
+                                   ROWS BETWEEN 119 PRECEDING AND CURRENT ROW) AS ma120
           FROM processed_mainline_stock_daily s
           WHERE s.factor_version=:factor_version
-            AND s.trade_date BETWEEN (CAST(:start_date AS date)-INTERVAL '150 days') AND :end_date
+            AND s.trade_date BETWEEN (CAST(:start_date AS date)-INTERVAL '200 days') AND :end_date
         )
         INSERT INTO processed_mainline_industry_daily (
           factor_version,trade_date,as_of_trade_date,usable_from_trade_date,l1_code,l1_name,l2_code,l2_name,index_code,index_close,return_20d,return_60d,return_120d,ma60_gap,ma120_gap,stock_count,equal_weight_return,
@@ -736,7 +871,7 @@ class MainlinePreprocessor:
           AVG(b.return_20d)-MAX(m.benchmark_return_20d),
           AVG(b.return_60d)-MAX(m.benchmark_return_60d),
           AVG(b.return_120d)-MAX(m.benchmark_return_120d),
-          AVG((b.close>b.ma20)::int),AVG((b.close>b.ma60)::int),AVG((b.close>b.ma60)::int),
+          AVG((b.close>b.ma20)::int),AVG((b.close>b.ma60)::int),AVG((b.close>b.ma120)::int),
           COUNT(*) FILTER(WHERE b.return_20d>0 AND b.close>b.ma60),AVG((b.return_20d>0 AND b.close>b.ma60)::int),STDDEV_SAMP(b.r1),
           SUM(b.amount)/NULLIF(SUM(SUM(b.amount)) OVER(PARTITION BY b.trade_date),0),
           PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY b.pe_ttm),
@@ -746,8 +881,8 @@ class MainlinePreprocessor:
           PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY b.grossprofit_margin),
           PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY b.revenue_yoy),
           PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY b.profit_yoy),SUM(b.rz20),
-          SUM(b.moneyflow_net_amount),SUM(b.moneyflow_net_amount)*10/NULLIF(SUM(b.amount),0),
-          SUM(b.moneyflow_large_net_amount),SUM(b.moneyflow_large_net_amount)*10/NULLIF(SUM(b.amount),0),
+          SUM(b.moneyflow_net_amount),SUM(b.moneyflow_net_amount)/NULLIF(SUM(b.amount),0),
+          SUM(b.moneyflow_large_net_amount),SUM(b.moneyflow_large_net_amount)/NULLIF(SUM(b.amount),0),
           SUM(b.moneyflow_net_amount_5d),SUM(b.moneyflow_net_amount_20d),
           COUNT(*) FILTER(WHERE b.moneyflow_net_amount>0)::numeric/NULLIF(COUNT(*) FILTER(WHERE b.moneyflow_available),0),
           MAX(GREATEST(COALESCE(b.moneyflow_net_amount,0),0))/NULLIF(SUM(GREATEST(COALESCE(b.moneyflow_net_amount,0),0)),0),
@@ -787,14 +922,106 @@ class MainlinePreprocessor:
           data_quality=EXCLUDED.data_quality,source_watermark=EXCLUDED.source_watermark,
           source_asof=EXCLUDED.source_asof,processed_at=NOW()
         """
-        return await self._execute(sql, {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION})
+        count = await self._execute(sql, {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION})
+        await self._enrich_industry_inputs(start, end)
+        return count
+
+    async def _enrich_industry_inputs(self, start: date, end: date) -> int:
+        """Attach PIT-safe liquidity, financial, fund and ETF inputs to industries."""
+        sql = """
+        WITH ranked_stock AS (
+          SELECT s.*,
+                 ROW_NUMBER() OVER(
+                   PARTITION BY s.trade_date,s.l2_code ORDER BY s.amount DESC NULLS LAST
+                 ) AS amount_rank
+          FROM processed_mainline_stock_daily s
+          WHERE s.factor_version=:factor_version
+            AND s.is_industry_breadth_eligible
+            AND s.trade_date BETWEEN :start_date AND :end_date
+        ), stock_inputs AS (
+          SELECT trade_date,l2_code,
+                 SUM(avg_amount_20d) AS avg_amount_20d,
+                 SUM(avg_amount_60d) AS avg_amount_60d,
+                 SUM(amount) FILTER(WHERE amount_rank<=5)/NULLIF(SUM(amount),0) AS top5_amount_share,
+                 PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY revenue_acceleration)
+                   FILTER(WHERE revenue_acceleration IS NOT NULL) AS revenue_acceleration,
+                 PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY profit_acceleration)
+                   FILTER(WHERE profit_acceleration IS NOT NULL) AS profit_acceleration
+          FROM ranked_stock GROUP BY trade_date,l2_code
+        ), crowding AS (
+          SELECT DISTINCT ON (i.trade_date,i.l2_code)
+                 i.trade_date,i.l2_code,c.holding_value,c.fund_count,c.holding_change,
+                 c.concentration,c.disclosure_coverage
+          FROM processed_mainline_industry_daily i
+          LEFT JOIN processed_mainline_industry_crowding_monthly c
+            ON c.factor_version=i.factor_version AND c.l2_code=i.l2_code
+           AND c.as_of_trade_date<=i.trade_date
+           AND c.usable_from_trade_date<=i.trade_date
+          WHERE i.factor_version=:factor_version
+            AND i.trade_date BETWEEN :start_date AND :end_date
+          ORDER BY i.trade_date,i.l2_code,c.as_of_trade_date DESC NULLS LAST
+        ), etf_inputs AS (
+          SELECT trade_date,primary_l2_code AS l2_code,
+                 SUM(net_inflow_20d) AS etf_net_inflow_20d,
+                 SUM(total_size) AS etf_aum
+          FROM processed_mainline_etf_daily
+          WHERE factor_version=:factor_version AND primary_l2_code IS NOT NULL
+            AND trade_date BETWEEN :start_date AND :end_date
+          GROUP BY trade_date,primary_l2_code
+        ), inputs AS (
+          SELECT i.trade_date,i.l2_code,s.avg_amount_20d,s.avg_amount_60d,
+                 s.top5_amount_share,s.revenue_acceleration,s.profit_acceleration,
+                 c.holding_value,c.fund_count,c.holding_change,c.concentration,c.disclosure_coverage,
+                 e.etf_net_inflow_20d,e.etf_aum
+          FROM processed_mainline_industry_daily i
+          LEFT JOIN stock_inputs s USING(trade_date,l2_code)
+          LEFT JOIN crowding c USING(trade_date,l2_code)
+          LEFT JOIN etf_inputs e USING(trade_date,l2_code)
+          WHERE i.factor_version=:factor_version
+            AND i.trade_date BETWEEN :start_date AND :end_date
+        )
+        UPDATE processed_mainline_industry_daily target SET
+          avg_amount_20d=inputs.avg_amount_20d,
+          avg_amount_60d=inputs.avg_amount_60d,
+          amount_ratio_20_60=inputs.avg_amount_20d/NULLIF(inputs.avg_amount_60d,0),
+          top5_amount_share=inputs.top5_amount_share,
+          revenue_acceleration=inputs.revenue_acceleration,
+          profit_acceleration=inputs.profit_acceleration,
+          fund_holding_value=inputs.holding_value,
+          fund_count=inputs.fund_count,
+          fund_holding_change=inputs.holding_change,
+          fund_concentration=inputs.concentration,
+          disclosure_coverage=inputs.disclosure_coverage,
+          etf_net_inflow_20d=inputs.etf_net_inflow_20d,
+          etf_aum=inputs.etf_aum,
+          crowding_input=inputs.concentration,
+          data_quality=target.data_quality || JSONB_BUILD_OBJECT(
+            'financial_acceleration_pit',inputs.revenue_acceleration IS NOT NULL,
+            'fund_crowding_pit',inputs.holding_value IS NOT NULL,
+            'etf_aggregate_available',inputs.etf_aum IS NOT NULL
+          ),
+          source_watermark=target.source_watermark || JSONB_BUILD_OBJECT(
+            'fund_crowding',CASE WHEN inputs.holding_value IS NOT NULL THEN target.trade_date ELSE NULL END,
+            'etf_daily',CASE WHEN inputs.etf_aum IS NOT NULL THEN target.trade_date ELSE NULL END
+          ),
+          processed_at=NOW()
+        FROM inputs
+        WHERE target.factor_version=:factor_version
+          AND target.trade_date=inputs.trade_date AND target.l2_code=inputs.l2_code
+        """
+        return await self._execute(
+            sql,
+            {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION},
+        )
 
     async def _materialize_etf(self, start: date, end: date) -> int:
         sql = """
         WITH base AS (
           SELECT d.trade_date,d.ts_code,b.index_code,b.list_date,d.close AS raw_close,
                  d.close*COALESCE(a.adj_factor,1) AS adj_close,
-                 d.amount,s.total_share,s.total_size,s.nav,
+                 d.amount * 1000 AS amount,
+                 s.total_share * 10000 AS total_share,
+                 s.total_size * 10000 AS total_size,s.nav,
                  id.close AS index_close,
                  id.close/NULLIF(LAG(id.close) OVER(PARTITION BY id.ts_code ORDER BY id.trade_date),0)-1 AS idx_r1
           FROM fund_daily d JOIN etf_basic b USING(ts_code)
@@ -814,20 +1041,24 @@ class MainlinePreprocessor:
             MAX(amount) OVER(w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS amax,
             AVG(amount) OVER(w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS amount20,
             AVG(amount) OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS amount60,
-            AVG(adj_close) OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60
+            AVG(adj_close) OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60,
+            ARRAY_AGG(ABS(raw_close/NULLIF(nav,0)-1)) FILTER(WHERE nav IS NOT NULL)
+              OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS premium_window
           FROM base WINDOW w AS(PARTITION BY ts_code ORDER BY trade_date)
         ), z AS (
           SELECT f.*,
             STDDEV_SAMP(r1) OVER(PARTITION BY ts_code ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS vol20,
-            STDDEV_SAMP(r1-idx_r1) OVER(PARTITION BY ts_code ORDER BY trade_date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS te60,
-            STDDEV_SAMP(r1-idx_r1) OVER(PARTITION BY ts_code ORDER BY trade_date ROWS BETWEEN 119 PRECEDING AND CURRENT ROW) AS te120
+            STDDEV_SAMP(r1-idx_r1) OVER(PARTITION BY ts_code ORDER BY trade_date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) * SQRT(252) AS te60,
+            STDDEV_SAMP(r1-idx_r1) OVER(PARTITION BY ts_code ORDER BY trade_date ROWS BETWEEN 119 PRECEDING AND CURRENT ROW) * SQRT(252) AS te120,
+            (SELECT PERCENTILE_CONT(0.95) WITHIN GROUP(ORDER BY premium)
+               FROM UNNEST(f.premium_window) premium) AS premium_p95_60d
           FROM f
         )
         INSERT INTO processed_mainline_etf_daily (
           factor_version,trade_date,as_of_trade_date,usable_from_trade_date,ts_code,index_code,list_date,benchmark_available,data_complete,is_tradable,is_eligible,exclusion_reason,exclusion_reasons,
           adj_close,ma60_gap,return_20d,return_60d,return_120d,volatility_20d,amount,avg_amount_20d,avg_amount_60d,amount_ratio_20_60,amount_pct_20d,
           total_share,total_size,share_change_5d,share_change_20d,net_inflow_5d,net_inflow_20d,tracking_error_60d,tracking_error_120d,
-          premium_discount,data_quality,source_watermark,source_asof
+          premium_discount,premium_discount_abs_p95_60d,data_quality,source_watermark,source_asof
         )
         SELECT :factor_version,trade_date,trade_date,
           COALESCE((SELECT MIN(tc.cal_date::date) FROM trade_cal tc WHERE tc.exchange='SSE' AND tc.is_open=1 AND tc.cal_date::date>z.trade_date),z.trade_date+1),
@@ -839,7 +1070,8 @@ class MainlinePreprocessor:
                WHEN list_date IS NULL THEN 'missing_list_date' WHEN total_size IS NULL THEN 'missing_size' WHEN total_share IS NULL THEN 'missing_share' WHEN nav IS NULL THEN 'missing_nav' WHEN COALESCE(amount,0)<=0 THEN 'not_tradable' END,
           ARRAY_REMOVE(ARRAY[CASE WHEN index_code IS NULL THEN 'missing_index_code' END,CASE WHEN index_close IS NULL THEN 'missing_benchmark_daily' END,CASE WHEN list_date IS NULL THEN 'missing_list_date' END,CASE WHEN total_size IS NULL THEN 'missing_size' END,CASE WHEN total_share IS NULL THEN 'missing_share' END,CASE WHEN nav IS NULL THEN 'missing_nav' END,CASE WHEN COALESCE(amount,0)<=0 THEN 'not_tradable' END],NULL),
           adj_close,adj_close/NULLIF(ma60,0)-1,r20,r60,r120,vol20,amount,amount20,amount60,amount20/NULLIF(amount60,0),(amount-amin)/NULLIF(amax-amin,0),
-          total_share,total_size,share5,share20,share5*nav,share20*nav,te60,te120,raw_close/NULLIF(nav,0)-1,
+          total_share,total_size,share5,share20,share5*nav,share20*nav,te60,te120,
+          raw_close/NULLIF(nav,0)-1,premium_p95_60d,
           jsonb_build_object('benchmark_available',index_close IS NOT NULL,'size_available',total_size IS NOT NULL),jsonb_build_object('fund_daily',trade_date,'share_size',trade_date),NOW()
         FROM z WHERE trade_date BETWEEN :start_date AND :end_date
         ON CONFLICT(factor_version,ts_code,trade_date) DO UPDATE SET
@@ -854,7 +1086,9 @@ class MainlinePreprocessor:
           share_change_20d=EXCLUDED.share_change_20d,
           net_inflow_5d=EXCLUDED.net_inflow_5d,net_inflow_20d=EXCLUDED.net_inflow_20d,
           tracking_error_60d=EXCLUDED.tracking_error_60d,tracking_error_120d=EXCLUDED.tracking_error_120d,
-          premium_discount=EXCLUDED.premium_discount,data_quality=EXCLUDED.data_quality,source_watermark=EXCLUDED.source_watermark,
+          premium_discount=EXCLUDED.premium_discount,
+          premium_discount_abs_p95_60d=EXCLUDED.premium_discount_abs_p95_60d,
+          data_quality=EXCLUDED.data_quality,source_watermark=EXCLUDED.source_watermark,
           source_asof=EXCLUDED.source_asof,processed_at=NOW()
         """
         return await self._execute(sql, {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION})
@@ -874,7 +1108,7 @@ class MainlinePreprocessor:
             AND updated_at < (CAST(:end_date AS date) + INTERVAL '1 day')
         ), agg AS (
           SELECT end_date AS report_period,MAX(ann_date) AS available_date,symbol AS ts_code,
-                 COUNT(DISTINCT ts_code) AS fund_count,SUM(mkv) AS holding_value,
+                 COUNT(DISTINCT ts_code) AS fund_count,SUM(mkv) * 10000 AS holding_value,
                  SUM(stk_float_ratio) AS holding_ratio
           FROM fund_portfolio
           WHERE end_date <= :end_date
@@ -917,7 +1151,7 @@ class MainlinePreprocessor:
         """
         sql = """
         WITH weights AS (
-          SELECT eb.ts_code, iw.trade_date AS weight_date, iw.con_code, iw.weight
+          SELECT eb.ts_code, iw.trade_date AS weight_date, iw.con_code, iw.weight / 100.0 AS weight
           FROM etf_basic eb JOIN index_weight iw ON iw.index_code=eb.index_code
           WHERE iw.trade_date BETWEEN :start_date AND :end_date
         ), mapped AS (
@@ -947,15 +1181,56 @@ class MainlinePreprocessor:
         """
         count = await self._execute(sql, {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION})
         summary = """
-        WITH latest AS (
-          SELECT DISTINCT ON (e.ts_code,e.as_of_trade_date) e.ts_code,e.as_of_trade_date,e.l2_code,e.weight,e.exposure_hhi
-          FROM processed_mainline_etf_exposure_monthly e
-          WHERE e.factor_version=:factor_version
-            AND e.as_of_trade_date BETWEEN :start_date AND :end_date
-          ORDER BY e.ts_code,e.as_of_trade_date,e.weight DESC
-        ) UPDATE processed_mainline_etf_daily d SET primary_l2_code=latest.l2_code,primary_l2_weight=latest.weight,
-          exposure_hhi=latest.exposure_hhi,processed_at=NOW()
-          FROM latest WHERE d.factor_version=:factor_version AND d.ts_code=latest.ts_code AND d.trade_date=latest.as_of_trade_date
+        WITH latest_date AS (
+          SELECT DISTINCT ON (d.ts_code,d.trade_date)
+                 d.ts_code,d.trade_date,e.as_of_trade_date
+          FROM processed_mainline_etf_daily d
+          LEFT JOIN processed_mainline_etf_exposure_monthly e
+            ON e.factor_version=d.factor_version AND e.ts_code=d.ts_code
+           AND e.as_of_trade_date<=d.trade_date
+           AND e.usable_from_trade_date<=d.trade_date
+          WHERE d.factor_version=:factor_version
+            AND d.trade_date BETWEEN :start_date AND :end_date
+          ORDER BY d.ts_code,d.trade_date,e.as_of_trade_date DESC NULLS LAST
+        ), exposure AS (
+          SELECT ld.ts_code,ld.trade_date,
+                 (ARRAY_AGG(e.l2_code ORDER BY e.weight DESC))[1] AS primary_l2_code,
+                 (ARRAY_AGG(e.weight ORDER BY e.weight DESC))[1] AS primary_l2_weight,
+                 MAX(e.exposure_hhi) AS exposure_hhi,
+                 COALESCE(
+                   JSONB_AGG(
+                     JSONB_BUILD_OBJECT('l2_code',e.l2_code,'weight',e.weight)
+                     ORDER BY e.weight DESC
+                   ) FILTER(WHERE e.top5_rank IS NOT NULL),
+                   '[]'::jsonb
+                 ) AS top5_l2_exposure
+          FROM latest_date ld
+          LEFT JOIN processed_mainline_etf_exposure_monthly e
+            ON e.factor_version=:factor_version AND e.ts_code=ld.ts_code
+           AND e.as_of_trade_date=ld.as_of_trade_date
+          GROUP BY ld.ts_code,ld.trade_date
+        )
+        UPDATE processed_mainline_etf_daily d SET
+          primary_l2_code=exposure.primary_l2_code,
+          primary_l2_weight=exposure.primary_l2_weight,
+          exposure_hhi=exposure.exposure_hhi,
+          top5_l2_exposure=exposure.top5_l2_exposure,
+          is_eligible=d.is_eligible AND exposure.primary_l2_code IS NOT NULL,
+          exclusion_reason=CASE
+            WHEN exposure.primary_l2_code IS NULL THEN 'missing_pit_industry_exposure'
+            ELSE d.exclusion_reason END,
+          exclusion_reasons=CASE
+            WHEN exposure.primary_l2_code IS NULL
+              THEN ARRAY_APPEND(ARRAY_REMOVE(d.exclusion_reasons,'missing_pit_industry_exposure'),'missing_pit_industry_exposure')
+            ELSE ARRAY_REMOVE(d.exclusion_reasons,'missing_pit_industry_exposure') END,
+          data_quality=d.data_quality || JSONB_BUILD_OBJECT(
+            'pit_exposure_available',exposure.primary_l2_code IS NOT NULL,
+            'exposure_carried_forward',TRUE
+          ),
+          processed_at=NOW()
+        FROM exposure
+        WHERE d.factor_version=:factor_version AND d.ts_code=exposure.ts_code
+          AND d.trade_date=exposure.trade_date
         """
         await self._execute(
             summary,
@@ -982,7 +1257,7 @@ class MainlinePreprocessor:
             AND updated_at < (CAST(:end_date AS date) + INTERVAL '1 day')
         ), positions AS (
           SELECT fp.end_date AS report_period,MAX(fp.ann_date) OVER(PARTITION BY fp.end_date) AS available_date,
-            fp.ts_code AS fund_code, sm.l2_code, fp.mkv
+            fp.ts_code AS fund_code, sm.l2_code, fp.mkv * 10000 AS mkv
           FROM fund_portfolio fp JOIN LATERAL (
             SELECT m.l2_code FROM sw_industry_member m
             JOIN sw_industry_classify ic ON ic.index_code=m.l2_code AND ic.level='L2' AND ic.is_pub='1'
@@ -1044,6 +1319,8 @@ class MainlinePreprocessor:
         scores: List[Dict[str, Any]] = []
         for month_end, frame in source.groupby(source["trade_date"].dt.to_period("M")):
             cutoff = frame["trade_date"].max()
+            if not (start <= cutoff.date() <= end):
+                continue
             history = source[source["trade_date"] <= cutoff].tail(756 * 124)
             relation, score = calculate_leadlag_lasso(history, cutoff)
             usable = cutoff.date() + timedelta(days=1)
@@ -1075,98 +1352,197 @@ class MainlinePreprocessor:
         return {"leadlag_monthly": len(rows), "leadlag_score_monthly": len(scores)}
 
     async def _refresh_status(self, partition_date: date) -> int:
+        """Compatibility wrapper used by incremental jobs and existing callers."""
+        return await self._refresh_status_range(partition_date, partition_date)
+
+    async def _refresh_status_range(self, start: date, end: date) -> int:
+        """Build Gate 0 evidence for every completed market day in one SQL pass."""
         sql = """
-        WITH completed_day AS (
-          SELECT MAX(trade_date) AS partition_date FROM processed_mainline_market_daily
-          WHERE factor_version=:factor_version AND trade_date<=:requested_date
+        WITH completed_days AS (
+          SELECT trade_date AS partition_date
+          FROM processed_mainline_market_daily
+          WHERE factor_version=:factor_version AND trade_date BETWEEN :start_date AND :end_date
         ), summaries AS (
-          SELECT 'stock_daily'::varchar AS dataset,COUNT(*)::bigint AS row_count,
-            COUNT(*) FILTER(WHERE is_stock_candidate_eligible)::bigint AS eligible_count,
-            COUNT(*) FILTER(WHERE NOT is_stock_candidate_eligible)::bigint AS excluded_count,
-            MAX(trade_date) AS max_source_date,
-            COUNT(*) FILTER(WHERE l2_code IS NOT NULL)::numeric/NULLIF(COUNT(*),0) AS completeness,
-            ARRAY[]::text[] AS blockers, jsonb_build_object('industry_level','SW2021_L2','strict_point_in_time',true) AS details
-          FROM processed_mainline_stock_daily,completed_day WHERE factor_version=:factor_version AND trade_date=completed_day.partition_date
+          SELECT s.trade_date AS partition_date,'stock_daily'::varchar AS dataset,
+            COUNT(*)::bigint AS row_count,
+            COUNT(*) FILTER(WHERE s.is_stock_candidate_eligible)::bigint AS eligible_count,
+            COUNT(*) FILTER(WHERE NOT s.is_stock_candidate_eligible)::bigint AS excluded_count,
+            MAX(s.trade_date) AS max_source_date,
+            COUNT(*) FILTER(WHERE s.l2_code IS NOT NULL)::numeric/NULLIF(COUNT(*),0) AS completeness,
+            ARRAY_REMOVE(ARRAY[
+              CASE WHEN COUNT(*)=0 THEN 'missing_stock_daily' END,
+              CASE WHEN COUNT(*)>0 AND COUNT(*) FILTER(WHERE s.l2_code IS NOT NULL)::numeric/COUNT(*)<0.90
+                   THEN 'stock_industry_mapping_below_90pct' END
+            ],NULL)::text[] AS blockers,
+            JSONB_BUILD_OBJECT(
+              'industry_level','SW2021_L2','strict_point_in_time',TRUE,
+              'moneyflow_coverage',COUNT(*) FILTER(WHERE s.moneyflow_available)::numeric/NULLIF(COUNT(*),0)
+            ) AS details
+          FROM processed_mainline_stock_daily s
+          WHERE s.factor_version=:factor_version AND s.trade_date BETWEEN :start_date AND :end_date
+          GROUP BY s.trade_date
           UNION ALL
-          SELECT 'market_daily',COUNT(*)::bigint,NULL::bigint,NULL::bigint,MAX(trade_date),
-            CASE WHEN COUNT(*)>0 THEN 1::numeric ELSE 0::numeric END,
-            CASE WHEN COUNT(*)=0 THEN ARRAY['missing_market']::text[] ELSE ARRAY[]::text[] END,jsonb_build_object('benchmark',CAST(:benchmark AS text))
-          FROM processed_mainline_market_daily,completed_day WHERE factor_version=:factor_version AND trade_date=completed_day.partition_date
+          SELECT m.trade_date,'market_daily',COUNT(*)::bigint,NULL::bigint,NULL::bigint,MAX(m.trade_date),
+            COUNT(*) FILTER(WHERE m.benchmark_close IS NOT NULL AND m.benchmark_ma200_gap IS NOT NULL
+              AND m.breadth_above_ma60 IS NOT NULL AND m.breadth_above_ma120 IS NOT NULL
+              AND m.breadth_denominator IS NOT NULL AND m.effective_stock_count IS NOT NULL)::numeric/NULLIF(COUNT(*),0),
+            ARRAY_REMOVE(ARRAY[
+              CASE WHEN COUNT(*)=0 THEN 'missing_market' END,
+              CASE WHEN COUNT(*)>0 AND COUNT(*) FILTER(WHERE m.benchmark_close IS NOT NULL
+                AND m.benchmark_ma200_gap IS NOT NULL AND m.breadth_above_ma60 IS NOT NULL
+                AND m.breadth_above_ma120 IS NOT NULL AND m.breadth_denominator IS NOT NULL
+                AND m.effective_stock_count IS NOT NULL)<>COUNT(*) THEN 'market_core_fields_incomplete' END
+            ],NULL)::text[],
+            JSONB_BUILD_OBJECT('benchmark',CAST(:benchmark AS text),'required_coverage',1.0)
+          FROM processed_mainline_market_daily m
+          WHERE m.factor_version=:factor_version AND m.trade_date BETWEEN :start_date AND :end_date
+          GROUP BY m.trade_date
           UNION ALL
-          SELECT 'industry_daily',COUNT(*)::bigint,NULL::bigint,NULL::bigint,MAX(trade_date),
-            COUNT(*)::numeric/124,
-            CASE WHEN COUNT(*)=124 THEN ARRAY[]::text[] ELSE ARRAY['published_sw2021_l2_not_124']::text[] END,jsonb_build_object('industry_level','SW2021_L2','expected_count',124)
-          FROM processed_mainline_industry_daily,completed_day WHERE factor_version=:factor_version AND trade_date=completed_day.partition_date
+          SELECT i.trade_date,'industry_daily',COUNT(*)::bigint,NULL::bigint,NULL::bigint,MAX(i.trade_date),
+            COUNT(*) FILTER(WHERE i.index_close IS NOT NULL AND i.relative_return_20d IS NOT NULL
+              AND i.relative_return_60d IS NOT NULL AND i.relative_return_120d IS NOT NULL
+              AND i.breadth_above_ma60 IS NOT NULL)::numeric/124,
+            ARRAY_REMOVE(ARRAY[
+              CASE WHEN COUNT(*)<>124 THEN 'published_sw2021_l2_not_124' END,
+              CASE WHEN COUNT(*) FILTER(WHERE i.index_close IS NOT NULL AND i.relative_return_20d IS NOT NULL
+                AND i.relative_return_60d IS NOT NULL AND i.relative_return_120d IS NOT NULL
+                AND i.breadth_above_ma60 IS NOT NULL)<>124 THEN 'industry_core_fields_incomplete' END,
+              CASE WHEN COUNT(*) FILTER(WHERE i.revenue_acceleration IS NOT NULL)::numeric/NULLIF(COUNT(*),0)<0.90
+                THEN 'industry_economic_coverage_below_90pct' END
+            ],NULL)::text[],
+            JSONB_BUILD_OBJECT(
+              'industry_level','SW2021_L2','expected_count',124,
+              'economic_coverage',COUNT(*) FILTER(WHERE i.revenue_acceleration IS NOT NULL)::numeric/NULLIF(COUNT(*),0),
+              'moneyflow_optional',TRUE
+            )
+          FROM processed_mainline_industry_daily i
+          WHERE i.factor_version=:factor_version AND i.trade_date BETWEEN :start_date AND :end_date
+          GROUP BY i.trade_date
           UNION ALL
-          SELECT 'etf_daily',COUNT(*)::bigint,
-            COUNT(*) FILTER(WHERE is_eligible)::bigint,
-            COUNT(*) FILTER(WHERE NOT is_eligible)::bigint,MAX(trade_date),
-            COUNT(*) FILTER(WHERE benchmark_available)::numeric/NULLIF(COUNT(*),0),
-            CASE WHEN COUNT(*)=0 THEN ARRAY['missing_etf_daily']::text[] ELSE ARRAY[]::text[] END,jsonb_build_object('benchmark_proxy_allowed',false)
-          FROM processed_mainline_etf_daily,completed_day WHERE factor_version=:factor_version AND trade_date=completed_day.partition_date
+          SELECT e.trade_date,'etf_daily',COUNT(*)::bigint,
+            COUNT(*) FILTER(WHERE e.data_complete AND e.is_tradable AND e.primary_l2_code IS NOT NULL
+              AND e.primary_l2_weight>=0.50 AND e.avg_amount_20d>=30000000
+              AND e.total_size>=500000000 AND e.premium_discount_abs_p95_60d<=0.02
+              AND e.tracking_error_60d<=0.03)::bigint,
+            COUNT(*) FILTER(WHERE NOT e.is_eligible)::bigint,MAX(e.trade_date),
+            COUNT(*) FILTER(WHERE e.data_complete AND e.benchmark_available AND e.is_tradable)::numeric/
+              NULLIF(COUNT(*) FILTER(WHERE e.benchmark_available AND e.is_tradable),0),
+            ARRAY_REMOVE(ARRAY[
+              CASE WHEN COUNT(*)=0 THEN 'missing_etf_daily' END,
+              CASE WHEN COUNT(*) FILTER(WHERE e.data_complete AND e.benchmark_available AND e.is_tradable)::numeric/
+                NULLIF(COUNT(*) FILTER(WHERE e.benchmark_available AND e.is_tradable),0)<0.95
+                THEN 'etf_size_share_nav_coverage_below_95pct' END,
+              CASE WHEN COUNT(*) FILTER(WHERE e.data_complete AND e.benchmark_available AND e.is_tradable
+                AND e.primary_l2_code IS NOT NULL AND e.primary_l2_weight>=0.50
+                AND e.avg_amount_20d>=30000000 AND e.total_size>=500000000
+                AND e.premium_discount_abs_p95_60d<=0.02 AND e.tracking_error_60d<=0.03)<3
+                THEN 'etf_basic_whitelist_below_3' END,
+              CASE WHEN COUNT(*) FILTER(WHERE e.data_complete AND e.benchmark_available AND e.is_tradable
+                AND e.primary_l2_code IS NULL)>0 THEN 'selectable_etf_missing_pit_exposure' END
+            ],NULL)::text[],
+            JSONB_BUILD_OBJECT(
+              'benchmark_proxy_allowed',FALSE,
+              'size_share_nav_coverage',COUNT(*) FILTER(WHERE e.data_complete AND e.benchmark_available AND e.is_tradable)::numeric/
+                NULLIF(COUNT(*) FILTER(WHERE e.benchmark_available AND e.is_tradable),0),
+              'pit_exposure_coverage',COUNT(*) FILTER(WHERE e.primary_l2_code IS NOT NULL
+                AND e.data_complete AND e.benchmark_available AND e.is_tradable)::numeric/
+                NULLIF(COUNT(*) FILTER(WHERE e.data_complete AND e.benchmark_available AND e.is_tradable),0),
+              'thresholds',JSONB_BUILD_OBJECT('amount_20d_cny',30000000,'aum_cny',500000000,
+                'premium_abs_p95_60d',0.02,'tracking_error_60d',0.03,'primary_l2_weight',0.50)
+            )
+          FROM processed_mainline_etf_daily e
+          WHERE e.factor_version=:factor_version AND e.trade_date BETWEEN :start_date AND :end_date
+          GROUP BY e.trade_date
+        ), complete_summaries AS (
+          SELECT d.partition_date,k.dataset,
+                 COALESCE(s.row_count,0) AS row_count,s.eligible_count,s.excluded_count,
+                 s.max_source_date,COALESCE(s.completeness,0) AS completeness,
+                 COALESCE(s.blockers,ARRAY['missing_'||k.dataset]::text[]) AS blockers,
+                 COALESCE(s.details,'{}'::jsonb) AS details
+          FROM completed_days d
+          CROSS JOIN (VALUES ('stock_daily'),('market_daily'),('industry_daily'),('etf_daily')) k(dataset)
+          LEFT JOIN summaries s ON s.partition_date=d.partition_date AND s.dataset=k.dataset
         )
         INSERT INTO processed_mainline_data_status(
           factor_version,dataset,partition_date,row_count,eligible_count,excluded_count,
           max_source_date,completeness,status,blocker_reasons,details,source_watermark,checked_at
         )
-        SELECT :factor_version,dataset,completed_day.partition_date,row_count,eligible_count,excluded_count,
+        SELECT :factor_version,dataset,partition_date,row_count,eligible_count,excluded_count,
           max_source_date,completeness,
-          CASE WHEN max_source_date>=completed_day.partition_date AND cardinality(blockers)=0 THEN 'ready' ELSE 'blocked' END,
-          blockers,details,jsonb_build_object('as_of_trade_date',completed_day.partition_date),NOW() FROM summaries CROSS JOIN completed_day
-        WHERE completed_day.partition_date IS NOT NULL
+          CASE WHEN max_source_date>=partition_date AND CARDINALITY(blockers)=0 THEN 'ready' ELSE 'blocked' END,
+          blockers,details,JSONB_BUILD_OBJECT('as_of_trade_date',partition_date),NOW()
+        FROM complete_summaries
         ON CONFLICT(factor_version,dataset,partition_date) DO UPDATE SET
           row_count=EXCLUDED.row_count,eligible_count=EXCLUDED.eligible_count,
-          excluded_count=EXCLUDED.excluded_count,max_source_date=EXCLUDED.max_source_date,completeness=EXCLUDED.completeness,status=EXCLUDED.status,
-          blocker_reasons=EXCLUDED.blocker_reasons,details=EXCLUDED.details,source_watermark=EXCLUDED.source_watermark,checked_at=NOW()
+          excluded_count=EXCLUDED.excluded_count,max_source_date=EXCLUDED.max_source_date,
+          completeness=EXCLUDED.completeness,status=EXCLUDED.status,
+          blocker_reasons=EXCLUDED.blocker_reasons,details=EXCLUDED.details,
+          source_watermark=EXCLUDED.source_watermark,checked_at=NOW()
         """
-        return await self._execute(
-            sql, {"requested_date": partition_date, "benchmark": self.BENCHMARK_CODE, "factor_version": MAINLINE_FACTOR_VERSION}
-        )
+        return await self._execute(sql, {
+            "start_date": start,
+            "end_date": end,
+            "benchmark": self.BENCHMARK_CODE,
+            "factor_version": MAINLINE_FACTOR_VERSION,
+        })
 
     async def _publish_snapshot(self, requested_date: date) -> int:
-        """Publish only complete, auditable factors for the latest trading day."""
-        statuses = await self._read_dataframe(
-            """SELECT dataset,partition_date,completeness,status,blocker_reasons,details
-                FROM processed_mainline_data_status
-                WHERE factor_version=:factor_version AND partition_date<=:requested_date ORDER BY partition_date DESC""",
-            {"factor_version": MAINLINE_FACTOR_VERSION, "requested_date": requested_date},
+        """Compatibility wrapper that publishes one observation date."""
+        return await self._publish_snapshots(requested_date, requested_date)
+
+    async def _publish_snapshots(self, start: date, end: date) -> int:
+        """Publish immutable ready/blocked manifests for a historical range."""
+        formula_hash = sha256(
+            b"mainline-pit-v2:quarterly-acceleration,cny-units,pit-etf-exposure,strict-gate"
+        ).hexdigest()
+        sql = """
+        WITH days AS (
+          SELECT partition_date,
+                 COUNT(*) AS dataset_count,
+                 BOOL_AND(status='ready') AS all_ready,
+                 JSONB_OBJECT_AGG(dataset,completeness) AS coverage
+          FROM processed_mainline_data_status
+          WHERE factor_version=:factor_version AND partition_date BETWEEN :start_date AND :end_date
+          GROUP BY partition_date
+        ), manifest AS (
+          SELECT d.*,
+                 ARRAY(
+                   SELECT DISTINCT blocker
+                   FROM processed_mainline_data_status s
+                   CROSS JOIN LATERAL UNNEST(s.blocker_reasons) blocker
+                   WHERE s.factor_version=:factor_version AND s.partition_date=d.partition_date
+                   ORDER BY blocker
+                 )::text[] AS blockers
+          FROM days d
         )
-        if statuses.empty:
-            return 0
-        as_of = pd.Timestamp(statuses.iloc[0]["partition_date"]).date()
-        latest = statuses[statuses["partition_date"] == statuses.iloc[0]["partition_date"]]
-        blockers = [item for value in latest["blocker_reasons"] for item in (value or [])]
-        is_ready = bool((latest["status"] == "ready").all()) and not blockers
-        formula_hash = sha256(b"mainline-pit-v1:daily,crowding,leadlag,publish").hexdigest()
-        statement = """
-          INSERT INTO processed_mainline_snapshot_manifest(
-            factor_version,snapshot_id,as_of_trade_date,usable_from_trade_date,status,formula_hash,input_watermark,coverage,blocker_reasons,published_at
-          ) VALUES (:factor_version,:snapshot_id,:as_of_trade_date,
-            COALESCE((SELECT MIN(tc.cal_date::date) FROM trade_cal tc WHERE tc.exchange='SSE' AND tc.is_open=1 AND tc.cal_date::date>:as_of_trade_date),:as_of_trade_date+1),
-            CAST(:status AS VARCHAR(16)),:formula_hash,CAST(:watermark AS JSONB),CAST(:coverage AS JSONB),:blockers,
-            CASE WHEN CAST(:status AS VARCHAR(16))='ready' THEN NOW() END)
-          ON CONFLICT(factor_version,as_of_trade_date) DO UPDATE SET
-            snapshot_id=EXCLUDED.snapshot_id,
-            usable_from_trade_date=EXCLUDED.usable_from_trade_date,
-            status=EXCLUDED.status,
-            formula_hash=EXCLUDED.formula_hash,
-            input_watermark=EXCLUDED.input_watermark,
-            coverage=EXCLUDED.coverage,
-            blocker_reasons=EXCLUDED.blocker_reasons,
-            published_at=EXCLUDED.published_at
+        INSERT INTO processed_mainline_snapshot_manifest(
+          factor_version,snapshot_id,as_of_trade_date,usable_from_trade_date,status,
+          formula_hash,input_watermark,coverage,blocker_reasons,published_at
+        )
+        SELECT :factor_version,
+          MD5(CAST(:factor_version AS text)||':'||partition_date::text)::uuid,
+          partition_date,
+          COALESCE((SELECT MIN(tc.cal_date::date) FROM trade_cal tc
+                    WHERE tc.exchange='SSE' AND tc.is_open=1 AND tc.cal_date::date>partition_date),partition_date+1),
+          CASE WHEN dataset_count=4 AND all_ready AND CARDINALITY(blockers)=0 THEN 'ready' ELSE 'blocked' END,
+          :formula_hash,JSONB_BUILD_OBJECT('market',partition_date),coverage,blockers,
+          CASE WHEN dataset_count=4 AND all_ready AND CARDINALITY(blockers)=0 THEN NOW() END
+        FROM manifest
+        ON CONFLICT(factor_version,as_of_trade_date) DO UPDATE SET
+          usable_from_trade_date=EXCLUDED.usable_from_trade_date,
+          status=EXCLUDED.status,
+          formula_hash=EXCLUDED.formula_hash,
+          input_watermark=EXCLUDED.input_watermark,
+          coverage=EXCLUDED.coverage,
+          blocker_reasons=EXCLUDED.blocker_reasons,
+          published_at=EXCLUDED.published_at
+        WHERE processed_mainline_snapshot_manifest.status<>'ready'
         """
-        coverage = {
-            str(item["dataset"]): float(item["completeness"])
-            if pd.notna(item["completeness"])
-            else 0.0
-            for item in latest[["dataset", "completeness"]].to_dict("records")
-        }
-        return await self._execute(statement, {
-            "factor_version": MAINLINE_FACTOR_VERSION, "snapshot_id": str(uuid4()), "as_of_trade_date": as_of,
-            "status": "ready" if is_ready else "blocked", "formula_hash": formula_hash,
-            "watermark": json.dumps({"market": as_of.isoformat()}),
-            "coverage": json.dumps(coverage),
-            "blockers": sorted(set(blockers)),
+        return await self._execute(sql, {
+            "factor_version": MAINLINE_FACTOR_VERSION,
+            "start_date": start,
+            "end_date": end,
+            "formula_hash": formula_hash,
         })
 
 
