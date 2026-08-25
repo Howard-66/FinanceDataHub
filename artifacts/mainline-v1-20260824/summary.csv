@@ -1,0 +1,10 @@
+table_name,chunks,approx_rows
+processed_mainline_etf_daily,760,1553014
+processed_mainline_etf_exposure_monthly,203,2693393
+processed_mainline_fund_crowding_monthly,533,186902
+processed_mainline_industry_crowding_monthly,515,13991
+processed_mainline_industry_daily,964,539659
+processed_mainline_leadlag_monthly,116,1698104
+processed_mainline_leadlag_score_monthly,116,14082
+processed_mainline_market_daily,968,4531
+processed_mainline_stock_daily,974,22557680

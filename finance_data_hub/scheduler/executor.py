@@ -535,6 +535,9 @@ class TaskExecutor:
             first_of_month = date.today().replace(day=1)
             return (first_of_month - timedelta(days=1)).replace(day=1).strftime("%Y-%m-%d")
 
+        if normalized == "current_month_start":
+            return date.today().replace(day=1).strftime("%Y-%m-%d")
+
         placeholder_match = re.fullmatch(
             r"(latest|previous_trade_date|today)(?:([+-])(\d+)(bd|d))?",
             normalized,

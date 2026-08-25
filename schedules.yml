@@ -1084,38 +1084,46 @@ jobs:
     category: mainline
     resource_group: mainline_preprocess
     schedule: {type: cron, day_of_week: "mon-fri", hour: 22, minute: 20}
-    # 每日只回看近期修订窗口；各物化 SQL 自带 120~420 日滚动窗口。
-    # stock/market/ETF 先更新；行业在 crowding 披露数据完成后只计算一次。
-    params: {all: true, market: CN, stage: "stock,market,etf", start_date: "latest-10bd", end_date: latest}
-    # index_weight 是月度数据，不能作为日任务的“同一调度日”依赖；ETF
-    # 份额/规模则必须等待 20:00 的收盘后补抓，而非早盘快照。
+    # PIT 桥接先按事件水位重建；输出仅覆盖最近修订窗口，窗口指标自行读取预热数据。
+    params: {all: true, market: CN, stage: "pit,stock,market,etf", start_date: "latest-10bd", end_date: latest}
     depends_on: [technical_preprocess, fundamental_preprocess, industry_valuation_preprocess, sw_daily_update, index_daily_update, fund_daily_update, fund_adj_update, etf_share_size_catchup, stock_st_update, stock_suspend_update, stock_dividend_update, stock_repurchase_update, margin_detail_update, moneyflow_hsgt_update, moneyflow_update]
     retry: {max_retries: 2, delay: 900}
 
-  # 披露数据按公告可用日进入因子表。仅重算近期写入 fund_portfolio 的报告期，
-  # 不把报告期当成可交易日，也不在日常任务中回放完整历史。
   mainline_crowding_preprocess:
     enabled: true
     type: preprocess
     category: mainline
     resource_group: mainline_preprocess
-    # 日处理实测约 55 分钟，预留十分钟后再触发；resource_group 仍作为超时保护。
-    schedule: {type: cron, day_of_week: "mon-fri", hour: 23, minute: 25}
-    params: {all: true, market: CN, stage: "crowding,industry,publish", start_date: "latest-10bd", end_date: latest, source_updated_since: "latest-10bd"}
+    # 给日事实层预留25分钟；只聚合发生写入的报告期，行业只计算一次。
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 22, minute: 45}
+    params: {all: true, market: CN, stage: "crowding,industry", start_date: "latest-10bd", end_date: latest, source_updated_since: "latest-10bd"}
     depends_on: [fund_portfolio_update, mainline_preprocess]
     retry: {max_retries: 2, delay: 900}
 
-  # 每月首个周一在日处理和拥挤度处理之后运行：结束日固定为上月最后交易日，
-  # 避免跨日 pending 状态以及与日常主线任务争抢资源。
+  # 每晚先做月末判定；非月末在读取训练矩阵前直接跳过。月末当晚完成模型，
+  # 避免原先次月首个周一才生成导致的实时不可用窗口。
   mainline_leadlag_month_end:
     enabled: true
     type: preprocess
     category: mainline
     resource_group: mainline_preprocess
-    schedule: {type: cron, day: "1-7", day_of_week: "mon", hour: 23, minute: 55}
-    params: {all: true, market: CN, stage: "leadlag", start_date: previous_month_start, end_date: previous_month_last_trade_date}
-    depends_on: [mainline_preprocess, mainline_crowding_preprocess]
+    # 为 crowding(10m)+industry(15m) 预留35分钟。
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 23, minute: 20}
+    params: {all: true, market: CN, stage: "leadlag", start_date: current_month_start, end_date: latest}
+    depends_on: [mainline_crowding_preprocess]
     retry: {max_retries: 1, delay: 1800}
+
+  # 发布是唯一出口，放在所有日事实、披露和可能的月末模型之后，避免重复发布。
+  mainline_publish:
+    enabled: true
+    type: preprocess
+    category: mainline
+    resource_group: mainline_preprocess
+    # 为月末 leadlag 25分钟预算再预留10分钟。
+    schedule: {type: cron, day_of_week: "mon-fri", hour: 23, minute: 55}
+    params: {all: true, market: CN, stage: "publish", start_date: latest, end_date: latest}
+    depends_on: [mainline_leadlag_month_end]
+    retry: {max_retries: 2, delay: 900}
 
   # ========== 周六凌晨任务：补齐周五夜盘 / 周末复核 ==========
 

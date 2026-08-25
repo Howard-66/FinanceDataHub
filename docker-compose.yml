@@ -18,9 +18,32 @@ services:
       - ./sql/init:/docker-entrypoint-initdb.d
       # 初始化脚本从独立目录读取迁移，避免与上方目录挂载发生重叠。
       - ./sql/migrations:/app/sql/migrations:ro
-    # 主线超表已有近千个分区。创建父表索引会同时锁住各分区，默认 64
-    # 个事务锁不足；该参数只能在 PostgreSQL 启动时设置。
-    command: ["postgres", "-c", "max_locks_per_transaction=2048"]
+    # 8-core / 16GB macOS host profile. Bulk mainline SQL is intentionally a
+    # single database writer and may use up to four parallel workers.
+    command:
+      - postgres
+      - -c
+      - max_locks_per_transaction=2048
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - max_parallel_workers=8
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - max_wal_size=8GB
+      - -c
+      - checkpoint_timeout=30min
+      - -c
+      - wal_compression=on
+      - -c
+      - track_io_timing=on
+      - -c
+      - shared_preload_libraries=timescaledb,pg_stat_statements
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U trading_nexus -d trading_nexus_db"]
       interval: 10s

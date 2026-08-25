@@ -27,6 +27,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from loguru import logger
+from sqlalchemy import text
 
 from ..config import get_settings
 from ..database.manager import DatabaseManager
@@ -2265,7 +2266,7 @@ def run_preprocess(
     stage: Optional[str] = typer.Option(
         None,
         "--stage",
-        help="主线处理阶段（逗号分隔：daily,stock,market,industry,etf,crowding,leadlag,publish；仅 --category mainline 有效）",
+        help="主线处理阶段（逗号分隔：pit,daily,stock,market,industry,etf,etf_premium,exposure,crowding,leadlag,publish；或使用 rebuild 执行可恢复的v2全量重建）",
     ),
     symbols: Optional[str] = typer.Option(
         None,
@@ -2613,6 +2614,11 @@ def show_status(
         "-v",
         help="显示详细信息"
     ),
+    mainline_only: bool = typer.Option(
+        False,
+        "--mainline",
+        help="只显示主线重建检查点；不扫描所有历史技术指标表",
+    ),
 ):
     """
     显示预处理状态
@@ -2627,6 +2633,74 @@ def show_status(
         
         try:
             await db_manager.initialize()
+
+            # 全量技术表的 COUNT(DISTINCT symbol) 会读取数千万行历史数据。主线
+            # 重建期间，运维只需要检查点、吞吐量和失败阶段，因此提供一个不触发
+            # 这些全表聚合的快速状态入口。
+            if mainline_only:
+                if db_manager._engine is None:
+                    return
+                async with db_manager._engine.begin() as conn:
+                    exists = await conn.scalar(text(
+                        "SELECT to_regclass('processed_mainline_build_run') IS NOT NULL"
+                    ))
+                    if not exists:
+                        console.print("[yellow]主线重建运行表尚未创建。[/yellow]")
+                        return
+                    rows = (await conn.execute(text("""
+                        SELECT r.run_id,r.status,r.requested_start_date,r.requested_end_date,
+                               r.started_at,r.completed_at,
+                               COUNT(s.stage) FILTER(WHERE s.status='completed') AS completed_stages,
+                               11 AS total_stages,
+                               COALESCE(SUM(s.duration_seconds),0) AS elapsed_seconds
+                        FROM processed_mainline_build_run r
+                        LEFT JOIN processed_mainline_build_stage s USING(run_id)
+                        GROUP BY r.run_id,r.status,r.requested_start_date,r.requested_end_date,
+                                 r.started_at,r.completed_at
+                        ORDER BY r.started_at DESC LIMIT 5
+                    """))).mappings().all()
+                    if not rows:
+                        console.print("[yellow]尚无主线重建运行记录。[/yellow]")
+                        return
+                    console.print("[bold]主线重建运行（快速状态）:[/bold]")
+                    run_table = Table()
+                    for column in ["运行ID","状态","日期范围","阶段","累计耗时"]:
+                        run_table.add_column(column)
+                    for row in rows:
+                        run_table.add_row(
+                            str(row["run_id"]), str(row["status"]),
+                            f"{row['requested_start_date']} ~ {row['requested_end_date']}",
+                            f"{row['completed_stages']}/{row['total_stages']}",
+                            f"{float(row['elapsed_seconds'] or 0)/60:.1f} 分钟",
+                        )
+                    console.print(run_table)
+                    latest_run = rows[0]["run_id"]
+                    stage_rows = (await conn.execute(text("""
+                        SELECT stage,status,partition_start,partition_end,row_count,
+                               COALESCE(duration_seconds,
+                                 EXTRACT(EPOCH FROM NOW()-started_at)) AS elapsed_seconds,
+                               error_message
+                        FROM processed_mainline_build_stage
+                        WHERE run_id=:run_id
+                        ORDER BY started_at
+                    """), {"run_id": latest_run})).mappings().all()
+                    if stage_rows:
+                        stage_table = Table(title="最新主线运行阶段")
+                        for column in ["阶段","状态","分区","记录数","耗时","吞吐量","错误"]:
+                            stage_table.add_column(column)
+                        for item in stage_rows:
+                            seconds = float(item["elapsed_seconds"] or 0)
+                            row_count = int(item["row_count"] or 0)
+                            throughput = row_count / seconds if seconds > 0 and row_count else 0
+                            stage_table.add_row(
+                                str(item["stage"]), str(item["status"]),
+                                f"{item['partition_start']} ~ {item['partition_end']}",
+                                f"{row_count:,}", f"{seconds/60:.1f} 分钟",
+                                f"{throughput:,.0f} 行/秒" if throughput else "-",
+                                str(item["error_message"] or "-")[:80],
+                            )
+                        console.print(stage_table)
+                return
             
             # 技术指标表
             console.print("[bold]技术指标表:[/bold]")
@@ -2727,6 +2801,78 @@ def show_status(
                 )
 
             console.print(table3)
+
+            if db_manager._engine is not None:
+                async with db_manager._engine.begin() as conn:
+                    exists = await conn.scalar(text(
+                        "SELECT to_regclass('processed_mainline_build_run') IS NOT NULL"
+                    ))
+                    if exists:
+                        rows = (await conn.execute(text("""
+                            SELECT r.run_id,r.status,r.requested_start_date,r.requested_end_date,
+                                   r.started_at,r.completed_at,
+                                   COUNT(s.stage) FILTER(WHERE s.status='completed') AS completed_stages,
+                                   11 AS total_stages,
+                                   COALESCE(SUM(s.duration_seconds),0) AS elapsed_seconds
+                            FROM processed_mainline_build_run r
+                            LEFT JOIN processed_mainline_build_stage s USING(run_id)
+                            GROUP BY r.run_id,r.status,r.requested_start_date,r.requested_end_date,
+                                     r.started_at,r.completed_at
+                            ORDER BY r.started_at DESC LIMIT 5
+                        """))).mappings().all()
+                        if rows:
+                            console.print("\n[bold]主线重建运行:[/bold]")
+                            run_table = Table()
+                            for column in ["运行ID","状态","日期范围","阶段","累计耗时"]:
+                                run_table.add_column(column)
+                            for row in rows:
+                                run_table.add_row(
+                                    str(row["run_id"]),str(row["status"]),
+                                    f"{row['requested_start_date']} ~ {row['requested_end_date']}",
+                                    f"{row['completed_stages']}/{row['total_stages']}",
+                                    f"{float(row['elapsed_seconds'] or 0)/60:.1f} 分钟",
+                                )
+                            console.print(run_table)
+                            latest_run = rows[0]["run_id"]
+                            stage_rows = (await conn.execute(text("""
+                                SELECT stage,status,partition_start,partition_end,row_count,
+                                       COALESCE(duration_seconds,
+                                         EXTRACT(EPOCH FROM NOW()-started_at)) AS elapsed_seconds,
+                                       error_message
+                                FROM processed_mainline_build_stage
+                                WHERE run_id=:run_id
+                                ORDER BY started_at
+                            """),{"run_id":latest_run})).mappings().all()
+                            if stage_rows:
+                                stage_table = Table(title="最新主线运行阶段")
+                                for column in ["阶段","状态","分区","记录数","耗时","吞吐量","错误"]:
+                                    stage_table.add_column(column)
+                                budgets = {
+                                    "pit":60,"stock":5400,"market":300,"etf":1800,
+                                    "exposure":300,"fund_crowding":600,"industry_crowding":600,
+                                    "industry":900,"leadlag":1500,"publish":300,"finalize":300,
+                                }
+                                finished = set()
+                                running_elapsed = 0.0
+                                for item in stage_rows:
+                                    seconds = float(item["elapsed_seconds"] or 0)
+                                    row_count = int(item["row_count"] or 0)
+                                    if item["status"] == "completed":
+                                        finished.add(str(item["stage"]))
+                                    elif item["status"] == "running":
+                                        running_elapsed = seconds
+                                    throughput = row_count / seconds if seconds > 0 and row_count else 0
+                                    stage_table.add_row(
+                                        str(item["stage"]),str(item["status"]),
+                                        f"{item['partition_start']} ~ {item['partition_end']}",
+                                        f"{row_count:,}",f"{seconds/60:.1f} 分钟",
+                                        f"{throughput:,.0f} 行/秒" if throughput else "-",
+                                        str(item["error_message"] or "-")[:80],
+                                    )
+                                console.print(stage_table)
+                                remaining = sum(value for key,value in budgets.items() if key not in finished)
+                                remaining = max(0,remaining-running_elapsed)
+                                console.print(f"预计剩余（按阶段预算上限）: {remaining/60:.0f} 分钟")
             
         except Exception as e:
             console.print(f"[red]获取状态失败: {e}[/red]")

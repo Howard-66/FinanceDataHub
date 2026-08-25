@@ -1,5 +1,6 @@
 from pathlib import Path
 from decimal import Decimal
+import inspect
 from unittest.mock import AsyncMock, MagicMock, Mock, call
 
 import numpy as np
@@ -7,6 +8,7 @@ import pandas as pd
 import pytest
 
 from finance_data_hub.preprocessing.mainline import (
+    MainlineDataStorage,
     MainlinePreprocessor,
     calculate_leadlag_lasso,
     calculate_leadlag_monthly,
@@ -585,21 +587,31 @@ async def test_mainline_stock_sql_preserves_time_index_predicates():
     assert "db.time::date BETWEEN" not in sql
     assert "LEFT JOIN v_fundamental_combined" not in sql
     assert "FROM processed_valuation_pct pv" in sql
-    assert "ic.index_code=m.l2_code" in sql
+    assert "processed_mainline_financial_pit fp" in sql
+    assert "processed_mainline_sw_member_pit sw" in sql
+    assert "processed_mainline_stock_event_pit div_event" in sql
+    assert "processed_mainline_stock_status_pit ns" in sql
+    assert "LEFT JOIN LATERAL" not in sql
+    assert "EXISTS (SELECT 1 FROM stock_dividend" not in sql
 
 
 @pytest.mark.asyncio
 async def test_mainline_etf_sql_marks_missing_list_date_not_tradable():
-    preprocessor = MainlinePreprocessor(Mock())
-    preprocessor._execute = AsyncMock(return_value=1)
+    implementation = inspect.getsource(MainlinePreprocessor._materialize_etf)
+    assert "COALESCE(list_date<=trade_date,FALSE)" in implementation
+    assert "missing_list_date" in implementation
+    assert "ARRAY_AGG" not in implementation
+    assert "quantile_cont(abs(premium),0.95)" in implementation
+    assert "copy_records_to_table" in implementation
+    assert "processed_mainline_etf_exposure_summary" in implementation
+    assert "exposure.usable_from_trade_date<=stage.trade_date" in implementation
 
-    await preprocessor._materialize_etf(
-        pd.Timestamp("2026-07-01").date(), pd.Timestamp("2026-08-21").date()
-    )
 
-    sql = preprocessor._execute.await_args.args[0]
-    assert "COALESCE(list_date<=trade_date,FALSE)" in sql
-    assert "missing_list_date" in sql
+def test_mainline_exposure_aggregates_each_index_once():
+    implementation = inspect.getsource(MainlinePreprocessor._materialize_etf_exposure)
+    assert "GROUP BY w.index_code,w.weight_date,w.usable_from_trade_date,m.l2_code" in implementation
+    assert "FROM ranked JOIN etf_basic eb USING(index_code)" in implementation
+    assert "SELECT MIN(tc.cal_date::date)" not in implementation
 
 
 @pytest.mark.asyncio
@@ -625,7 +637,7 @@ async def test_mainline_crowding_limits_incremental_runs_to_recently_written_per
     )
 
     sql, params = preprocessor._execute.await_args.args
-    assert "WITH impacted_periods AS" in sql
+    assert "impacted_periods AS" in sql
     assert "updated_at >= CAST(:source_updated_since AS date)" in sql
     assert "end_date IN (SELECT end_date FROM impacted_periods)" in sql
     assert params["source_updated_since"] == "2026-08-11"
@@ -643,8 +655,10 @@ async def test_mainline_industry_crowding_uses_the_same_incremental_source_windo
     )
 
     sql, params = preprocessor._execute.await_args.args
-    assert "WITH impacted_periods AS" in sql
+    assert "impacted_periods AS" in sql
     assert "fp.end_date IN (SELECT end_date FROM impacted_periods)" in sql
+    assert "JOIN processed_mainline_sw_member_pit sm" in sql
+    assert "JOIN LATERAL" not in sql
     assert params["source_updated_since"] == "2026-08-11"
 
 
@@ -671,16 +685,17 @@ async def test_mainline_v2_financial_acceleration_uses_prior_report_not_prior_da
     preprocessor = MainlinePreprocessor(Mock())
     preprocessor._execute = AsyncMock(return_value=1)
 
-    await preprocessor._materialize_stock(
+    await preprocessor._materialize_pit_bridges(
         pd.Timestamp("2026-08-21").date(), pd.Timestamp("2026-08-21").date()
     )
 
-    stock_sql = preprocessor._execute.await_args_list[0].args[0]
-    enrich_sql = preprocessor._execute.await_args_list[1].args[0]
-    assert "LAG(q_sales_yoy) OVER(ORDER BY end_date_time)" in stock_sql
-    assert "DISTINCT ON (x.end_date_time)" in stock_sql
-    assert "revenue_yoy-revenue_yoy_prev" in stock_sql
-    assert "LAG(s.revenue_yoy)" not in enrich_sql
+    bridge_sql = preprocessor._execute.await_args_list[1].args[0]
+    assert "LAG(x.q_sales_yoy) OVER(PARTITION BY x.ts_code ORDER BY x.end_date_time)" in bridge_sql
+    assert "fi.q_sales_yoy-fi.revenue_yoy_prev" in bridge_sql
+    assert "LEAD(available_date) OVER(PARTITION BY ts_code ORDER BY available_date)" in bridge_sql
+    assert "LEFT JOIN LATERAL" not in bridge_sql
+    event_sql = preprocessor._execute.await_args_list[7].args[0]
+    assert "RANGE_AGG(DATERANGE" in event_sql
 
 
 @pytest.mark.asyncio
@@ -692,10 +707,17 @@ async def test_etf_exposure_is_carried_forward_with_usable_date_cutoff():
         pd.Timestamp("2026-08-01").date(), pd.Timestamp("2026-08-21").date()
     )
 
-    summary_sql = preprocessor._execute.await_args_list[1].args[0]
-    assert "e.as_of_trade_date<=d.trade_date" in summary_sql
-    assert "e.usable_from_trade_date<=d.trade_date" in summary_sql
-    assert "top5_l2_exposure" in summary_sql
+    exposure_sql = preprocessor._execute.await_args_list[0].args[0]
+    summary_insert = preprocessor._execute.await_args_list[2].args[0]
+    carry_sql = preprocessor._execute.await_args_list[3].args[0]
+    assert "monthly_dates" in exposure_sql
+    assert "MAX(iw.trade_date)" in exposure_sql
+    assert "JOIN processed_mainline_sw_member_pit m" in exposure_sql
+    assert "JOIN LATERAL" not in exposure_sql
+    assert "LEAD(usable_from)" in summary_insert
+    assert "s.usable_from_trade_date<=d.trade_date" in carry_sql
+    assert "s.usable_to_trade_date>d.trade_date" in carry_sql
+    assert "top5_l2_exposure" in carry_sql
 
 
 @pytest.mark.asyncio
@@ -816,21 +838,24 @@ def test_scheduler_accepts_mainline_jobs_and_dependencies():
     assert "etf_share_size_update" not in daily_mainline.depends_on
     assert "index_weight_update" not in daily_mainline.depends_on
     assert daily_mainline.params["start_date"] == "latest-10bd"
-    assert daily_mainline.params["stage"] == "stock,market,etf"
+    assert daily_mainline.params["stage"] == "pit,stock,market,etf"
 
     crowding_mainline = config.jobs["mainline_crowding_preprocess"]
-    assert crowding_mainline.schedule["hour"] == 23
-    assert crowding_mainline.schedule["minute"] == 25
-    assert crowding_mainline.params["stage"] == "crowding,industry,publish"
+    assert crowding_mainline.schedule["hour"] == 22
+    assert crowding_mainline.schedule["minute"] == 45
+    assert crowding_mainline.params["stage"] == "crowding,industry"
     assert crowding_mainline.params["start_date"] == "latest-10bd"
     assert crowding_mainline.params["source_updated_since"] == "latest-10bd"
 
     leadlag_mainline = config.jobs["mainline_leadlag_month_end"]
     assert leadlag_mainline.schedule == {
-        "type": "cron", "day": "1-7", "day_of_week": "mon", "hour": 23, "minute": 55
+        "type": "cron", "day_of_week": "mon-fri", "hour": 23, "minute": 20
     }
-    assert leadlag_mainline.params["end_date"] == "previous_month_last_trade_date"
-    assert leadlag_mainline.params["start_date"] == "previous_month_start"
+    assert leadlag_mainline.params["end_date"] == "latest"
+    assert leadlag_mainline.params["start_date"] == "current_month_start"
+    publish = config.jobs["mainline_publish"]
+    assert publish.params["stage"] == "publish"
+    assert publish.depends_on == ["mainline_leadlag_month_end"]
     assert config.jobs["etf_share_size_catchup"].params["trade_date"] == "latest"
 
 
@@ -883,3 +908,41 @@ def test_standard_moneyflow_migration_only_adds_the_approved_source():
     assert "moneyflow_net_amount_20d" in sql
     assert "moneyflow_ths" not in sql
     assert "moneyflow_dc" not in sql
+
+
+def test_mainline_performance_migrations_preserve_raw_tables_and_bulk_shape():
+    root = Path(__file__).resolve().parents[2]
+    rebuild = (root / "sql/migrations/042_rebuild_mainline_performance_schema.sql").read_text()
+    source_indexes = (root / "sql/migrations/043_add_mainline_source_indexes.sql").read_text()
+    finalize = (root / "sql/migrations/044_finalize_mainline_indexes.sql").read_text()
+
+    assert "DROP TABLE %I CASCADE" not in rebuild.upper()
+    assert "INTERVAL '90 days'" in rebuild
+    assert "INTERVAL '365 days'" in rebuild
+    assert "processed_mainline_financial_pit" in rebuild
+    assert "processed_mainline_sw_member_pit" in rebuild
+    assert "processed_mainline_stock_event_pit" in rebuild
+    assert "TYPE DOUBLE PRECISION" in rebuild
+    assert "CREATE INDEX CONCURRENTLY" in source_indexes
+    assert "stock_repurchase(ts_code,ann_date)" in source_indexes
+    assert "add_compression_policy" in finalize
+    assert "INTERVAL '180 days'" in finalize
+
+
+@pytest.mark.asyncio
+async def test_mainline_daily_asof_uses_exact_observation_date_not_history_distinct():
+    storage = MainlineDataStorage(object())
+    storage._read = AsyncMock(return_value=pd.DataFrame())
+
+    await storage.query_asof(
+        "etf_daily",
+        as_of_date="2026-08-21",
+        execution_date="2026-08-24",
+        factor_version=2,
+    )
+
+    statement, params = storage._read.await_args.args
+    assert "trade_date = :as_of_date" in statement
+    assert "DISTINCT ON" not in statement
+    assert params["as_of_date"].isoformat() == "2026-08-21"
+    assert params["execution_date"].isoformat() == "2026-08-24"
