@@ -610,8 +610,42 @@ async def test_mainline_etf_sql_marks_missing_list_date_not_tradable():
 def test_mainline_exposure_aggregates_each_index_once():
     implementation = inspect.getsource(MainlinePreprocessor._materialize_etf_exposure)
     assert "GROUP BY w.index_code,w.weight_date,w.usable_from_trade_date,m.l2_code" in implementation
-    assert "FROM ranked JOIN etf_basic eb USING(index_code)" in implementation
+    assert "FROM ranked JOIN reviewed_mappings bm" in implementation
+    assert "mapping_status='mapped' AND review_status='approved'" in implementation
+    assert "AND d.trade_date BETWEEN :start_date AND :end_date" in implementation
     assert "SELECT MIN(tc.cal_date::date)" not in implementation
+
+
+def test_mainline_v3_etf_rows_require_a_reviewed_benchmark_mapping():
+    implementation = inspect.getsource(MainlinePreprocessor._materialize_etf)
+    assert "mainline_etf_benchmark_history m" in implementation
+    assert "m.mapping_status='mapped'" in implementation
+    assert "m.review_status='approved'" in implementation
+    assert "benchmark_mapping_status <> 'mapped'" in implementation
+    assert "ON a.ts_code=d.ts_code AND a.trade_date=d.trade_date" in implementation
+    assert "ON s.ts_code=d.ts_code AND s.trade_date=d.trade_date" in implementation
+
+
+def test_mainline_dml_allows_timescaledb_compressed_etf_recovery():
+    implementation = inspect.getsource(MainlinePreprocessor._execute)
+    assert "timescaledb.max_tuples_decompressed_per_dml_transaction = 0" in implementation
+
+
+def test_mainline_v3_mapping_migrations_auto_approve_complete_catalog_rows():
+    root = Path(__file__).resolve().parents[2]
+    migration = (root / "sql/migrations/045_add_mainline_etf_mapping_v3.sql").read_text()
+    auto_approval = (root / "sql/migrations/046_auto_approve_mainline_etf_basic_mappings.sql").read_text()
+
+    assert "CREATE TABLE IF NOT EXISTS mainline_etf_benchmark_history" in migration
+    assert "mapping_status IN ('mapped','mapping_pending','ambiguous_multisector','not_applicable')" in migration
+    assert "'mapping_pending'" in migration
+    assert "review_status = 'approved'" in migration
+    assert "v_mainline_etf_whitelist_sensitivity" in migration
+    assert "h.mapping_status = 'mapping_pending'" in auto_approval
+    assert "b.index_code IS NOT NULL" in auto_approval
+    assert "COALESCE(b.list_date, b.setup_date) IS NOT NULL" in auto_approval
+    assert "source_name = 'etf_basic_auto'" in auto_approval
+    assert "review_status = 'approved'" in auto_approval
 
 
 @pytest.mark.asyncio
@@ -707,9 +741,11 @@ async def test_etf_exposure_is_carried_forward_with_usable_date_cutoff():
         pd.Timestamp("2026-08-01").date(), pd.Timestamp("2026-08-21").date()
     )
 
-    exposure_sql = preprocessor._execute.await_args_list[0].args[0]
-    summary_insert = preprocessor._execute.await_args_list[2].args[0]
-    carry_sql = preprocessor._execute.await_args_list[3].args[0]
+    delete_sql = preprocessor._execute.await_args_list[0].args[0]
+    exposure_sql = preprocessor._execute.await_args_list[1].args[0]
+    summary_insert = preprocessor._execute.await_args_list[3].args[0]
+    carry_sql = preprocessor._execute.await_args_list[4].args[0]
+    assert "DELETE FROM processed_mainline_etf_exposure_monthly" in delete_sql
     assert "monthly_dates" in exposure_sql
     assert "MAX(iw.trade_date)" in exposure_sql
     assert "JOIN processed_mainline_sw_member_pit m" in exposure_sql

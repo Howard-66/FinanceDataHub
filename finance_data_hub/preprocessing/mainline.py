@@ -52,7 +52,7 @@ MAINLINE_TABLES = {
 # 主线策略的统一历史回测起点。无 --force 时仍保留最近 400 天的
 # 默认增量窗口；CLI 的全量模式会显式传入该日期。
 MAINLINE_HISTORY_START = "2012-01-01"
-MAINLINE_FACTOR_VERSION = 2
+MAINLINE_FACTOR_VERSION = 3
 # Monthly partitions make incremental repairs cheap, but are prohibitively
 # expensive for a 10+ year rebuild because every partition re-reads its rolling
 # source window.  Six months keeps individual WindowAgg operations bounded
@@ -62,8 +62,9 @@ MAINLINE_LONG_RANGE_THRESHOLD_DAYS = 730
 MAINLINE_QUERY_WORK_MEM = "128MB"
 MAINLINE_REBUILD_WARMUP_START = date(2008, 1, 1)
 MAINLINE_FORMULA_HASH = sha256(
-    b"mainline-pit-v2:quarterly-acceleration,cny-units,pit-etf-exposure,strict-gate,"
-    b"pit-504d-turnover-proxy,single-write-stock,duckdb-etf,index-first-exposure"
+    b"mainline-pit-v3:quarterly-acceleration,cny-units,auto-verified-pit-etf-benchmark,"
+    b"strict-gate,pit-504d-turnover-proxy,single-write-stock,duckdb-etf,"
+    b"index-weight-sw2021-exposure"
 ).hexdigest()
 
 
@@ -520,6 +521,14 @@ class MainlinePreprocessor:
             # partitions to temporary files.  SET LOCAL confines this memory
             # budget to the current statement transaction.
             await conn.execute(text(f"SET LOCAL work_mem = '{MAINLINE_QUERY_WORK_MEM}'"))
+            # ETF recovery updates touch compressed TimescaleDB segments.  A
+            # segment is ordered by ETF code across its history, so changing a
+            # single day can legitimately decompress more than the extension's
+            # conservative default of 100,000 tuples.  Scope the unlimited
+            # allowance to this one preprocessing transaction.
+            await conn.execute(text(
+                "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"
+            ))
             if self._bulk_mode:
                 await conn.execute(text("SET LOCAL synchronous_commit = off"))
             result = await conn.execute(text(sql), params)
@@ -1541,15 +1550,28 @@ class MainlinePreprocessor:
                         LEAD(cal_date::date) OVER(ORDER BY cal_date) AS next_trade_date
                  FROM trade_cal WHERE exchange='SSE' AND is_open=1
                )
-               SELECT d.trade_date,d.ts_code,b.index_code,b.list_date,
+               SELECT d.trade_date,d.ts_code,m.benchmark_index_code AS index_code,b.list_date,
+                      COALESCE(m.mapping_status,'mapping_pending') AS benchmark_mapping_status,
+                      m.source_name AS benchmark_mapping_source,
+                      m.confidence AS benchmark_mapping_confidence,
+                      COALESCE(m.review_status,'pending') AS benchmark_mapping_review_status,
                       od.next_trade_date,d.close AS raw_close,
                       d.close*COALESCE(a.adj_factor,1) AS adj_close,
                       d.amount*1000 AS amount,s.total_share*10000 AS total_share,
                       s.total_size*10000 AS total_size,s.nav,id.close AS index_close
                FROM fund_daily d JOIN etf_basic b USING(ts_code)
-               LEFT JOIN fund_adj a USING(ts_code,trade_date)
-               LEFT JOIN etf_share_size s USING(ts_code,trade_date)
-               LEFT JOIN index_daily id ON id.ts_code=b.index_code AND id.trade_date::date=d.trade_date
+               LEFT JOIN mainline_etf_benchmark_history m
+                 ON m.ts_code=d.ts_code
+                AND m.usable_from_trade_date<=d.trade_date
+                AND (m.usable_to_trade_date IS NULL OR m.usable_to_trade_date>d.trade_date)
+               -- m retains its own ts_code, so USING here would make the
+               -- accumulated left join ambiguous in PostgreSQL.
+               LEFT JOIN fund_adj a
+                 ON a.ts_code=d.ts_code AND a.trade_date=d.trade_date
+               LEFT JOIN etf_share_size s
+                 ON s.ts_code=d.ts_code AND s.trade_date=d.trade_date
+               LEFT JOIN index_daily id ON id.ts_code=m.benchmark_index_code AND id.trade_date::date=d.trade_date
+                AND m.mapping_status='mapped' AND m.review_status='approved'
                LEFT JOIN open_days od ON od.trade_date=d.trade_date
                WHERE d.trade_date BETWEEN (CAST(:start_date AS date)-INTERVAL '260 days') AND :end_date
                """,
@@ -1592,7 +1614,9 @@ class MainlinePreprocessor:
                          OVER(w ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS premium_p95
                      FROM returns WINDOW w AS(PARTITION BY ts_code ORDER BY trade_date)
                    )
-                   SELECT trade_date,ts_code,index_code,list_date,next_trade_date,adj_close,amount,
+                   SELECT trade_date,ts_code,index_code,list_date,benchmark_mapping_status,
+                          benchmark_mapping_source,benchmark_mapping_confidence,
+                          benchmark_mapping_review_status,next_trade_date,adj_close,amount,
                           total_share,total_size,nav,index_close,r20,r60,r120,share5,share20,
                           amin,amax,amount20,amount60,ma60,vol20,te60,te120,premium,premium_p95
                    FROM factors WHERE trade_date BETWEEN ? AND ?
@@ -1611,6 +1635,8 @@ class MainlinePreprocessor:
         async with engine.begin() as conn:
             await conn.execute(text("""CREATE TEMP TABLE mainline_etf_stage(
               trade_date date,ts_code varchar(32),index_code varchar(32),list_date date,
+              benchmark_mapping_status varchar(32),benchmark_mapping_source varchar(64),
+              benchmark_mapping_confidence varchar(16),benchmark_mapping_review_status varchar(16),
               next_trade_date date,adj_close double precision,amount double precision,
               total_share double precision,total_size double precision,nav double precision,
               index_close double precision,r20 double precision,r60 double precision,r120 double precision,
@@ -1627,6 +1653,7 @@ class MainlinePreprocessor:
                 await driver.copy_records_to_table("mainline_etf_stage",records=records,columns=columns)
             result = await conn.execute(text("""INSERT INTO processed_mainline_etf_daily(
               factor_version,trade_date,as_of_trade_date,usable_from_trade_date,ts_code,index_code,list_date,
+              benchmark_mapping_status,benchmark_mapping_source,benchmark_mapping_confidence,benchmark_mapping_review_status,
               benchmark_available,data_complete,is_tradable,is_eligible,exclusion_reason,exclusion_reasons,
               adj_close,ma60_gap,return_20d,return_60d,return_120d,volatility_20d,amount,
               avg_amount_20d,avg_amount_60d,amount_ratio_20_60,amount_pct_20d,total_share,total_size,
@@ -1635,21 +1662,25 @@ class MainlinePreprocessor:
               primary_l2_code,primary_l2_weight,top5_l2_exposure,exposure_hhi,
               data_quality,source_watermark,source_asof
             ) SELECT :factor_version,trade_date,trade_date,COALESCE(next_trade_date,trade_date+1),
-              ts_code,index_code,list_date,index_close IS NOT NULL,
+              ts_code,index_code,list_date,benchmark_mapping_status,benchmark_mapping_source,
+              benchmark_mapping_confidence,benchmark_mapping_review_status,
+              index_close IS NOT NULL,
               (adj_close IS NOT NULL AND amount20 IS NOT NULL AND total_share IS NOT NULL
                 AND total_size IS NOT NULL AND nav IS NOT NULL),
               (COALESCE(amount,0)>0 AND COALESCE(list_date<=trade_date,FALSE)),
-              (index_close IS NOT NULL AND adj_close IS NOT NULL AND amount20 IS NOT NULL
+              (benchmark_mapping_status='mapped' AND index_close IS NOT NULL AND adj_close IS NOT NULL AND amount20 IS NOT NULL
                 AND total_share IS NOT NULL AND total_size IS NOT NULL AND nav IS NOT NULL
                 AND COALESCE(amount,0)>0 AND COALESCE(list_date<=trade_date,FALSE)
                 AND exposure.primary_l2_code IS NOT NULL),
-              CASE WHEN index_code IS NULL THEN 'missing_index_code'
+              CASE WHEN benchmark_mapping_status <> 'mapped' THEN benchmark_mapping_status
+                   WHEN index_code IS NULL THEN 'missing_index_code'
                    WHEN index_close IS NULL THEN 'missing_benchmark_daily'
                    WHEN list_date IS NULL THEN 'missing_list_date' WHEN total_size IS NULL THEN 'missing_size'
                    WHEN total_share IS NULL THEN 'missing_share' WHEN nav IS NULL THEN 'missing_nav'
                    WHEN COALESCE(amount,0)<=0 THEN 'not_tradable'
                    WHEN exposure.primary_l2_code IS NULL THEN 'missing_pit_industry_exposure' END,
-              ARRAY_REMOVE(ARRAY[CASE WHEN index_code IS NULL THEN 'missing_index_code' END,
+              ARRAY_REMOVE(ARRAY[CASE WHEN benchmark_mapping_status <> 'mapped' THEN benchmark_mapping_status END,
+                CASE WHEN index_code IS NULL THEN 'missing_index_code' END,
                 CASE WHEN index_close IS NULL THEN 'missing_benchmark_daily' END,
                 CASE WHEN list_date IS NULL THEN 'missing_list_date' END,
                 CASE WHEN total_size IS NULL THEN 'missing_size' END,
@@ -1663,6 +1694,10 @@ class MainlinePreprocessor:
               exposure.primary_l2_code,exposure.primary_l2_weight,
               COALESCE(exposure.top5_l2_exposure,'[]'::jsonb),exposure.exposure_hhi,
               JSONB_BUILD_OBJECT('benchmark_available',index_close IS NOT NULL,'size_available',total_size IS NOT NULL,
+                'benchmark_mapping_status',benchmark_mapping_status,
+                'benchmark_mapping_source',benchmark_mapping_source,
+                'benchmark_mapping_confidence',benchmark_mapping_confidence,
+                'benchmark_mapping_review_status',benchmark_mapping_review_status,
                 'pit_exposure_available',exposure.primary_l2_code IS NOT NULL,
                 'exposure_carried_forward',exposure.primary_l2_code IS NOT NULL,
                 'rolling_engine','duckdb'),JSONB_BUILD_OBJECT('fund_daily',trade_date,'share_size',trade_date,
@@ -1680,6 +1715,10 @@ class MainlinePreprocessor:
              AND (exposure.usable_to_trade_date IS NULL OR exposure.usable_to_trade_date>stage.trade_date)
             ON CONFLICT(factor_version,ts_code,trade_date) DO UPDATE SET
               index_code=EXCLUDED.index_code,list_date=EXCLUDED.list_date,
+              benchmark_mapping_status=EXCLUDED.benchmark_mapping_status,
+              benchmark_mapping_source=EXCLUDED.benchmark_mapping_source,
+              benchmark_mapping_confidence=EXCLUDED.benchmark_mapping_confidence,
+              benchmark_mapping_review_status=EXCLUDED.benchmark_mapping_review_status,
               benchmark_available=EXCLUDED.benchmark_available,data_complete=EXCLUDED.data_complete,
               is_tradable=EXCLUDED.is_tradable,is_eligible=EXCLUDED.is_eligible,
               exclusion_reason=EXCLUDED.exclusion_reason,exclusion_reasons=EXCLUDED.exclusion_reasons,
@@ -1903,8 +1942,14 @@ class MainlinePreprocessor:
         history is shorter and should only be used as a later reconciliation.
         """
         sql = """
-        WITH relevant_indices AS (
-          SELECT DISTINCT index_code FROM etf_basic WHERE index_code IS NOT NULL
+        WITH reviewed_mappings AS (
+          SELECT ts_code,benchmark_index_code,usable_from_trade_date,usable_to_trade_date,
+                 source_name,confidence
+          FROM mainline_etf_benchmark_history
+          WHERE mapping_status='mapped' AND review_status='approved'
+            AND benchmark_index_code IS NOT NULL
+        ), relevant_indices AS (
+          SELECT DISTINCT benchmark_index_code AS index_code FROM reviewed_mappings
         ), open_days AS (
           SELECT cal_date::date AS trade_date,
                  LEAD(cal_date::date) OVER(ORDER BY cal_date) AS next_trade_date
@@ -1935,20 +1980,34 @@ class MainlinePreprocessor:
                  SUM(POWER(weight,2)) OVER(PARTITION BY index_code,weight_date) AS hhi
           FROM mapped
         ), expanded AS (
-          SELECT eb.ts_code,ranked.weight_date,ranked.usable_from_trade_date,
-                 ranked.l2_code,ranked.weight,ranked.rk,ranked.hhi
-          FROM ranked JOIN etf_basic eb USING(index_code)
+          SELECT bm.ts_code,ranked.weight_date,ranked.usable_from_trade_date,
+                 ranked.l2_code,ranked.weight,ranked.rk,ranked.hhi,
+                 bm.source_name,bm.confidence
+          FROM ranked JOIN reviewed_mappings bm
+            ON bm.benchmark_index_code=ranked.index_code
+           AND bm.usable_from_trade_date<=ranked.usable_from_trade_date
+           AND (bm.usable_to_trade_date IS NULL OR bm.usable_to_trade_date>ranked.usable_from_trade_date)
         )
         INSERT INTO processed_mainline_etf_exposure_monthly(
           factor_version,as_of_trade_date,usable_from_trade_date,weight_date,ts_code,l2_code,weight,mapping_method,is_primary,top5_rank,exposure_hhi,data_quality,source_watermark,source_asof
         ) SELECT :factor_version,weight_date,usable_from_trade_date,
-          weight_date,ts_code,l2_code,weight,'index_weight',rk=1,CASE WHEN rk<=5 THEN rk END,hhi,
-          jsonb_build_object('published_sw2021_l2',true),jsonb_build_object('index_weight',weight_date),NOW()
+          weight_date,ts_code,l2_code,weight,'reviewed_index_weight',rk=1,CASE WHEN rk<=5 THEN rk END,hhi,
+          jsonb_build_object('published_sw2021_l2',true,'benchmark_mapping_source',source_name,
+            'benchmark_mapping_confidence',confidence),jsonb_build_object('index_weight',weight_date),NOW()
           FROM expanded
         ON CONFLICT(factor_version,ts_code,l2_code,as_of_trade_date) DO UPDATE SET
           weight=EXCLUDED.weight,mapping_method=EXCLUDED.mapping_method,is_primary=EXCLUDED.is_primary,top5_rank=EXCLUDED.top5_rank,exposure_hhi=EXCLUDED.exposure_hhi,
           data_quality=EXCLUDED.data_quality,source_watermark=EXCLUDED.source_watermark,processed_at=NOW()
         """
+        # A reviewed benchmark can be corrected or revoked.  Remove the
+        # affected v3 observations before rebuilding this window so a prior
+        # mapping cannot survive in the exposure summary.
+        await self._execute(
+            """DELETE FROM processed_mainline_etf_exposure_monthly
+               WHERE factor_version=:factor_version
+                 AND as_of_trade_date BETWEEN :start_date AND :end_date""",
+            {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION},
+        )
         count = await self._execute(sql, {"start_date": start, "end_date": end, "factor_version": MAINLINE_FACTOR_VERSION})
         summary_insert = """
         WITH grouped AS (
@@ -1960,6 +2019,13 @@ class MainlinePreprocessor:
                    ORDER BY weight DESC) FILTER(WHERE top5_rank IS NOT NULL),'[]'::jsonb) AS top5
           FROM processed_mainline_etf_exposure_monthly
           WHERE factor_version=:factor_version
+            AND EXISTS (
+              SELECT 1 FROM mainline_etf_benchmark_history bm
+              WHERE bm.ts_code=processed_mainline_etf_exposure_monthly.ts_code
+                AND bm.mapping_status='mapped' AND bm.review_status='approved'
+                AND bm.usable_from_trade_date<=processed_mainline_etf_exposure_monthly.usable_from_trade_date
+                AND (bm.usable_to_trade_date IS NULL OR bm.usable_to_trade_date>processed_mainline_etf_exposure_monthly.usable_from_trade_date)
+            )
           GROUP BY factor_version,ts_code,as_of_trade_date
         ), intervals AS (
           SELECT grouped.*,
@@ -1997,22 +2063,31 @@ class MainlinePreprocessor:
           primary_l2_weight=exposure.primary_l2_weight,
           exposure_hhi=exposure.exposure_hhi,
           top5_l2_exposure=COALESCE(exposure.top5_l2_exposure,'[]'::jsonb),
-          is_eligible=(d.benchmark_available AND d.data_complete AND d.is_tradable
+          is_eligible=(d.benchmark_mapping_status='mapped' AND d.benchmark_available AND d.data_complete AND d.is_tradable
                        AND exposure.primary_l2_code IS NOT NULL),
           exclusion_reason=CASE
+            WHEN d.benchmark_mapping_status <> 'mapped' THEN d.benchmark_mapping_status
             WHEN exposure.primary_l2_code IS NULL THEN 'missing_pit_industry_exposure'
             ELSE d.exclusion_reason END,
           exclusion_reasons=CASE
+            WHEN d.benchmark_mapping_status <> 'mapped'
+              THEN ARRAY_APPEND(ARRAY_REMOVE(d.exclusion_reasons,'missing_pit_industry_exposure'),d.benchmark_mapping_status)
             WHEN exposure.primary_l2_code IS NULL
               THEN ARRAY_APPEND(ARRAY_REMOVE(d.exclusion_reasons,'missing_pit_industry_exposure'),'missing_pit_industry_exposure')
-            ELSE ARRAY_REMOVE(d.exclusion_reasons,'missing_pit_industry_exposure') END,
+            ELSE ARRAY_REMOVE(ARRAY_REMOVE(d.exclusion_reasons,'missing_pit_industry_exposure'),'mapping_pending') END,
           data_quality=d.data_quality || JSONB_BUILD_OBJECT(
             'pit_exposure_available',exposure.primary_l2_code IS NOT NULL,
-            'exposure_carried_forward',TRUE
+            'exposure_carried_forward',TRUE,
+            'benchmark_mapping_status',d.benchmark_mapping_status
           ),
           processed_at=NOW()
         FROM exposure
-        WHERE d.factor_version=:factor_version AND d.ts_code=exposure.ts_code
+        -- Keep the range on the target hypertable itself.  Equality to the
+        -- CTE date alone does not let TimescaleDB prune historical compressed
+        -- chunks, and a one-day repair can otherwise decompress ETF history.
+        WHERE d.factor_version=:factor_version
+          AND d.trade_date BETWEEN :start_date AND :end_date
+          AND d.ts_code=exposure.ts_code
           AND d.trade_date=exposure.trade_date
         """
         await self._execute(
@@ -2265,8 +2340,14 @@ class MainlinePreprocessor:
                 NULLIF(COUNT(*) FILTER(WHERE e.benchmark_available AND e.is_tradable),0),
               'pit_exposure_coverage',COUNT(*) FILTER(WHERE e.primary_l2_code IS NOT NULL
                 AND e.is_eligible)::numeric/NULLIF(COUNT(*) FILTER(WHERE e.is_eligible),0),
+              'mapping_status_counts',JSONB_BUILD_OBJECT(
+                'mapped',COUNT(*) FILTER(WHERE e.benchmark_mapping_status='mapped'),
+                'mapping_pending',COUNT(*) FILTER(WHERE e.benchmark_mapping_status='mapping_pending'),
+                'ambiguous_multisector',COUNT(*) FILTER(WHERE e.benchmark_mapping_status='ambiguous_multisector'),
+                'not_applicable',COUNT(*) FILTER(WHERE e.benchmark_mapping_status='not_applicable')
+              ),
               'unmapped_non_candidate_count',COUNT(*) FILTER(WHERE e.data_complete
-                AND e.benchmark_available AND e.is_tradable AND e.primary_l2_code IS NULL),
+                AND e.is_tradable AND e.benchmark_mapping_status='mapping_pending'),
               'thresholds',JSONB_BUILD_OBJECT('amount_20d_cny',30000000,'aum_cny',500000000,
                 'premium_abs_p95_60d',0.02,'tracking_error_60d',0.03,'primary_l2_weight',0.50)
             )

@@ -6005,8 +6005,11 @@ class DataOperations:
                         record[key] = None
 
             async with self.db_manager._engine.begin() as conn:
-                result = await conn.execute(text(insert_sql), records)
-                total_inserted += result.rowcount
+                await conn.execute(text(insert_sql), records)
+                # asyncpg executemany reports rowcount=-1 even when every
+                # UPSERT succeeds.  A successful execution has processed all
+                # records in this batch, so report the actual batch size.
+                total_inserted += len(records)
 
             logger.info(
                 f"Inserted batch {i // batch_size + 1}: "
