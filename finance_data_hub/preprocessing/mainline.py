@@ -52,7 +52,7 @@ MAINLINE_TABLES = {
 # 主线策略的统一历史回测起点。无 --force 时仍保留最近 400 天的
 # 默认增量窗口；CLI 的全量模式会显式传入该日期。
 MAINLINE_HISTORY_START = "2012-01-01"
-MAINLINE_FACTOR_VERSION = 3
+MAINLINE_FACTOR_VERSION = 4
 # Monthly partitions make incremental repairs cheap, but are prohibitively
 # expensive for a 10+ year rebuild because every partition re-reads its rolling
 # source window.  Six months keeps individual WindowAgg operations bounded
@@ -62,9 +62,9 @@ MAINLINE_LONG_RANGE_THRESHOLD_DAYS = 730
 MAINLINE_QUERY_WORK_MEM = "128MB"
 MAINLINE_REBUILD_WARMUP_START = date(2008, 1, 1)
 MAINLINE_FORMULA_HASH = sha256(
-    b"mainline-pit-v3:quarterly-acceleration,cny-units,auto-verified-pit-etf-benchmark,"
-    b"strict-gate,pit-504d-turnover-proxy,single-write-stock,duckdb-etf,"
-    b"index-weight-sw2021-exposure"
+    b"mainline-pit-v4:official-sw-relative-strength,strong-stock-global-top20,"
+    b"risk-adjusted-momentum,industry-own-history-crowding,hierarchical-pit-etf-mapping,"
+    b"etf-tool-coverage-is-strategy-state,leadlag-shadow-only"
 ).hexdigest()
 
 
@@ -1380,6 +1380,10 @@ class MainlinePreprocessor:
           FROM processed_mainline_stock_daily s
           WHERE s.factor_version=:factor_version
             AND s.trade_date BETWEEN :start_date AND :end_date
+        ), ranked_base AS (
+          SELECT base.*,
+                 PERCENT_RANK() OVER(PARTITION BY trade_date ORDER BY return_60d) AS global_return_60d_rank
+          FROM base
         )
         INSERT INTO processed_mainline_industry_daily (
           factor_version,trade_date,as_of_trade_date,usable_from_trade_date,l1_code,l1_name,l2_code,l2_name,index_code,index_close,return_20d,return_60d,return_120d,ma60_gap,ma120_gap,stock_count,equal_weight_return,
@@ -1395,11 +1399,12 @@ class MainlinePreprocessor:
           COALESCE(MAX(od.next_trade_date),b.trade_date+1),
           MAX(b.l1_code),MAX(b.l1_name),b.l2_code,MAX(b.l2_name),MAX(ii.l2_code),MAX(ii.close),MAX(ii.r20),MAX(ii.r60),MAX(ii.r120),MAX(ii.close/NULLIF(ii.ma60,0)-1),MAX(ii.close/NULLIF(ii.ma120,0)-1),COUNT(*),
           AVG(b.r1),SUM(b.r1*b.circ_mv)/NULLIF(SUM(b.circ_mv),0),
-          AVG(b.return_20d)-MAX(m.benchmark_return_20d),
-          AVG(b.return_60d)-MAX(m.benchmark_return_60d),
-          AVG(b.return_120d)-MAX(m.benchmark_return_120d),
+          MAX(ii.r20)-MAX(m.benchmark_return_20d),
+          MAX(ii.r60)-MAX(m.benchmark_return_60d),
+          MAX(ii.r120)-MAX(m.benchmark_return_120d),
           AVG((b.ma20_gap>0)::int),AVG((b.ma60_gap>0)::int),AVG((b.ma120_gap>0)::int),
-          COUNT(*) FILTER(WHERE b.return_20d>0 AND b.ma60_gap>0),AVG((b.return_20d>0 AND b.ma60_gap>0)::int),STDDEV_SAMP(b.r1),
+          COUNT(*) FILTER(WHERE b.global_return_60d_rank>=0.80 AND b.amount_ratio_20_60>1.20),
+          AVG((b.global_return_60d_rank>=0.80 AND b.amount_ratio_20_60>1.20)::int),STDDEV_SAMP(b.r1),
           SUM(b.amount)/NULLIF(SUM(SUM(b.amount)) OVER(PARTITION BY b.trade_date),0),
           PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY b.pe_ttm),
           PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY b.pb),
@@ -1417,7 +1422,7 @@ class MainlinePreprocessor:
           COUNT(*) FILTER(WHERE b.moneyflow_available)::numeric/NULLIF(COUNT(*),0)>=0.95,
           jsonb_build_object('published_sw2021_l2',true,'industry_index_available',MAX(ii.close) IS NOT NULL,'moneyflow_coverage',COUNT(*) FILTER(WHERE b.moneyflow_available)::numeric/NULLIF(COUNT(*),0)),
           jsonb_build_object('sw_daily',MAX(ii.trade_date),'moneyflow',CASE WHEN COUNT(*) FILTER(WHERE b.moneyflow_available)>0 THEN b.trade_date ELSE NULL END),NOW()
-        FROM base b
+        FROM ranked_base b
         JOIN sw_industry_classify ic ON ic.index_code=b.l2_code AND ic.level='L2' AND ic.is_pub='1'
         LEFT JOIN industry_index ii ON ii.l2_code=b.l2_code AND ii.trade_date=b.trade_date
         LEFT JOIN processed_mainline_market_daily m ON m.trade_date=b.trade_date AND m.factor_version=:factor_version
@@ -1507,6 +1512,23 @@ class MainlinePreprocessor:
           LEFT JOIN etf_inputs e USING(trade_date,l2_code)
           WHERE i.factor_version=:factor_version
             AND i.trade_date BETWEEN :start_date AND :end_date
+        ), industry_returns AS (
+          SELECT i.trade_date,i.l2_code,i.index_close,i.relative_return_60d,i.top5_amount_share,
+                 i.ma60_gap,i.amount_ratio_20_60,
+                 i.index_close/NULLIF(LAG(i.index_close) OVER w,0)-1 AS index_return_1d,
+                 LAG(i.relative_return_60d,20) OVER w AS relative_return_60d_lag20,
+                 LAG(i.top5_amount_share,20) OVER w AS top5_amount_share_lag20
+          FROM processed_mainline_industry_daily i
+          WHERE i.factor_version=:factor_version
+            AND i.trade_date BETWEEN (:start_date - INTERVAL '400 days') AND :end_date
+          WINDOW w AS (PARTITION BY i.l2_code ORDER BY i.trade_date)
+        ), advanced AS (
+          SELECT *,
+                 STDDEV_SAMP(index_return_1d) OVER w AS vol_60d,
+                 SUM(ABS(index_return_1d)) OVER w AS path_length_60d,
+                 MIN(index_return_1d) OVER w AS tail_return_p05_proxy
+          FROM industry_returns
+          WINDOW w AS (PARTITION BY l2_code ORDER BY trade_date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW)
         )
         UPDATE processed_mainline_industry_daily target SET
           avg_amount_20d=inputs.avg_amount_20d,
@@ -1522,6 +1544,16 @@ class MainlinePreprocessor:
           disclosure_coverage=inputs.disclosure_coverage,
           etf_net_inflow_20d=inputs.etf_net_inflow_20d,
           etf_aum=inputs.etf_aum,
+          relative_strength_slope_20d=advanced.relative_return_60d-advanced.relative_return_60d_lag20,
+          risk_adjusted_momentum_60d=target.return_60d/NULLIF(advanced.vol_60d*SQRT(252),0),
+          information_ratio_60d=target.relative_return_60d/NULLIF(advanced.vol_60d*SQRT(252),0),
+          path_efficiency_60d=ABS(target.return_60d)/NULLIF(advanced.path_length_60d,0),
+          tail_return_p05_60d=advanced.tail_return_p05_proxy,
+          top5_amount_share_change_20d=inputs.top5_amount_share-advanced.top5_amount_share_lag20,
+          -- v4 crowding is an industry-own-history construction.  The exact
+          -- percentile is intentionally left null until a full 504-day PIT
+          -- history exists; the engine then treats it as a gate unavailable,
+          -- never as a cross-sectional fund-concentration reward.
           crowding_input=inputs.concentration,
           data_quality=target.data_quality || JSONB_BUILD_OBJECT(
             'financial_acceleration_pit',inputs.revenue_acceleration IS NOT NULL,
@@ -1534,6 +1566,7 @@ class MainlinePreprocessor:
           ),
           processed_at=NOW()
         FROM inputs
+        JOIN advanced ON advanced.trade_date=inputs.trade_date AND advanced.l2_code=inputs.l2_code
         WHERE target.factor_version=:factor_version
           AND target.trade_date=inputs.trade_date AND target.l2_code=inputs.l2_code
         """
@@ -1740,6 +1773,33 @@ class MainlinePreprocessor:
               data_quality=EXCLUDED.data_quality,source_watermark=EXCLUDED.source_watermark,
               source_asof=EXCLUDED.source_asof,processed_at=NOW()"""),
               {"factor_version":MAINLINE_FACTOR_VERSION})
+            # Exact L2 exposure is the safe default.  Reviewed rows in the
+            # v4 mapping history may replace it with an L1/theme proxy, but a
+            # current ETF catalogue attribute can never manufacture a proxy.
+            await conn.execute(text("""
+              UPDATE processed_mainline_etf_daily SET
+                mapping_level='exact_l2',target_coverage=primary_l2_weight,
+                non_target_l1_exposure=0,
+                exposure_vector=JSONB_BUILD_OBJECT('primary_l2_code',primary_l2_code,'primary_l2_weight',primary_l2_weight),
+                mapping_evidence=JSONB_BUILD_OBJECT('reference','processed_mainline_etf_exposure_summary','mapping_level','exact_l2')
+              WHERE factor_version=:factor_version AND trade_date BETWEEN :start_date AND :end_date
+            """), {"factor_version": MAINLINE_FACTOR_VERSION, "start_date": start, "end_date": end})
+            await conn.execute(text("""
+              UPDATE processed_mainline_etf_daily e SET
+                mapping_level=COALESCE(mapping.mapping_level,'exact_l2'),
+                target_coverage=COALESCE(mapping.target_coverage,e.primary_l2_weight),
+                non_target_l1_exposure=COALESCE(mapping.non_target_l1_exposure,0),
+                exposure_vector=COALESCE(mapping.exposure_vector,
+                  JSONB_BUILD_OBJECT('primary_l2_code',e.primary_l2_code,'primary_l2_weight',e.primary_l2_weight)),
+                mapping_evidence=COALESCE(JSONB_BUILD_OBJECT(
+                  'reference',mapping.evidence_reference,'reviewed_by',mapping.reviewed_by,
+                  'reviewed_at',mapping.reviewed_at), JSONB_BUILD_OBJECT(
+                  'reference','processed_mainline_etf_exposure_summary','mapping_level','exact_l2'))
+              FROM mainline_etf_strategy_mapping_history mapping
+              WHERE e.factor_version=:factor_version AND e.trade_date BETWEEN :start_date AND :end_date
+                AND mapping.ts_code=e.ts_code AND mapping.usable_from_trade_date<=e.trade_date
+                AND (mapping.usable_to_trade_date IS NULL OR mapping.usable_to_trade_date>e.trade_date)
+            """), {"factor_version": MAINLINE_FACTOR_VERSION, "start_date": start, "end_date": end})
             return int(max(result.rowcount,0))
 
     async def _materialize_etf_postgres_legacy(self, start: date, end: date) -> int:
@@ -2321,11 +2381,9 @@ class MainlinePreprocessor:
               CASE WHEN COUNT(*) FILTER(WHERE e.data_complete AND e.benchmark_available AND e.is_tradable)::numeric/
                 NULLIF(COUNT(*) FILTER(WHERE e.benchmark_available AND e.is_tradable),0)<0.95
                 THEN 'etf_size_share_nav_coverage_below_95pct' END,
-              CASE WHEN COUNT(*) FILTER(WHERE e.data_complete AND e.benchmark_available AND e.is_tradable
-                AND e.primary_l2_code IS NOT NULL AND e.primary_l2_weight>=0.50
-                AND e.avg_amount_20d>=30000000 AND e.total_size>=500000000
-                AND e.premium_discount_abs_p95_60d<=0.02 AND e.tracking_error_60d<=0.03)<3
-                THEN 'etf_basic_whitelist_below_3' END,
+              -- Tool coverage is a portfolio-state signal in v4, not a data
+              -- blocker.  A valid snapshot with zero tools must be published
+              -- so the strategy can turn to cash instead of holding stale ETF.
               -- A debt, overseas or broad-market ETF can have full trading
               -- facts while intentionally lacking an SW L2 mapping.  It has
               -- an explicit exclusion reason and is not an ETF-mainline
@@ -2348,6 +2406,10 @@ class MainlinePreprocessor:
               ),
               'unmapped_non_candidate_count',COUNT(*) FILTER(WHERE e.data_complete
                 AND e.is_tradable AND e.benchmark_mapping_status='mapping_pending'),
+              'executable_candidate_count',COUNT(*) FILTER(WHERE e.data_complete AND e.benchmark_available AND e.is_tradable
+                AND e.primary_l2_code IS NOT NULL AND e.primary_l2_weight>=0.50
+                AND e.avg_amount_20d>=30000000 AND e.total_size>=500000000
+                AND e.premium_discount_abs_p95_60d<=0.02 AND e.tracking_error_60d<=0.03),
               'thresholds',JSONB_BUILD_OBJECT('amount_20d_cny',30000000,'aum_cny',500000000,
                 'premium_abs_p95_60d',0.02,'tracking_error_60d',0.03,'primary_l2_weight',0.50)
             )
@@ -2494,9 +2556,10 @@ def calculate_leadlag_lasso(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit cross-industry one-month-ahead signals with Lasso then OLS refit.
 
-    The input contains only observations available at ``cutoff``.  Each target
-    uses t-20 industry relative returns as features and t relative return as
-    the target, so no future return is included in the released score.
+    The input contains only observations available at ``cutoff``.  Training
+    pairs features at t with the target return at t+20.  The released score
+    uses the cutoff feature vector and therefore predicts a future period,
+    rather than accidentally re-predicting the already observed cutoff return.
     """
     required = {"trade_date", "l2_code", "relative_return_20d"}
     if not required.issubset(industry_returns.columns):
@@ -2516,8 +2579,8 @@ def calculate_leadlag_lasso(
     ).astype("float64").sort_index().tail(lookback_days + 21)
     if len(pivot) < 252 or pivot.shape[1] < 2:
         return pd.DataFrame(), pd.DataFrame()
-    feature_values = pivot.shift(20).iloc[20:]
-    target_values = pivot.iloc[20:]
+    feature_values = pivot.iloc[:-20]
+    target_values = pivot.shift(-20).iloc[:-20]
     codes = list(pivot.columns)
     relation_rows: List[Dict[str, Any]] = []
     score_rows: List[Dict[str, Any]] = []
@@ -2537,7 +2600,7 @@ def calculate_leadlag_lasso(
         if len(selected):
             post = LinearRegression().fit(x[selected], y)
             coefficients.loc[selected] = post.coef_
-            latest_x = x.iloc[-1]
+            latest_x = pivot.loc[pivot.index[-1], x.columns].fillna(x.mean())
             prediction = float(post.predict(latest_x[selected].to_frame().T)[0])
         else:
             prediction = float(y.mean())

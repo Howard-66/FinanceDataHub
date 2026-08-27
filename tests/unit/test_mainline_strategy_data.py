@@ -768,7 +768,8 @@ async def test_gate_zero_requires_industry_and_etf_coverage():
     sql = preprocessor._execute.await_args.args[0]
     assert "industry_economic_coverage_below_90pct" in sql
     assert "etf_size_share_nav_coverage_below_95pct" in sql
-    assert "etf_basic_whitelist_below_3" in sql
+    assert "etf_basic_whitelist_below_3" not in sql
+    assert "executable_candidate_count" in sql
     assert "selectable_etf_missing_pit_exposure" in sql
     assert "e.data_complete AND e.benchmark_available AND e.is_tradable" in sql
 
@@ -826,6 +827,7 @@ def test_leadlag_lasso_accepts_decimal_database_values():
 
     assert not relation.empty
     assert set(score["l2_code"]) == {"801010.SI", "801020.SI"}
+    assert pd.Timestamp(score["training_end_date"].iloc[0]) == dates[-21]
 
 
 def test_scheduler_accepts_mainline_jobs_and_dependencies():
