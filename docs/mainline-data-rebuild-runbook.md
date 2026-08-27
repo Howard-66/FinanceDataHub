@@ -1,6 +1,9 @@
 # FinanceDataHub 主线策略数据层重建运行清单
 
-性能重建由迁移 `042`～`044` 管理，目标对象仅为 `processed_mainline_*`
+性能重建由迁移 `042`～`044` 管理，目标对象仅为 `processed_mainline_*`。
+
+> 本运行手册保留历史重建细节；当前主线正式版本为 `factor_version=4`。V4 因子口径、
+> ETF 审核映射和验收请优先阅读 [MAINLINE_FACTOR_V4.md](features/MAINLINE_FACTOR_V4.md)。
 可再生派生表；原始事实与基础预处理表不会被删除。`042` 会删除旧主线派生数据，
 执行前必须留存抽样校验文件。`044` 只在 Gate 0 通过后执行，避免二级索引拖慢写入。
 `--stage rebuild` 会在其最新观察日通过 Gate 0 后自动执行同等的收尾动作；单独运行
@@ -191,13 +194,13 @@ fdh-cli preprocess run --category mainline --stage leadlag --all \
 ```sql
 SELECT status, MIN(as_of_trade_date), MAX(as_of_trade_date), COUNT(*)
 FROM processed_mainline_snapshot_manifest
-WHERE factor_version = 2
+WHERE factor_version = 4
 GROUP BY status
 ORDER BY status;
 
 SELECT blocker_reasons, COUNT(*)
 FROM processed_mainline_snapshot_manifest
-WHERE factor_version = 2 AND status = 'blocked'
+WHERE factor_version = 4 AND status = 'blocked'
 GROUP BY blocker_reasons
 ORDER BY COUNT(*) DESC;
 ```
